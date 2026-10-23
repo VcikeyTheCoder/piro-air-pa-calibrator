@@ -1,6 +1,7 @@
 # Klipper extras package. Copy this folder to ~/klipper/klippy/extras/pa_loadcell/
 # Config: see pa_loadcell.cfg. Runtime data: see README.md.
 import logging
+from dataclasses import asdict
 from .errors import PAError
 from .feed import SampleBus
 from .recorder import ManualRecorder
@@ -35,8 +36,9 @@ class PALoadCell:
         # record work while a test is running. Moonraker exposes them as
         # printer.pa_loadcell.<name> (JSON-RPC) and /printer/pa_loadcell/<name>.
         wh = printer.lookup_object('webhooks')
-        for name in ('live', 'runs', 'run', 'segment', 'tag', 'delete',
-                     'record_start', 'record_stop', 'cancel'):
+        for name in ('live', 'info', 'defaults', 'runs', 'run', 'segment',
+                     'tag', 'delete', 'record_start', 'record_stop', 'mark',
+                     'cancel'):
             wh.register_endpoint('pa_loadcell/' + name,
                                  self._wrap(getattr(self, '_wh_' + name)))
 
@@ -61,7 +63,8 @@ class PALoadCell:
             gcmd.respond_info(
                 "samples: %d in 3 s (%.0f/s), unit: %s\n"
                 "newest sample is %.3f s behind the estimated print_time "
-                "(small and positive = timestamps are usable)"
+                "(expected 0.1 to 1.0 s: samples arrive in 0.5 s batches; "
+                "negative or several seconds = timestamps are not usable)"
                 % (n, self.bus.rate, self.bus.unit, est - self.bus.latest_t))
         except PAError as e:
             raise gcmd.error(str(e))
@@ -77,13 +80,29 @@ class PALoadCell:
 
     def _wh_live(self, req):
         out = self.bus.live(req.get_int('since', 0))
-        out['test'] = {'state': self.runner.state,
-                       'progress': round(self.runner.progress, 3),
-                       'pa': self.runner.current_pa,
-                       'run': self.runner.run_id}
+        r = self.runner
+        out['test'] = {'state': r.state, 'progress': round(r.progress, 3),
+                       'pa': r.current_pa, 'run': r.run_id,
+                       'elapsed': round(self.reactor.monotonic() - r.started,
+                                        1) if r.state != 'idle' else 0}
         out['rec'] = {'active': self.rec.active,
-                      'elapsed': round(self.rec.elapsed(), 1)}
+                      'elapsed': round(self.rec.elapsed(), 1),
+                      'marks': len(self.rec.marks)}
         return out
+
+    def _wh_info(self, req):
+        out = self.bus.info() if self.bus.lc else {
+            'source': '', 'available': self.bus.available()}
+        out['available'] = self.bus.available()
+        return out
+
+    def _wh_defaults(self, req):
+        out = asdict(self.defaults)
+        out['limits'] = self.runner.limits
+        return out
+
+    def _wh_mark(self, req):
+        self.rec.mark(req.get_str('label', ''))
 
     def _wh_runs(self, req):
         return {'runs': self.store.list_runs()}

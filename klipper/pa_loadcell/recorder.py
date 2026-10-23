@@ -10,6 +10,7 @@ class ManualRecorder:
         self.buf = []
         self.label = ''
         self.auto_stopped = False
+        self.marks = []
 
     def _pa_and_temp(self):
         th = self.printer.lookup_object('toolhead')
@@ -21,6 +22,7 @@ class ManualRecorder:
         if self.active:
             raise PAError("already recording")
         self.buf, self.label, self.auto_stopped = [], label, False
+        self.marks = []
         self.active = True
         try:
             self.bus.subscribe(self._on)
@@ -34,6 +36,11 @@ class ManualRecorder:
             self.auto_stopped = True
             self.stop()
 
+    def mark(self, text=''):
+        if not self.active or not self.buf:
+            raise PAError("start recording first")
+        self.marks.append((self.buf[-1][0], text))
+
     def elapsed(self):
         return self.buf[-1][0] - self.buf[0][0] if self.buf else 0.0
 
@@ -46,7 +53,10 @@ class ManualRecorder:
             raise PAError("no samples were received from the load cell")
         t0 = self.buf[0][0]
         pa, temp = self._pa_and_temp()
-        seg = {'pa': pa, 'unit': self.bus.unit, 'markers': [],
+        marks = [{'name': 'mark', 'label': txt or 'mark #%d' % (i + 1),
+                  't0': round(tm - t0, 4), 't1': round(tm - t0, 4)}
+                 for i, (tm, txt) in enumerate(self.marks)]
+        seg = {'pa': pa, 'unit': self.bus.unit, 'markers': marks,
                't': [round(t - t0, 4) for t, _ in self.buf],
                'f': [round(v, 3) for _, v in self.buf]}
         rid = self.store.new_run('manual', {
@@ -56,5 +66,5 @@ class ManualRecorder:
         self.store.finalize(rid, 'complete',
                             'auto-stopped at max length'
                             if self.auto_stopped else '')
-        self.buf = []
+        self.buf, self.marks = [], []
         return rid

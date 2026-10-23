@@ -1,20 +1,24 @@
 """SampleBus: the ONLY file that touches Klipper's load cell API.
 
-It subscribes to the load cell's bulk sensor once, keeps a fixed-size ring
-buffer (for live viewers) and fans samples out to subscribers (test runner,
-manual recorder). The sensor is only streamed while someone needs it, so an
-idle printer carries no extra load.
+It subscribes to the LoadCell object's client feed (the same feed that
+LOAD_CELL tools use), keeps a fixed-size ring buffer for live viewers and
+fans samples out to subscribers (test runner, manual recorder).
 
-Verify against your Klipper version with PA_LOADCELL_DIAG before trusting
-timestamps. The three assumptions below are marked ASSUMPTION."""
+Verified against Klipper's klippy/extras/load_cell.py and load_cell_probe.py:
+  * LoadCell.add_client(cb): cb(msg) is called about every 0.5 s with
+    msg['data'] = [[print_time, grams_or_None, counts, tare_counts], ...].
+    cb must return a TRUE value to stay registered; a falsy value removes it.
+  * [load_cell]       -> printer object 'load_cell [name]' IS the LoadCell.
+  * [load_cell_probe] -> printer object 'load_cell_probe' is the probe and
+                         holds the LoadCell as its private attribute
+                         '_load_cell'.
+  * Sample times are print_time, the same clock as toolhead move times.
+  * Rows are [time, grams_or_None, counts, tare_counts]; grams is None until
+    the load cell is calibrated and tared (then we fall back to counts)."""
 import collections
 import itertools
 import time
 from .errors import PAError
-
-# ASSUMPTION 1: a bulk-sensor client callback returns True when it wants to
-# be removed (this is how Klipper's dump clients behave).
-CALLBACK_DONE, CALLBACK_KEEP = True, False
 
 
 class SampleBus:
@@ -28,50 +32,33 @@ class SampleBus:
         self.live_idle = live_idle
         self.last_live = -1e9
         self.running = False
+        self.gen = 0                    # invalidates a replaced callback
+        self.unit_gen = 0               # bumps when grams <-> counts flips
         self.last_batch = 0.0
         self.latest_t = 0.0
         self.rate = 0.0
         self.unit = 'counts'
-        self._c2g = None
         self.lc = None
+        self.source = ''                # printer object the data comes from
+        self.tare_name = None           # value for LOAD_CELL_TARE LOAD_CELL=
 
-    # -- sensor access ------------------------------------------------
-    def _candidates(self):
-        """Objects that may hold the load cell. [load_cell_probe] setups
-        often have no plain [load_cell], so try the configured name, then
-        'load_cell', then 'load_cell_probe' (and its .load_cell member)."""
-        out = []
+    # -- load cell lookup ---------------------------------------------
+    def _find(self):
+        """Return (printer_object_name, LoadCell) or (None, None).
+        Works for [load_cell] and [load_cell_probe]; whichever exists."""
         for name in (self.lc_name, 'load_cell', 'load_cell_probe'):
             obj = self.printer.lookup_object(name, None)
-            if obj is not None and obj not in out:
-                out.append(obj)
-                inner = getattr(obj, 'load_cell', None)
-                if inner is not None and inner not in out:
-                    out.append(inner)
-        return out
-
-    def _sensor(self):
-        cands = self._candidates()
-        if not cands:
-            raise PAError("load cell '%s' not found: check [load_cell] / "
-                          "[load_cell_probe] and the load_cell option"
-                          % self.lc_name)
-        for lc in cands:
-            # ASSUMPTION 2: the load cell exposes its bulk sensor.
-            get = getattr(lc, 'get_sensor', None)
-            sensor = get() if callable(get) else getattr(lc, 'sensor', None)
-            if sensor is not None and hasattr(sensor, 'add_client'):
-                self.lc = lc
-                # ASSUMPTION 3: counts_to_grams() exists; else raw counts.
-                self._c2g = getattr(lc, 'counts_to_grams', None)
-                self.unit = 'g' if self._c2g else 'counts'
-                return sensor
-        raise PAError("this Klipper's load_cell API is not supported (no "
-                      "sensor.add_client on %s); adapt feed.py"
-                      % ", ".join(type(c).__name__ for c in cands))
+            if obj is None:
+                continue
+            for holder in (obj, getattr(obj, '_load_cell', None),
+                           getattr(obj, 'load_cell', None)):
+                if holder is not None and hasattr(holder, 'get_sensor') \
+                        and callable(getattr(holder, 'add_client', None)):
+                    return name, holder
+        return None, None
 
     def available(self):
-        return bool(self._candidates())
+        return self._find()[1] is not None
 
     def ensure(self):
         now = self.reactor.monotonic()
@@ -79,7 +66,16 @@ class SampleBus:
             now - self.last_batch > 5.0
         if self.running and not stale:
             return
-        self._sensor().add_client(self._on_batch)
+        name, lc = self._find()
+        if lc is None:
+            raise PAError("no load cell found: add [load_cell] or "
+                          "[load_cell_probe] (looked for '%s', 'load_cell' "
+                          "and 'load_cell_probe')" % self.lc_name)
+        self.lc, self.source = lc, name
+        self.tare_name = getattr(lc, 'name', None)
+        self.gen += 1
+        gen = self.gen
+        lc.add_client(lambda msg: self._on_batch(msg, gen))
         self.running = True
         self.last_batch = now
 
@@ -88,19 +84,23 @@ class SampleBus:
             self.reactor.monotonic() - self.last_live < self.live_idle
 
     # -- data path ----------------------------------------------------
-    def _convert(self, s):
-        v = s[1]
-        if self._c2g:
-            try:
-                v = self._c2g(v)
-            except Exception:
-                pass
-        return (float(s[0]), float(v))
-
-    def _on_batch(self, msg):
-        data = msg.get('data') or []
-        if data:
-            out = [self._convert(s) for s in data]
+    def _on_batch(self, msg, gen):
+        if gen != self.gen:
+            return False                # replaced by a newer callback
+        rows = msg.get('data') or []
+        # grams is None until the load cell is calibrated AND tared; then
+        # raw counts are all we have. Decide per batch so a later tare
+        # switches the stream to grams cleanly.
+        unit = 'g' if rows and all(r[1] is not None for r in rows) \
+            else 'counts'
+        if rows and unit != self.unit:
+            self.ring.clear()
+            self.total = 0
+            self.unit = unit
+            self.unit_gen += 1
+        out = [(float(r[0]), float(r[1] if unit == 'g' else r[2]))
+               for r in rows]
+        if out:
             self.ring.extend(out)
             self.total += len(out)
             self.latest_t = out[-1][0]
@@ -112,8 +112,8 @@ class SampleBus:
                 cb(out)
         if not self._needed():
             self.running = False
-            return CALLBACK_DONE
-        return CALLBACK_KEEP
+            return False                # falsy = unregister this client
+        return True                     # truthy = keep receiving
 
     def subscribe(self, cb):
         self.subs.append(cb)
@@ -123,17 +123,34 @@ class SampleBus:
         if cb in self.subs:
             self.subs.remove(cb)
 
+    def info(self):
+        lc = self.lc
+        cal = bool(lc and lc.is_calibrated()) if lc else False
+        tared = bool(lc and lc.is_tared()) if lc else False
+        stale = self.running and \
+            self.reactor.monotonic() - self.last_batch > 2.0
+        return {'source': self.source, 'tare_name': self.tare_name,
+                'unit': self.unit, 'calibrated': cal, 'tared': tared,
+                'rate': round(self.rate, 1), 'streaming': self.running,
+                'stale': bool(stale)}
+
     def live(self, since, limit=6000):
         """Cursor-based read: client resumes from the last sequence it saw,
-        so websocket drops and hidden tabs never lose or duplicate data."""
+        so websocket drops and hidden tabs never lose or duplicate data.
+        'reset' tells the client to drop its buffer (restart / unit flip)."""
         self.last_live = self.reactor.monotonic()
         self.ensure()
+        reset = since > self.total
+        if reset:
+            since = 0
         first = self.total - len(self.ring)
         start = max(since, first)
         items = list(itertools.islice(self.ring, start - first,
                                       start - first + limit))
-        return {'epoch': self.epoch, 'first': first,
-                'seq': start + len(items),
-                'gap': 0 < since < first,
-                'rate': round(self.rate, 1), 'unit': self.unit,
-                'samples': [[round(t, 4), round(v, 3)] for t, v in items]}
+        out = self.info()
+        out.update({'epoch': self.epoch, 'first': first,
+                    'seq': start + len(items), 'reset': reset,
+                    'gap': 0 < since < first, 'unit_gen': self.unit_gen,
+                    'samples': [[round(t, 4), round(v, 3)]
+                                for t, v in items]})
+        return out

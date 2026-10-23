@@ -59,10 +59,13 @@ class Gcode:
                 s.n_e += 1
 
 class LoadCell:
+    """Mimics klippy/extras/load_cell.py: add_client callbacks receive
+    [time, grams, counts, tare_counts] rows and must return TRUE to stay."""
     def __init__(s, p): s.p = p
     def get_sensor(s): return s
+    def is_calibrated(s): return True
+    def is_tared(s): return True
     def add_client(s, cb): s.p.client = cb; s.p.hooks.append(s.pump)
-    def counts_to_grams(s, c): return c / 100.0
     def pump(s):
         p = s.p
         if not p.client: return
@@ -73,9 +76,10 @@ class LoadCell:
         for i in range(n0, n1):
             t = 1000 + i / 320.0
             on = any(a <= t <= b for a, b in p.windows)
-            data.append((t, 10000.0 if on else 0.0))
+            counts = 10000.0 if on else 0.0
+            data.append((t, counts / 100.0, counts, 0))
         p.sent = 1000 + n1 / 320.0
-        if p.client({'data': data}):
+        if not p.client({'data': data}):      # falsy = unregister
             p.client = None
 
 class Gcmd:
@@ -156,6 +160,96 @@ def test_live_cursor_and_decimate():
     c = bus.live(b['seq']); assert c['samples'] == []
     t = [i / 100 for i in range(10000)]; f = [i % 7 for i in range(10000)]
     dt, df = decimate(t, f, 1000); assert len(dt) <= 1000 and max(df) == 6
+
+
+def _synth(tau, ring=0.0, rate=320.0, sweeps=4, fast=0.6, slow=0.8):
+    """slow/fast/slow force trace through a lag (optionally 2nd order)."""
+    import math
+    t, f, markers, x, y, v = [], [], [], 0.0, 0.0, 0.0
+    plan, tt = [], 0.0
+    for k in range(sweeps):
+        plan.append(('slow', k, tt, tt + slow, 1.0)); tt += slow + 0.3
+        plan.append(('fast', k, tt, tt + fast, 4.0)); tt += fast + 0.3
+    for n in range(int(tt * rate)):
+        now = n / rate
+        u = 0.0
+        for nm, k, a, b, val in plan:
+            if a <= now < b: u = val
+        # 1st order lag; ring>0 adds a derivative kick = overshoot
+        dy = (u - y) / tau
+        y += dy / rate
+        out = y + ring * (u - y) if ring else y
+        t.append(round(now, 4)); f.append(out * 25.0)
+    for nm, k, a, b, val in plan:
+        markers.append({'name': nm, 'sweep': k, 't0': a, 't1': b})
+    return t, f, markers
+
+def test_edge_summary_first_order():
+    from pa_loadcell import analysis
+    t, f, m = _synth(0.05)
+    r = analysis.edge_summary(t, f, m, 'rise')
+    assert r and r['n'] == 4, r
+    assert abs(r['rise'] - 2.197 * 0.05) < 0.02, r['rise']      # 10-90 %
+    assert r['overshoot'] < 0.03, r['overshoot']
+    slow = analysis.edge_summary(*_synth(0.15)[:2], _synth(0.15)[2], 'rise')
+    assert slow['rise'] > r['rise'] * 2                         # lag shows up
+    assert analysis.edge_summary(t, f, [], 'rise') is None
+
+def test_edge_overshoot_detected():
+    from pa_loadcell import analysis
+    t, f, m = _synth(0.05, ring=1.3)
+    r = analysis.edge_summary(t, f, m, 'rise')
+    assert r["overshoot"] > 0.15, r["overshoot"]
+
+def test_segment_meta_has_edges():
+    p, bus, store, r = make()
+    rid = r.run(Gcmd(), S(extrude_len=10, fast_speed=20, slow_speed=5))
+    m = store.get_run(rid)
+    e = m['segments'][0].get('edge')
+    assert e and e['rise'] and len(e['rise']['y']) == 80, m['segments'][0]
+
+def test_unit_flip_and_reset():
+    p, bus, store, r = make()
+    bus.ensure()
+    cb = p.client
+    bus._on_batch({'data': [(1000.0 + i / 320, None, 5000 + i, 0)
+                            for i in range(50)]}, bus.gen)
+    assert bus.unit == 'counts' and bus.total == 50
+    a = bus.live(50)
+    bus._on_batch({'data': [(1001.0 + i / 320, 1.5, 5000, 0)
+                            for i in range(50)]}, bus.gen)
+    assert bus.unit == 'g' and bus.total == 50 and bus.unit_gen == 1
+    b = bus.live(9999)                       # stale cursor from before reset
+    assert b['reset'] is True and len(b['samples']) == 50
+    assert bus.info()['source'] == 'load_cell'
+
+def test_manual_marks():
+    p, bus, store, r = make()
+    rec = ManualRecorder(p, bus, store, 300)
+    rec.start('PLA'); p.windows.append((1001, 1002)); p.pt = 1003
+    p.pause(p.now + 1); rec.mark('pa 0.04'); rec.mark()
+    rid = rec.stop()
+    seg = store.get_segment(rid, 0)
+    assert [m['label'] for m in seg['markers']] == ['pa 0.04', 'mark #2']
+    assert seg['markers'][0]['t0'] > 0
+
+def test_falling_edge_stays_inside_rest_period():
+    from pa_loadcell import analysis
+    t, f, m = _synth(0.05)
+    r = analysis.edge_summary(t, f, m, 'fall')
+    assert r and r['post'] <= 0.3 and r['pre'] >= 0.1, r
+    assert abs(r['rise'] - 2.197 * 0.05) < 0.02, r['rise']
+    # short rest + short fast phase must shrink the windows, not leak into
+    # the next phase: baseline stays flat (no step inside the window)
+    t2, f2, m2 = _synth(0.05, fast=0.35)
+    r2 = analysis.edge_summary(t2, f2, m2, 'rise')
+    assert r2 and r2['overshoot'] < 0.05, r2
+
+def test_sharp_edge_still_gets_rise_time():
+    from pa_loadcell import analysis
+    t, f, m = _synth(0.004)          # edge faster than the 10 ms analysis grid
+    r = analysis.edge_summary(t, f, m, 'rise')
+    assert r and r['rise'] is not None and r['rise'] < 0.03, r
 
 if __name__ == '__main__':
     for n, fn in list(globals().items()):

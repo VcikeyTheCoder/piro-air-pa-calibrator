@@ -1,170 +1,394 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8">
+<html lang="en" data-theme="dark"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>PA Load Cell</title>
 <style>
-:root{--bg:#fff;--fg:#1d2330;--mut:#6b7385;--card:#f3f5f9;--line:#d5d9e2;--grid:#e3e6ed;--acc:#2a6df4;--bad:#d64545;--ok:#2e9d5b}
-@media(prefers-color-scheme:dark){:root{--bg:#14171e;--fg:#e4e8f0;--mut:#8b93a7;--card:#1e222c;--line:#323848;--grid:#2a2f3c;--acc:#5b8cff}}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:14px system-ui,sans-serif}
-header{display:flex;gap:12px;align-items:center;flex-wrap:wrap;padding:10px 14px;border-bottom:1px solid var(--line)}
-nav{display:flex;gap:6px;margin-left:auto}main{padding:12px 14px;max-width:1100px;margin:auto}
-button,select,input,textarea{font:inherit;color:inherit;background:var(--card);border:1px solid var(--line);border-radius:6px;padding:5px 10px}
-button{cursor:pointer}button.on,button.pri{background:var(--acc);border-color:var(--acc);color:#fff}button.bad{color:var(--bad)}
-.pill{padding:2px 9px;border-radius:99px;font-size:12px;background:var(--card);border:1px solid var(--line)}
-.pill.ok{color:var(--ok)}.pill.bad{color:var(--bad)}.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:8px 0}
-canvas{width:100%;height:320px;display:block;background:var(--card);border:1px solid var(--line);border-radius:8px}
-section{display:none}section.show{display:block}.mut{color:var(--mut)}
-details{border:1px solid var(--line);border-radius:8px;margin:8px 0;background:var(--card)}
-summary{cursor:pointer;padding:9px 12px}details>div{padding:4px 12px 12px}
-.kv{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:2px 12px;font-size:12px;margin:6px 0}
-.pas{display:flex;flex-wrap:wrap;gap:5px;margin:8px 0}.pas button{padding:3px 8px;font-size:12px}
-.pas button.cur{outline:2px solid var(--acc)}.legend span{display:inline-flex;gap:5px;align-items:center;margin-right:12px;cursor:pointer}
-.legend i{width:12px;height:3px;display:inline-block}textarea{width:100%;min-height:50px}
-#toast{position:fixed;bottom:14px;left:50%;transform:translateX(-50%);background:var(--fg);color:var(--bg);padding:8px 14px;border-radius:8px;display:none}
-</style></head><body>
-<header><b>PA Load Cell</b><span id="conn" class="pill">connecting</span>
-<span id="tstat" class="mut"></span>
-<nav><button data-tab="live" class="on">Live</button><button data-tab="hist">History</button><button data-tab="cmp">Compare (<span id="ncmp">0</span>)</button></nav></header>
+/* Tokens. Dark is the default so the page sits naturally next to Mainsail. */
+:root{--bg:#101317;--panel:#171b21;--panel2:#1d222a;--rule:#2a303a;--text:#e8ebf0;--dim:#8b94a3;
+ --trace:#5ec8ff;--slow:rgba(94,200,255,.10);--fast:rgba(255,180,77,.14);--amber:#ffb44d;--rec:#ff6b5e;--ok:#6fd49a;--grid:#242a33;
+ --r:6px;--font:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif}
+:root[data-theme=light]{--bg:#f3f4f6;--panel:#fff;--panel2:#f6f7f9;--rule:#d9dde3;--text:#1b2028;--dim:#667085;
+ --trace:#0b7fc2;--slow:rgba(11,127,194,.09);--fast:rgba(217,119,6,.13);--amber:#c76a00;--rec:#d63a2c;--ok:#1d8a50;--grid:#e6e9ee}
+*{box-sizing:border-box}[hidden]{display:none!important}html,body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 var(--font)}
+body{min-height:100vh}.num{font-variant-numeric:tabular-nums}
+button,input,select,textarea{font:inherit;color:inherit}
+button{background:var(--panel2);border:1px solid var(--rule);border-radius:var(--r);padding:6px 12px;cursor:pointer}
+button:hover:not(:disabled){border-color:var(--dim)}button:disabled{opacity:.45;cursor:not-allowed}
+button.primary{background:var(--trace);border-color:var(--trace);color:#06121a;font-weight:600}
+:root[data-theme=light] button.primary{color:#fff}
+button.rec{background:var(--rec);border-color:var(--rec);color:#fff;font-weight:600}
+button.quiet{background:none;border-color:transparent;color:var(--dim)}button.quiet:hover:not(:disabled){color:var(--text);border-color:var(--rule)}
+button.danger{color:var(--rec)}
+:focus-visible{outline:2px solid var(--trace);outline-offset:2px}
+input,select,textarea{background:var(--bg);border:1px solid var(--rule);border-radius:var(--r);padding:6px 9px;min-width:0}
+textarea{width:100%;min-height:56px;resize:vertical}
+header{display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:10px 16px;background:var(--panel);border-bottom:1px solid var(--rule)}
+header h1{font-size:15px;margin:0;font-weight:650;letter-spacing:-.01em}
+.chip{display:inline-flex;align-items:center;gap:6px;padding:2px 10px;border:1px solid var(--rule);border-radius:99px;font-size:12px;color:var(--dim);white-space:nowrap}
+.chip i{width:7px;height:7px;border-radius:50%;background:var(--dim)}.chip.ok i{background:var(--ok)}.chip.bad i{background:var(--rec)}.chip.warn i{background:var(--amber)}
+.chip.ok{color:var(--text)}.chip.bad{color:var(--rec)}
+.sp{flex:1}
+nav{display:flex;gap:2px;padding:0 12px;background:var(--panel);border-bottom:1px solid var(--rule);overflow-x:auto}
+nav button{border:0;border-bottom:2px solid transparent;border-radius:0;background:none;padding:10px 14px;color:var(--dim)}
+nav button[aria-selected=true]{color:var(--text);border-bottom-color:var(--trace)}
+nav .badge{margin-left:6px;background:var(--panel2);border:1px solid var(--rule);border-radius:99px;padding:0 7px;font-size:11px}
+#bar{height:3px;background:transparent}#bar i{display:block;height:100%;width:0;background:var(--amber);transition:width .3s}
+#banner{display:none;margin:12px 16px 0;padding:9px 12px;border:1px solid var(--rule);border-left:3px solid var(--amber);border-radius:var(--r);background:var(--panel)}
+#banner.bad{border-left-color:var(--rec)}
+main{padding:14px 16px 40px;max-width:1280px;margin:0 auto}
+section{display:none}section.on{display:block}
+.card{background:var(--panel);border:1px solid var(--rule);border-radius:var(--r)}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.read{display:flex;align-items:flex-end;gap:22px;flex-wrap:wrap;margin-bottom:10px}
+.big{font-size:44px;line-height:1;font-weight:600;letter-spacing:-.03em}
+.big small{font-size:16px;font-weight:500;color:var(--dim);margin-left:4px;letter-spacing:0}
+.stat{display:flex;flex-direction:column;gap:1px;font-size:12px;color:var(--dim)}.stat b{font-size:15px;color:var(--text);font-weight:600}
+.scope{position:relative}.scope canvas{display:block;width:100%;background:var(--panel);border:1px solid var(--rule);border-radius:var(--r)}
+#lc{height:min(52vh,460px);min-height:260px}
+.tip{position:absolute;pointer-events:none;background:var(--panel2);border:1px solid var(--rule);border-radius:var(--r);padding:4px 8px;font-size:12px;display:none;white-space:nowrap;z-index:3}
+.ctl{margin-top:10px}
+.ctl .grp{display:flex;gap:6px;align-items:center;padding-right:10px;margin-right:2px;border-right:1px solid var(--rule)}.ctl .grp:last-child{border:0}
+label.f{display:flex;flex-direction:column;gap:3px;font-size:12px;color:var(--dim)}label.f input{color:var(--text);width:100%}
+.form{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px}
+.form fieldset{margin:0;padding:12px 14px 14px;border:1px solid var(--rule);border-radius:var(--r);background:var(--panel)}
+.form legend{padding:0 6px;color:var(--text);font-weight:600}
+.fg{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.summary{margin:12px 0;padding:10px 14px}
+.prog{height:8px;background:var(--panel2);border-radius:99px;overflow:hidden;margin-top:8px}.prog i{display:block;height:100%;width:0;background:var(--amber);transition:width .3s}
+.runs{display:flex;flex-direction:column;gap:8px;margin-top:10px}
+.run>summary{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:10px 14px;cursor:pointer;list-style:none}
+.run>summary::-webkit-details-marker{display:none}.run>summary b{font-weight:600}
+.run[open]>summary{border-bottom:1px solid var(--rule)}.run .body{padding:12px 14px 14px}
+.kv{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:2px 14px;font-size:12px;color:var(--dim);margin:6px 0 10px}.kv b{color:var(--text);font-weight:500}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(112px,1fr));gap:8px;margin:8px 0}
+.pa{position:relative;text-align:left;padding:6px 7px 6px;background:var(--panel2);cursor:pointer}
+.pa canvas{display:block;width:100%;height:38px}.pa .t{display:flex;justify-content:space-between;font-size:12px;margin-top:2px}.pa .m{font-size:11px;color:var(--dim)}
+.pa[aria-pressed=true]{border-color:var(--trace);box-shadow:0 0 0 1px var(--trace)}
+.pa.cand{border-color:var(--ok)}.pa.pick{border-color:var(--amber)}
+.pa .add{position:absolute;top:3px;right:3px;padding:0 6px;font-size:12px;line-height:18px;background:var(--bg)}
+.pa .add[aria-pressed=true]{background:var(--trace);color:#06121a;border-color:var(--trace)}
+.legend{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0}.legend button{display:flex;gap:6px;align-items:center;padding:3px 9px;font-size:12px}.legend i{width:10px;height:3px;border-radius:2px}
+table{border-collapse:collapse;width:100%;font-size:13px}th,td{text-align:left;padding:5px 10px;border-bottom:1px solid var(--rule)}th{color:var(--dim);font-weight:500}
+.empty{padding:36px 16px;text-align:center;color:var(--dim)}
+.seg{display:inline-flex;border:1px solid var(--rule);border-radius:var(--r);overflow:hidden}.seg button{border:0;border-radius:0;background:none;padding:4px 11px;color:var(--dim)}.seg button[aria-pressed=true]{background:var(--panel2);color:var(--text)}
+#toast{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);background:var(--text);color:var(--bg);padding:8px 14px;border-radius:var(--r);display:none;max-width:90vw;z-index:9}
+.embed header .mainsail{display:none}.embed main{padding-top:8px}
+@media(max-width:620px){.big{font-size:34px}header{padding:8px 12px}main{padding:10px 12px 30px}.ctl .grp{border:0;padding:0}.fg{grid-template-columns:1fr 1fr}}
+@media(prefers-reduced-motion:reduce){*{transition:none!important}}
+</style></head>
+<body>
+<header>
+ <h1>PA Load Cell</h1>
+ <span id="cSrc" class="chip"><i></i><span>connecting</span></span>
+ <span id="cRate" class="chip num" hidden></span>
+ <span id="cState" class="chip" hidden></span>
+ <span class="sp"></span>
+ <a class="mainsail" href="/" style="color:var(--dim);text-decoration:none">Back to Mainsail</a>
+ <button id="themeBtn" class="quiet" title="Switch light / dark">Theme</button>
+</header>
+<div id="bar"><i></i></div>
+<nav role="tablist" id="tabs">
+ <button role="tab" data-tab="live" aria-selected="true">Live</button>
+ <button role="tab" data-tab="test" aria-selected="false">PA test</button>
+ <button role="tab" data-tab="hist" aria-selected="false">History</button>
+ <button role="tab" data-tab="cmp" aria-selected="false">Compare<span class="badge num" id="nCmp">0</span></button>
+</nav>
+<div id="banner"></div>
 <main>
-<section id="live" class="show">
- <div class="row">
-  <select id="win"><option value="10">10 s</option><option value="30" selected>30 s</option><option value="120">2 min</option></select>
-  <button id="pause">Pause view</button>
-  <input id="label" placeholder="Label (filament, note)" size="22">
-  <button id="rec" class="pri">Record</button><button id="cancel" class="bad" hidden>Cancel test</button>
-  <span id="lstat" class="mut"></span></div>
- <canvas id="lc"></canvas>
+<section id="live" class="on">
+ <div class="read">
+  <div class="big num" id="now">--<small id="unit"></small></div>
+  <div class="stat"><span>min</span><b class="num" id="sMin">-</b></div>
+  <div class="stat"><span>max</span><b class="num" id="sMax">-</b></div>
+  <div class="stat"><span>mean</span><b class="num" id="sMean">-</b></div>
+  <div class="stat"><span>noise (std dev)</span><b class="num" id="sStd">-</b></div>
+ </div>
+ <div class="scope"><canvas id="lc" aria-label="Live load cell force"></canvas><div class="tip" id="lcTip"></div></div>
+ <div class="row ctl card" style="padding:10px 12px">
+  <div class="grp">
+   <select id="win" aria-label="Time window"><option value="5">5 s</option><option value="10">10 s</option><option value="30" selected>30 s</option><option value="60">1 min</option><option value="120">2 min</option></select>
+   <button id="pause">Pause view</button>
+   <button id="ylock" aria-pressed="false">Lock scale</button>
+  </div>
+  <div class="grp">
+   <input id="label" placeholder="Label, e.g. PLA grey" size="18" aria-label="Recording label">
+   <button id="rec" class="primary">Record</button>
+   <button id="mark" hidden>Mark</button>
+   <input id="markText" placeholder="Mark note" size="10" hidden aria-label="Mark note">
+  </div>
+  <div class="grp"><button id="tare" title="Set the current force as zero">Tare</button></div>
+ </div>
 </section>
+
+<section id="test">
+ <p style="color:var(--dim);margin:0 0 12px;max-width:70ch">Extrudes into air at a spot you choose, slow then fast, once for every pressure advance value. Each value is recorded as its own segment. Preheat, home all axes and move Z to 20 mm first.</p>
+ <form id="form" class="form" autocomplete="off"></form>
+ <div class="card summary"><div id="sum" class="num"></div>
+  <div class="prog" id="tprog" hidden><i></i></div><div id="tstat" class="num" style="margin-top:6px;color:var(--dim)"></div></div>
+ <div class="row"><button id="tstart" class="primary">Start test</button><button id="tcancel" class="danger" hidden>Cancel test</button><button id="treset" class="quiet">Reset to defaults</button></div>
+</section>
+
 <section id="hist">
- <div id="viewer" hidden><div class="row"><b id="vtitle"></b><button id="vadd">+ Compare</button></div><canvas id="hc"></canvas></div>
- <div class="row"><button id="refresh">Refresh</button><span class="mut">Expand a run, then click a PA value.</span></div>
- <div id="runs"></div>
+ <div class="row"><div class="seg" id="kind"><button data-k="all" aria-pressed="true">All</button><button data-k="test" aria-pressed="false">Tests</button><button data-k="manual" aria-pressed="false">Recordings</button></div>
+  <input id="search" type="search" placeholder="Search name, filament, notes" size="26" aria-label="Search runs"><span class="sp"></span><button id="refresh" class="quiet">Refresh</button></div>
+ <div class="runs" id="runs"></div>
+ <div id="viewer" class="card" style="margin-top:14px;padding:12px 14px" hidden>
+  <div class="row" style="margin-bottom:8px"><b id="vtitle"></b><span class="sp"></span>
+   <div class="seg" id="vmode"><button data-m="trace" aria-pressed="true">Full trace</button><button data-m="edges" aria-pressed="false">Edges</button></div>
+   <div class="seg" id="vedge"><button data-e="rise" aria-pressed="true">Rising</button><button data-e="fall" aria-pressed="false">Falling</button></div>
+   <button id="vcsv" class="quiet">Export CSV</button></div>
+  <div class="scope"><canvas id="hc" style="height:300px"></canvas><div class="tip" id="hcTip"></div></div>
+  <div id="vinfo" class="num" style="color:var(--dim);margin-top:6px;font-size:13px"></div>
+ </div>
 </section>
+
 <section id="cmp">
- <div class="row">Align at <select id="align"><option value="start">segment start</option><option value="fast">first fast phase</option></select>
- <button id="cclear">Clear</button></div>
- <canvas id="cc"></canvas><div class="legend" id="legend"></div>
- <p class="mut">Add curves from History with "+ Compare". Click a legend entry to remove it.</p>
+ <div class="row"><div class="seg" id="cmode"><button data-m="edge" aria-pressed="true">Edge response</button><button data-m="raw" aria-pressed="false">Raw trace</button></div>
+  <div class="seg" id="cedge"><button data-e="rise" aria-pressed="true">Rising</button><button data-e="fall" aria-pressed="false">Falling</button></div>
+  <select id="calign" hidden aria-label="Align"><option value="start">Align at segment start</option><option value="fast">Align at first fast phase</option></select>
+  <span class="sp"></span><button id="cclear" class="quiet">Clear</button></div>
+ <div class="legend" id="legend"></div>
+ <div class="scope"><canvas id="cc" style="height:340px"></canvas><div class="tip" id="ccTip"></div></div>
+ <div id="ctable" style="margin-top:12px"></div>
 </section>
-</main><div id="toast"></div>
+</main>
+<div id="toast" role="status"></div>
+
 <script>
 'use strict';
-const $=s=>document.querySelector(s), sleep=ms=>new Promise(r=>setTimeout(r,ms));
-const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-const COL=['#2a6df4','#e8590c','#2e9d5b','#a23bd1','#d6336c','#0c8599','#b08900','#868e96'];
-function toast(m){const t=$('#toast');t.textContent=m;t.style.display='block';clearTimeout(toast.h);toast.h=setTimeout(()=>t.style.display='none',3500)}
+const $=s=>document.querySelector(s),$$=(s,r=document)=>[...r.querySelectorAll(s)],sleep=ms=>new Promise(r=>setTimeout(r,ms));
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const store={get(k,d){try{const v=localStorage.getItem('palc.'+k);return v==null?d:JSON.parse(v)}catch{return d}},set(k,v){try{localStorage.setItem('palc.'+k,JSON.stringify(v))}catch{}}};
+const Q=new URLSearchParams(location.search);
+if(Q.get('embed')==='1')document.body.classList.add('embed');
+const PAL=['#5ec8ff','#ffb44d','#6fd49a','#c792ea','#ff7b9c','#4dd0c4','#e6d36a','#9aa7b8'];
+function toast(m,ms=4200){const t=$('#toast');t.textContent=m;t.style.display='block';clearTimeout(toast.h);toast.h=setTimeout(()=>t.style.display='none',ms)}
+const fmt=(v,d=1)=>v==null||!isFinite(v)?'-':(Math.abs(v)>=1000?v.toFixed(0):v.toFixed(d));
 
-/* ---- JSON-RPC over Moonraker websocket, auto-reconnect with backoff ---- */
+/* theme */
+function theme(t){document.documentElement.dataset.theme=t;store.set('theme',t);if(window.hchart)redrawAll()}
+theme(Q.get('theme')||store.get('theme','dark'));
+$('#themeBtn').onclick=()=>theme(document.documentElement.dataset.theme==='dark'?'light':'dark');
+
+/* ---- Moonraker JSON-RPC over websocket with auto-reconnect ---- */
 const rpc={id:1,pend:new Map(),ws:null,back:500,up:false,
- connect(){const ws=this.ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host+'/websocket');
-  ws.onopen=()=>{this.up=true;this.back=500;setConn()};
-  ws.onmessage=e=>{let m;try{m=JSON.parse(e.data)}catch{return}
-   const p=this.pend.get(m.id);if(!p)return;this.pend.delete(m.id);clearTimeout(p.to);
-   m.error?p.rej(new Error(m.error.message||'RPC error')):p.res(m.result)};
-  ws.onclose=()=>{this.up=false;setConn();for(const[,p]of this.pend){clearTimeout(p.to);p.rej(new Error('disconnected'))}this.pend.clear();
-   setTimeout(()=>this.connect(),this.back);this.back=Math.min(this.back*2,10000)};
+ connect(){const ws=this.ws=new WebSocket(Q.get('ws')?'ws://'+Q.get('ws'):(location.protocol==='https:'?'wss://':'ws://')+location.host+'/websocket');
+  ws.onopen=()=>{this.up=true;this.back=500;status()};
+  ws.onmessage=e=>{let m;try{m=JSON.parse(e.data)}catch{return}const p=this.pend.get(m.id);if(!p)return;this.pend.delete(m.id);clearTimeout(p.to);
+   m.error?p.rej(new Error(m.error.message||'Request failed')):p.res(m.result)};
+  ws.onclose=()=>{this.up=false;status();for(const[,p]of this.pend){clearTimeout(p.to);p.rej(new Error('disconnected'))}this.pend.clear();setTimeout(()=>this.connect(),this.back);this.back=Math.min(this.back*2,8000)};
   ws.onerror=()=>ws.close()},
- call(method,params={},ms=8000){return new Promise((res,rej)=>{
-  if(!this.up)return rej(new Error('offline'));const id=this.id++;
-  const to=setTimeout(()=>{this.pend.delete(id);rej(new Error('timeout'))},ms);
+ call(method,params={},ms=8000){return new Promise((res,rej)=>{if(!this.up)return rej(new Error('offline'));const id=this.id++;
+  const to=ms?setTimeout(()=>{this.pend.delete(id);rej(new Error('timeout'))},ms):0;
   this.pend.set(id,{res,rej,to});this.ws.send(JSON.stringify({jsonrpc:'2.0',method,params,id}))})}};
 const api=(n,p,ms)=>rpc.call('printer.pa_loadcell.'+n,p,ms);
-function setConn(){const c=$('#conn');c.textContent=rpc.up?'online':'reconnecting...';c.className='pill '+(rpc.up?'ok':'bad')}
+const gcode=(script,ms=0)=>rpc.call('printer.gcode.script',{script},ms);
 
 /* ---- chart ---- */
-function nice(range,n){const r=range/n,p=Math.pow(10,Math.floor(Math.log10(r))),f=r/p;return(f<1.5?1:f<3?2:f<7?5:10)*p}
-function draw(cv,series,o={}){
- const dpr=devicePixelRatio||1,w=cv.clientWidth,h=cv.clientHeight;if(!w)return;
- if(cv.width!==Math.round(w*dpr)||cv.height!==Math.round(h*dpr)){cv.width=Math.round(w*dpr);cv.height=Math.round(h*dpr)}
- const c=cv.getContext('2d');c.setTransform(dpr,0,0,dpr,0,0);c.clearRect(0,0,w,h);
- const st=getComputedStyle(document.body),fg=st.getPropertyValue('--mut'),gr=st.getPropertyValue('--grid');
- const L=54,R=10,T=8,B=22,pw=w-L-R,ph=h-T-B;
- let x0=o.x0,x1=o.x1;
- if(x0===undefined){x0=1e18;x1=-1e18;for(const s of series)if(s.t.length){x0=Math.min(x0,s.t[0]);x1=Math.max(x1,s.t[s.t.length-1])}}
- if(!(x1>x0)){c.fillStyle=fg;c.fillText('no data',L+10,T+20);return}
- const cols=series.map(s=>{const mn=new Float32Array(pw).fill(Infinity),mx=new Float32Array(pw).fill(-Infinity);
-  for(let i=0;i<s.t.length;i++){const k=Math.floor((s.t[i]-x0)/(x1-x0)*(pw-1));if(k<0||k>=pw)continue;
-   const v=s.f[i];if(v<mn[k])mn[k]=v;if(v>mx[k])mx[k]=v}return{mn,mx}});
- let y0=1e18,y1=-1e18;for(const k of cols)for(let i=0;i<pw;i++){if(k.mn[i]<y0)y0=k.mn[i];if(k.mx[i]>y1)y1=k.mx[i]}
- if(!(y1>y0)){y0=0;y1=1}const pad=(y1-y0)*.08;y0-=pad;y1+=pad;
- const X=t=>L+(t-x0)/(x1-x0)*pw,Y=v=>T+ph-(v-y0)/(y1-y0)*ph;
- c.font='11px system-ui';c.fillStyle=fg;c.strokeStyle=gr;c.lineWidth=1;
- for(const b of o.bands||[]){c.fillStyle=b.color;const a=Math.max(X(b.t0),L),z=Math.min(X(b.t1),L+pw);if(z>a)c.fillRect(a,T,z-a,ph)}
- c.fillStyle=fg;const sy=nice(y1-y0,5);
- for(let v=Math.ceil(y0/sy)*sy;v<y1;v+=sy){const y=Y(v);c.beginPath();c.moveTo(L,y);c.lineTo(L+pw,y);c.stroke();c.fillText(+v.toPrecision(4),4,y+4)}
- const sx=nice(x1-x0,6);for(let t=Math.ceil(x0/sx)*sx;t<x1;t+=sx){const x=X(t);c.beginPath();c.moveTo(x,T);c.lineTo(x,T+ph);c.stroke();c.fillText(+t.toFixed(2)+'s',x-12,h-6)}
- if(o.unit)c.fillText(o.unit,L+4,T+11);
- series.forEach((s,j)=>{const k=cols[j];c.strokeStyle=s.color;c.lineWidth=1.4;c.beginPath();let on=false;
-  for(let i=0;i<pw;i++){if(k.mn[i]===Infinity){on=false;continue}const x=L+i;
-   if(!on){c.moveTo(x,Y(k.mn[i]));on=true}else c.lineTo(x,Y(k.mn[i]));c.lineTo(x,Y(k.mx[i]))}c.stroke()})}
+const css=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+function nice(range,n){const r=range/n,p=Math.pow(10,Math.floor(Math.log10(r||1))),f=r/p;return(f<1.5?1:f<3?2:f<7?5:10)*p}
+function at(s,t){const a=s.t;if(!a.length||t<a[0]||t>a[a.length-1])return null;let lo=0,hi=a.length-1;while(hi-lo>1){const m=(lo+hi)>>1;a[m]<=t?lo=m:hi=m}return s.f[Math.abs(a[lo]-t)<=Math.abs(a[hi]-t)?lo:hi]}
+class Chart{
+ constructor(cv,tip,mini){this.cv=cv;this.tip=tip;this.mini=!!mini;this.cfg={series:[]};this.hx=null;this.g=null;
+  if(tip){cv.addEventListener('mousemove',e=>{const r=cv.getBoundingClientRect();this.hx=e.clientX-r.left;this.hy=e.clientY-r.top;this.render()});
+   cv.addEventListener('mouseleave',()=>{this.hx=null;this.render()})}}
+ set(c){this.cfg=c;this.render()}
+ render(){const cv=this.cv,w=cv.clientWidth,h=cv.clientHeight;if(!w||!h)return;const dpr=devicePixelRatio||1;
+  if(cv.width!==Math.round(w*dpr)||cv.height!==Math.round(h*dpr)){cv.width=Math.round(w*dpr);cv.height=Math.round(h*dpr)}
+  const c=cv.getContext('2d');c.setTransform(dpr,0,0,dpr,0,0);c.clearRect(0,0,w,h);
+  const C=this.cfg,S=C.series||[],mini=this.mini,L=mini?2:50,R=mini?2:14,T=mini?3:10,B=mini?3:22,pw=w-L-R,ph=h-T-B;
+  let x0=C.x0,x1=C.x1;if(x0===undefined){x0=1e18;x1=-1e18;for(const s of S)if(s.t.length){x0=Math.min(x0,s.t[0]);x1=Math.max(x1,s.t[s.t.length-1])}}
+  const dim=css('--dim'),grid=css('--grid');c.font='11px '+css('--font');
+  if(!(x1>x0)){if(!mini){c.fillStyle=dim;c.textAlign='center';c.fillText(C.empty||'No data yet',w/2,h/2)}this.g=null;if(this.tip)this.tip.style.display='none';return}
+  const cols=S.map(s=>{const mn=new Float32Array(pw).fill(Infinity),mx=new Float32Array(pw).fill(-Infinity),sc=(pw-1)/(x1-x0);
+   for(let i=0;i<s.t.length;i++){const k=Math.round((s.t[i]-x0)*sc);if(k<0||k>=pw)continue;const v=s.f[i];if(v<mn[k])mn[k]=v;if(v>mx[k])mx[k]=v}return{mn,mx}});
+  let y0=C.y0,y1=C.y1;if(y0===undefined){y0=1e18;y1=-1e18;for(const k of cols)for(let i=0;i<pw;i++){if(k.mn[i]<y0)y0=k.mn[i];if(k.mx[i]>y1)y1=k.mx[i]}
+   if(!(y1>y0)){y0=(isFinite(y0)?y0:0)-1;y1=y0+2}const pad=(y1-y0)*.08;y0-=pad;y1+=pad}
+  const X=t=>L+(t-x0)/(x1-x0)*pw,Y=v=>T+ph-(v-y0)/(y1-y0)*ph;this.g={L,R,T,B,pw,ph,x0,x1,y0,y1,X,Y,w,h};
+  for(const b of C.bands||[]){const a=Math.max(X(b.t0),L),z=Math.min(X(b.t1),L+pw);if(z>a){c.fillStyle=b.color;c.fillRect(a,T,z-a,ph)}}
+  if(!mini){c.strokeStyle=grid;c.lineWidth=1;c.fillStyle=dim;c.textAlign='left';const sy=nice(y1-y0,5);
+   for(let v=Math.ceil(y0/sy)*sy;v<y1;v+=sy){const y=Math.round(Y(v))+.5;c.beginPath();c.moveTo(L,y);c.lineTo(L+pw,y);c.stroke();c.fillText(+v.toPrecision(4),4,y+4)}
+   const sx=nice(x1-x0,7);for(let t=Math.ceil(x0/sx)*sx;t<x1;t+=sx){const x=Math.round(X(t))+.5;c.beginPath();c.moveTo(x,T);c.lineTo(x,T+ph);c.stroke();c.fillText(+t.toFixed(3)+(C.xunit||'s'),x-12,h-6)}
+   if(y0<0&&y1>0){c.strokeStyle=dim;c.globalAlpha=.5;const y=Math.round(Y(0))+.5;c.beginPath();c.moveTo(L,y);c.lineTo(L+pw,y);c.stroke();c.globalAlpha=1}}
+  for(const v of C.vlines||[]){const x=Math.round(X(v.t))+.5;if(x<L||x>L+pw)continue;c.strokeStyle=v.color||css('--amber');c.setLineDash([4,3]);c.beginPath();c.moveTo(x,T);c.lineTo(x,T+ph);c.stroke();c.setLineDash([]);
+   if(v.label&&!mini){c.fillStyle=v.color||css('--amber');c.textAlign='left';c.fillText(v.label,x+4,T+11)}}
+  S.forEach((s,j)=>{const k=cols[j];c.strokeStyle=s.color;c.globalAlpha=s.alpha??1;c.lineWidth=s.w||(mini?1.2:1.5);c.lineJoin='round';c.beginPath();let on=false;
+   if(s.t.length<pw){for(let i=0;i<s.t.length;i++){const x=X(s.t[i]),y=Y(s.f[i]);i?c.lineTo(x,y):c.moveTo(x,y)}c.stroke();c.globalAlpha=1;return}
+   for(let i=0;i<pw;i++){if(k.mn[i]===Infinity){on=false;continue}const x=L+i+.5,a=Y(k.mn[i]),b=Y(k.mx[i]);
+    if(!on){c.moveTo(x,a);on=true}else c.lineTo(x,a);if(b!==a)c.lineTo(x,b)}c.stroke();c.globalAlpha=1});
+  if(C.now!=null&&!mini){const x=L+pw,y=Y(C.now);c.fillStyle=S[0].color;c.beginPath();c.arc(x-1,y,3.5,0,7);c.fill();
+   const txt=C.nowText,tw=c.measureText(txt).width+10,ty=Math.max(T,Math.min(T+ph-16,y-8));c.fillRect(L+pw-tw-8,ty,tw,16);c.fillStyle=css('--bg');c.textAlign='left';c.fillText(txt,L+pw-tw-3,ty+12)}
+  if(this.tip&&this.hx!=null&&this.hx>=L&&this.hx<=L+pw){const t=x0+(this.hx-L)/pw*(x1-x0);const x=Math.round(this.hx)+.5;c.strokeStyle=dim;c.lineWidth=1;c.beginPath();c.moveTo(x,T);c.lineTo(x,T+ph);c.stroke();
+   const lines=[(C.tfmt?C.tfmt(t):t.toFixed(3)+'s')];S.forEach(s=>{if(s.name||S.length===1){const v=at(s,t);if(v!=null)lines.push((s.name?'<span style="color:'+s.color+'">&#9632;</span> '+esc(s.name)+' ':'')+fmt(v,C.dec??2)+(C.unit?' '+C.unit:''))}});
+   this.tip.innerHTML=lines.join('<br>');this.tip.style.display='block';const tw=this.tip.offsetWidth;this.tip.style.left=Math.min(this.hx+12,w-tw-4)+'px';this.tip.style.top=Math.max(4,this.hy-10)+'px'}
+  else if(this.tip)this.tip.style.display='none'}
+}
 
-/* ---- live view: fixed ring buffer, cursor-based resume ---- */
-const CAP=40000,lt=new Float64Array(CAP),lf=new Float32Array(CAP);let lh=0,lc=0,seq=0,epoch=null,unit='',frozen=false,state={};
-function push(t,f){lt[lh]=t;lf[lh]=f;lh=(lh+1)%CAP;if(lc<CAP)lc++}
-function liveSlice(win){const t=[],f=[];if(!lc)return{t,f};const tn=lt[(lh-1+CAP)%CAP];
- for(let k=0;k<lc;k++){const i=(lh-1-k+CAP)%CAP;if(tn-lt[i]>win)break;t.push(lt[i]);f.push(lf[i])}
- t.reverse();f.reverse();const e=t.length?t[t.length-1]:0;return{t:t.map(x=>x-e),f}}
+/* ---- live buffer ---- */
+const CAP=60000,bt=new Float64Array(CAP),bf=new Float32Array(CAP);let bh=0,bn=0,seq=0,epoch=null,unitGen=null;
+function pushS(t,f){bt[bh]=t;bf[bh]=f;bh=(bh+1)%CAP;if(bn<CAP)bn++}
+function resetBuf(){bh=bn=0;seq=0}
+function slice(win){const t=[],f=[];if(!bn)return{t,f};const tn=bt[(bh-1+CAP)%CAP];
+ for(let k=0;k<bn;k++){const i=(bh-1-k+CAP)%CAP;if(tn-bt[i]>win)break;t.push(bt[i]);f.push(bf[i])}t.reverse();f.reverse();const e=t[t.length-1]||0;return{t:t.map(x=>x-e),f}}
+let info={},tst={state:'idle'},rec={active:false},liveErr='',frozen=false,ylock=null;
+const live=new Chart($('#lc'),$('#lcTip'));
 async function pollLoop(){for(;;){
- if(document.hidden||!rpc.up){await sleep(500);continue}
- try{const r=await api('live',{since:seq});
-  if(r.epoch!==epoch){epoch=r.epoch;lh=lc=0;if(seq!==0){seq=0;continue}}
-  if(r.gap){lh=lc=0}
-  for(const[s,v]of r.samples)push(s,v);seq=r.seq;unit=r.unit;state=r;ui(r)}
- catch(e){await sleep(1000)}await sleep(r_busy()?120:250)}}
-const r_busy=()=>state.samples&&state.samples.length>=5000;
-function ui(r){const t=r.test||{},rc=r.rec||{};
- $('#tstat').textContent=t.state&&t.state!=='idle'?`Test ${t.state}: PA ${t.pa??'-'} (${Math.round(t.progress*100)}%)`:'';
- $('#cancel').hidden=!(t.state==='running');$('#rec').textContent=rc.active?`Stop (${rc.elapsed}s)`:'Record';
- $('#rec').className=rc.active?'bad':'pri';$('#rec').disabled=t.state&&t.state!=='idle';
- $('#lstat').textContent=`${r.rate} Hz, ${unit}`}
-function frame(){if(!document.hidden&&$('#live').classList.contains('show')&&!frozen){const s=liveSlice(+$('#win').value);
-  draw($('#lc'),[{...s,color:COL[0]}],{x0:-(+$('#win').value),x1:0,unit})}requestAnimationFrame(()=>setTimeout(frame,66))}
+ if(document.hidden||!rpc.up){await sleep(400);continue}
+ try{const r=await api('live',{since:seq},6000);liveErr='';
+  if(r.reset||r.epoch!==epoch||r.unit_gen!==unitGen){resetBuf();epoch=r.epoch;unitGen=r.unit_gen}
+  for(const[t,v]of r.samples)pushS(t,v);seq=r.seq;info=r;tst=r.test||tst;rec=r.rec||rec;status()}
+ catch(e){liveErr=e.message;status()}await sleep(liveErr?1500:110)}}
+
+/* ---- status ---- */
+function status(){const s=$('#cSrc'),k=info.source;let cls='',txt='';
+ if(!rpc.up){cls='bad';txt='Offline, reconnecting'}else if(liveErr){cls='bad';txt='No load cell data'}
+ else if(info.stale){cls='warn';txt=k+' (no samples)'}else if(k){cls='ok';txt=k}else{txt='connecting'}
+ s.className='chip '+cls;s.innerHTML='<i></i><span>'+esc(txt)+'</span>';
+ const r=$('#cRate');r.hidden=!(rpc.up&&info.rate);r.textContent=(info.rate||0)+' Hz';
+ const cs=$('#cState');const busy=tst.state&&tst.state!=='idle';cs.hidden=!(busy||rec.active);
+ cs.className='chip '+(rec.active?'bad':'warn');cs.innerHTML='<i></i><span>'+(rec.active?'Recording '+rec.elapsed+' s':'Test '+tst.state+', PA '+(tst.pa??'-'))+'</span>';
+ $('#bar i').style.width=busy?Math.round((tst.progress||0)*100)+'%':'0';
+ const b=$('#banner');let m='',bad=false;
+ if(!rpc.up)m='Connection to Moonraker lost. Reconnecting automatically.';
+ else if(liveErr){m=liveErr;bad=true}
+ else if(info.unit==='counts'&&info.source)m='The load cell is not calibrated and tared, so values are raw ADC counts. Press Tare, or run LOAD_CELL_CALIBRATE once.';
+ else if(info.stale)m='No samples from the load cell for more than 2 s. Check the sensor wiring and that Klipper is ready.';
+ b.style.display=m?'block':'none';b.className=bad?'bad':'';b.textContent=m;
+ $('#unit').textContent=info.unit==='g'?'g':(info.unit||'');
+ const R=$('#rec');R.textContent=rec.active?'Stop':'Record';R.className=rec.active?'rec':'primary';R.disabled=!!busy;
+ $('#mark').hidden=$('#markText').hidden=!rec.active;
+ $('#tstart').disabled=!!busy||rec.active;$('#tcancel').hidden=tst.state!=='running';
+ const p=$('#tprog');p.hidden=!busy;p.firstElementChild.style.width=Math.round((tst.progress||0)*100)+'%';
+ $('#tstat').textContent=busy?('PA '+(tst.pa??'-')+', '+Math.round((tst.progress||0)*100)+' %, '+Math.round(tst.elapsed||0)+' s elapsed'):''}
+
+/* ---- live drawing ---- */
+function frame(){if(!document.hidden&&$('#live').classList.contains('on')&&!frozen){const win=+$('#win').value;
+  const s=slice(win);let last=null,mn=1e18,mx=-1e18,sum=0,sq=0;const n=s.f.length;
+  for(let i=0;i<n;i++){const v=s.f[i];if(v<mn)mn=v;if(v>mx)mx=v;sum+=v;sq+=v*v}
+  if(n){const tail=Math.min(n,Math.max(3,Math.round((info.rate||320)*.1)));let a=0;for(let i=n-tail;i<n;i++)a+=s.f[i];last=a/tail;
+   const mean=sum/n;$('#now').firstChild.nodeValue=fmt(last,info.unit==='g'?1:0);$('#sMin').textContent=fmt(mn);$('#sMax').textContent=fmt(mx);$('#sMean').textContent=fmt(mean);$('#sStd').textContent=fmt(Math.sqrt(Math.max(0,sq/n-mean*mean)),2)}
+  const cfg={series:[{t:s.t,f:s.f,color:css('--trace')}],x0:-win,x1:0,unit:info.unit==='g'?'g':'',dec:1,tfmt:t=>t.toFixed(1)+' s',empty:rpc.up?'Waiting for load cell data':'Offline',now:last,nowText:last==null?'':fmt(last,1)};
+  if(ylock){cfg.y0=ylock[0];cfg.y1=ylock[1]}live.set(cfg)}
+ setTimeout(frame,66)}
 $('#pause').onclick=e=>{frozen=!frozen;e.target.textContent=frozen?'Resume view':'Pause view'};
-$('#rec').onclick=async()=>{try{if(state.rec&&state.rec.active){const r=await api('record_stop');toast('Saved as Run '+r.run);loadRuns()}
- else await api('record_start',{label:$('#label').value})}catch(e){toast(e.message)}};
-$('#cancel').onclick=()=>api('cancel').then(()=>toast('Cancelling after current phase...')).catch(e=>toast(e.message));
+$('#ylock').onclick=e=>{if(ylock){ylock=null;e.target.setAttribute('aria-pressed','false');e.target.textContent='Lock scale'}else if(live.g){ylock=[live.g.y0,live.g.y1];e.target.setAttribute('aria-pressed','true');e.target.textContent='Auto scale'}};
+$('#rec').onclick=async()=>{try{if(rec.active){const r=await api('record_stop');toast('Saved as Run '+r.run);loadRuns()}else await api('record_start',{label:$('#label').value})}catch(e){toast(e.message)}};
+$('#mark').onclick=async()=>{try{await api('mark',{label:$('#markText').value});$('#markText').value='';toast('Marked')}catch(e){toast(e.message)}};
+$('#markText').addEventListener('keydown',e=>{if(e.key==='Enter')$('#mark').click()});
+$('#tare').onclick=async()=>{if(!info.tare_name){toast('No load cell yet');return}if(!confirm('Tare sets the current force as zero. Make sure nothing is pushing on the nozzle.'))return;
+ try{await gcode('LOAD_CELL_TARE LOAD_CELL='+info.tare_name,15000);toast('Tared')}catch(e){toast(e.message)}};
+
+/* ---- PA test form ---- */
+const FIELDS=[
+ ['Sweep',[['pa_start','PA start',.001],['pa_end','PA end',.001],['pa_step','PA step',.0005],['sweeps','Sweeps per PA',1]]],
+ ['Extrusion',[['extrude_len','Length per phase (mm)',1],['slow_speed','Slow speed (mm/s)',.5],['fast_speed','Fast speed (mm/s)',1],['accel','Accel (mm/s2)',100],['settle','Rest after phase (s)',.1]]],
+ ['Positions',[['park_x','Park X',1],['park_y','Park Y',1],['test_x','Test X',1],['test_y','Test Y',1]]],
+ ['Run info',[['filament','Filament name','text']]]];
+let DEF=null;
+async function loadDefaults(){try{const d=await api('defaults');DEF=d;const saved=store.get('form',{});
+  $('#form').innerHTML=FIELDS.map(([g,fs])=>`<fieldset><legend>${g}</legend><div class="fg">${fs.map(([k,l,st])=>`<label class="f">${l}<input name="${k}" ${st==='text'?'type="text"':`type="number" step="${st}"`} value="${esc(saved[k]??d[k])}"></label>`).join('')}</div></fieldset>`).join('');
+  $$('#form input').forEach(i=>i.addEventListener('input',()=>{store.set('form',formVals());summary()}));summary()}catch(e){$('#form').innerHTML='<div class="empty">Could not read defaults: '+esc(e.message)+'</div>'}}
+const formVals=()=>Object.fromEntries($$('#form input').map(i=>[i.name,i.type==='number'?parseFloat(i.value):i.value]));
+function plan(v){const n=Math.max(0,Math.floor((v.pa_end-v.pa_start)/v.pa_step+1e-6)+1),per=v.sweeps*(v.extrude_len/v.slow_speed+v.extrude_len/v.fast_speed+2*v.settle);
+ return{n,secs:n*per,fil:n*v.sweeps*2*v.extrude_len,fastDur:v.extrude_len/v.fast_speed}}
+function summary(){const v=formVals(),p=plan(v),bad=[],warn=[];
+ if(!(v.pa_end>=v.pa_start))bad.push('PA end must be at least PA start');if(!(v.slow_speed<=v.fast_speed))bad.push('Slow speed must not exceed fast speed');
+ if(p.n>500)bad.push('Too many PA values (max 500): raise the step');if(p.fastDur<.3)warn.push('The fast phase lasts only '+p.fastDur.toFixed(2)+' s: use a longer length or a lower fast speed');
+ const m=Math.floor(p.secs/60),s=Math.round(p.secs%60);
+ const flow=Math.PI*0.875*0.875*v.fast_speed;if(flow>30)warn.push('The fast phase pushes about '+flow.toFixed(0)+' mm3/s. Make sure your hotend can melt that much, or lower the fast speed.');
+ $('#sum').innerHTML=`<b>${p.n}</b> PA values, about <b>${m} min ${s} s</b>, <b>${p.fil.toFixed(0)} mm</b> of filament. Fast phase flow <b>${flow.toFixed(0)} mm3/s</b> (1.75 mm filament).`+(bad.length||warn.length?`<div style="color:var(--amber);margin-top:4px">${bad.concat(warn).map(esc).join('<br>')}</div>`:'');
+ $('#tstart').dataset.ok=bad.length?'0':'1'}
+$('#treset').onclick=()=>{store.set('form',{});loadDefaults()};
+$('#tstart').onclick=async()=>{if($('#tstart').dataset.ok==='0'){toast('Fix the highlighted settings first');return}
+ const v=formVals();const q=s=>/\s/.test(s)?'"'+s.replace(/"/g,'')+'"':s;
+ const script='PA_LOADCELL_TEST '+Object.entries(v).filter(([k,x])=>x!==''&&!Number.isNaN(x)).map(([k,x])=>k.toUpperCase()+'='+(typeof x==='string'?q(x):x)).join(' ');
+ setTab('live');toast('Test started. Watch the trace.');
+ try{await gcode(script,0);toast('Test finished. Open History to review it.',7000);loadRuns()}catch(e){toast('Test stopped: '+e.message,9000);loadRuns()}};
+$('#tcancel').onclick=()=>api('cancel').then(()=>toast('Cancelling after the current phase')).catch(e=>toast(e.message));
 
 /* ---- history ---- */
-let runs=[],cur=null;const BANDS={slow:'rgba(42,109,244,.10)',fast:'rgba(232,89,12,.12)'};
-async function loadRuns(){try{runs=(await api('runs')).runs;renderRuns()}catch(e){toast('History: '+e.message)}}
-function renderRuns(){$('#runs').innerHTML=runs.map(r=>{const s=r.settings||{};
- return`<details data-id="${r.id}"><summary><b>${esc(r.name)}</b> &middot; ${r.kind} &middot; ${esc(r.date)} &middot; ${r.status}
- &middot; ${r.segments} PA${r.pa_pick!=null?' &middot; pick '+r.pa_pick:''}</summary><div class="body mut">loading...</div></details>`}).join('')||'<p class="mut">No runs yet.</p>';
- document.querySelectorAll('#runs details').forEach(d=>d.addEventListener('toggle',()=>{if(d.open)openRun(+d.dataset.id,d.querySelector('.body'))}))}
-async function openRun(id,box){let m;try{m=await api('run',{run:id})}catch(e){box.textContent=e.message;return}
- const st=m.settings||{},near=m.pa_pick==null?null:m.segments.reduce((a,b)=>Math.abs(b.pa-m.pa_pick)<Math.abs(a.pa-m.pa_pick)?b:a,m.segments[0]||{});
- box.className='body';box.innerHTML=`<div class="kv">${[['filament',m.filament],['nozzle C',m.nozzle_temp],...Object.entries(st)].map(([k,v])=>`<div><span class="mut">${esc(k)}</span> ${esc(v)}</div>`).join('')}</div>
- ${m.error?`<div class="mut">note: ${esc(m.error)}</div>`:''}
- <div class="pas">${m.segments.map(s=>`<button data-i="${s.idx}" title="${s.samples} samples${s.partial?' (partial)':''}">${s.pa}${near&&near.idx===s.idx?' &#9733;':''}${s.partial?'*':''}</button>`).join('')}</div>
- <div class="row"><input class="pick" placeholder="my PA pick" size="10" value="${m.pa_pick??''}"><input class="nm" placeholder="rename" size="14" value="${esc(m.name)}">
- <button class="save">Save tag</button><button class="del bad">Delete</button></div><textarea class="notes" placeholder="notes">${esc(m.notes)}</textarea>`;
- box.querySelectorAll('.pas button').forEach(b=>b.onclick=()=>{box.querySelectorAll('.pas button').forEach(x=>x.classList.remove('cur'));b.classList.add('cur');showSeg(m,+b.dataset.i)});
+let runs=[],kind='all',cur=null,vmode='trace',vedge='rise';const meta={},segCache={};
+const hchart=new Chart($('#hc'),$('#hcTip'));window.hchart=hchart;
+async function loadRuns(){try{runs=(await api('runs')).runs;renderRuns()}catch(e){$('#runs').innerHTML='<div class="empty">'+esc(e.message)+'</div>'}}
+function renderRuns(){const q=$('#search').value.toLowerCase();const list=runs.filter(r=>(kind==='all'||r.kind===kind)&&(!q||(r.name+' '+(r.filament||'')+' '+(r.notes||'')).toLowerCase().includes(q)));
+ $('#runs').innerHTML=list.map(r=>`<details class="run card" data-id="${r.id}"><summary><b>${esc(r.name)}</b><span class="chip">${r.kind==='test'?'PA test':'Recording'}</span>
+  <span class="chip ${r.status==='complete'?'ok':r.status==='error'?'bad':'warn'}"><i></i>${esc(r.status)}</span><span style="color:var(--dim)">${esc(r.filament||'')}</span>
+  <span class="sp"></span><span class="num" style="color:var(--dim)">${r.segments} ${r.kind==='test'?'PA values':'segment'}${r.pa_pick!=null?', your pick '+r.pa_pick:''}</span><span class="num" style="color:var(--dim)">${esc(r.date)}</span></summary><div class="body" style="color:var(--dim)">Loading</div></details>`).join('')||
+  '<div class="empty">'+(runs.length?'No runs match.':'No runs yet. Start a PA test or press Record on the Live tab.')+'</div>';
+ $$('#runs details').forEach(d=>{d.addEventListener('toggle',()=>{if(d.open)openRun(+d.dataset.id,d.querySelector('.body'))});if(cur&&cur.id===+d.dataset.id)d.open=true})}
+$('#search').oninput=renderRuns;$('#refresh').onclick=loadRuns;
+$$('#kind button').forEach(b=>b.onclick=()=>{kind=b.dataset.k;$$('#kind button').forEach(x=>x.setAttribute('aria-pressed',x===b));renderRuns()});
+function candidate(m){let best=null;for(const s of m.segments){const e=s.edge&&s.edge.rise;if(!e||e.rise==null||s.partial)continue;
+  const lim=.05+(e.snr?3/e.snr:.05);if(e.overshoot<=lim&&(!best||e.rise<best.e.rise))best={s,e}}return best&&best.s.idx}
+async function openRun(id,box){let m;try{m=await api('run',{run:id})}catch(e){box.textContent=e.message;return}meta[id]=m;
+ const cand=candidate(m),st=m.settings||{},pick=m.pa_pick;let near=null;if(pick!=null&&m.kind==='test'&&m.segments.length)near=m.segments.reduce((a,b)=>Math.abs(b.pa-pick)<Math.abs(a.pa-pick)?b:a).idx;
+ box.style.color='';box.innerHTML=`<div class="kv">${[['Nozzle',m.nozzle_temp!=null?m.nozzle_temp+' C':'-'],['Filament',m.filament||'-'],...Object.entries(st)].map(([k,v])=>`<span>${esc(k)} <b>${esc(v)}</b></span>`).join('')}</div>
+  ${m.error?`<div style="color:var(--amber);margin-bottom:6px">${esc(m.error)}</div>`:''}
+  <div class="grid">${m.segments.map(s=>{const e=s.edge&&s.edge.rise;return`<div class="pa card ${s.idx===cand?'cand':''} ${s.idx===near?'pick':''}" data-i="${s.idx}" role="button" tabindex="0" aria-pressed="false" title="${s.samples} samples${s.partial?', partial':''}">
+   <canvas></canvas><div class="t num"><b>${m.kind==='test'?s.pa:'trace'}</b><span class="m">${s.idx===cand&&s.idx===near?'both':s.idx===cand?'candidate':s.idx===near?'your pick':''}</span></div>
+   <div class="m num">${e&&e.rise!=null?'rise '+Math.round(e.rise*1000)+' ms':'&nbsp;'}${e?', ov '+Math.round(e.overshoot*100)+'%':''}</div>
+   ${m.kind==='test'?`<button class="add quiet" data-add="${s.idx}" aria-pressed="${inCmp(id,s.idx)}" title="Add to Compare">+</button>`:''}</div>`}).join('')}</div>
+  ${m.kind==='test'?'<div style="color:var(--dim);font-size:12px">Thumbnails show the average rising edge. Green is the candidate (fastest rise without overshoot), amber is your pick, and a chip with both shows amber. Indicative only: force is not the same as nozzle pressure.</div>':''}
+  <div class="row" style="margin-top:12px"><label class="f" style="width:130px">Your PA pick<input class="pick" value="${esc(m.pa_pick??'')}" placeholder="e.g. 0.04"></label>
+   <label class="f" style="width:170px">Name<input class="nm" value="${esc(m.name)}"></label><span class="sp"></span><button class="save">Save tag</button><button class="del danger quiet">Delete run</button></div>
+  <label class="f" style="margin-top:8px">Notes<textarea class="notes">${esc(m.notes)}</textarea></label>`;
+ $$('.pa',box).forEach((el,i)=>{const s=m.segments[i],e=s.edge&&s.edge.rise;const ch=new Chart(el.querySelector('canvas'),null,true);
+  ch.set({series:e?[{t:e.t,f:e.y,color:css('--trace')}]:[],y0:-.3,y1:1.5});
+  el.onclick=ev=>{if(ev.target.closest('.add'))return;$$('.pa',box).forEach(x=>x.setAttribute('aria-pressed','false'));el.setAttribute('aria-pressed','true');showSeg(id,s.idx)};
+  el.onkeydown=ev=>{if(ev.target===el&&(ev.key==='Enter'||ev.key===' ')){ev.preventDefault();el.click()}};
+  const add=el.querySelector('.add');if(add)add.onclick=()=>{toggleCmp(id,s.idx);add.setAttribute('aria-pressed',inCmp(id,s.idx))}});
  box.querySelector('.save').onclick=async()=>{try{await api('tag',{run:id,pa_pick:box.querySelector('.pick').value.trim(),notes:box.querySelector('.notes').value,name:box.querySelector('.nm').value});toast('Saved');loadRuns()}catch(e){toast(e.message)}};
- box.querySelector('.del').onclick=async()=>{if(confirm('Delete '+m.name+'?'))try{await api('delete',{run:id});loadRuns()}catch(e){toast(e.message)}}}
-async function showSeg(m,idx){try{const seg=await api('segment',{run:m.id,idx,max_points:3000});cur={m,idx,seg};
- $('#viewer').hidden=false;$('#vtitle').textContent=`${m.name} - PA ${seg.pa} (${seg.samples} samples)`;redrawCur()}catch(e){toast(e.message)}}
-function redrawCur(){if(!cur)return;const{seg}=cur;draw($('#hc'),[{t:seg.t,f:seg.f,color:COL[0]}],
- {unit:seg.unit,bands:(seg.markers||[]).map(k=>({t0:k.t0,t1:k.t1,color:BANDS[k.name]}))})}
-$('#vadd').onclick=()=>{if(!cur)return;const k=cur.m.id+':'+cur.idx;if(!cmp.has(k))cmp.set(k,{label:`${cur.m.name} PA ${cur.seg.pa}`,seg:cur.seg});cmpUi();toast('Added to compare')};
-$('#refresh').onclick=loadRuns;
+ box.querySelector('.del').onclick=async()=>{if(confirm('Delete '+m.name+'? This cannot be undone.'))try{await api('delete',{run:id});if(cur&&cur.id===id){cur=null;$('#viewer').hidden=true}loadRuns()}catch(e){toast(e.message)}};
+ if(m.kind==='manual'&&m.segments.length)box.querySelector('.pa').click()}
+async function getSeg(id,idx){const k=id+':'+idx;if(!segCache[k]){const m=meta[id];segCache[k]=await api('segment',{run:id,idx,max_points:m&&m.kind==='test'?0:8000},20000)}return segCache[k]}
+async function showSeg(id,idx){try{const seg=await getSeg(id,idx);cur={id,idx,seg,m:meta[id]};$('#viewer').hidden=false;
+  $('#vtitle').textContent=`${meta[id].name}, ${meta[id].kind==='test'?'PA '+seg.pa:'recording'}`;
+  const hasEdges=!!(meta[id].segments.find(s=>s.idx===idx)||{}).edge;$('#vmode').hidden=!hasEdges;if(!hasEdges)vmode='trace';
+  drawViewer();$('#viewer').scrollIntoView({block:'nearest',behavior:'smooth'})}catch(e){toast(e.message)}}
+const bandsOf=seg=>(seg.markers||[]).filter(k=>k.name==='slow'||k.name==='fast').map(k=>({t0:k.t0,t1:k.t1,color:k.name==='fast'?css('--fast'):css('--slow')}));
+function drawViewer(){if(!cur)return;const{seg,m,idx}=cur;$$('#vmode button').forEach(b=>b.setAttribute('aria-pressed',b.dataset.m===vmode));$$('#vedge button').forEach(b=>b.setAttribute('aria-pressed',b.dataset.e===vedge));
+ $('#vedge').style.display=vmode==='edges'?'':'none';const sm=m.segments.find(s=>s.idx===idx),e=sm&&sm.edge&&sm.edge[vedge];
+ if(vmode==='trace'){hchart.set({series:[{t:seg.t,f:seg.f,color:css('--trace')}],bands:bandsOf(seg),vlines:(seg.markers||[]).filter(k=>k.name==='mark').map(k=>({t:k.t0,label:k.label})),unit:seg.unit==='g'?'g':'',dec:1,tfmt:t=>t.toFixed(2)+' s'});
+  $('#vinfo').textContent=seg.samples+' samples'+(seg.rate?', '+seg.rate+' Hz':'')+(bandsOf(seg).length?'. Blue bands are slow phases, amber bands are fast phases.':'')}
+ else{const wins=edgeWindows(seg,vedge,e),series=wins.map(w=>({t:w.t,f:w.f,color:css('--dim'),alpha:.45,w:1}));
+  if(e){const b=baselineOf(wins);series.push({t:e.t,f:e.y.map(v=>v*e.amp+b),color:css('--trace'),w:2.2,name:'mean'})}
+  hchart.set({series,vlines:[{t:0,color:css('--amber'),label:vedge==='rise'?'speed up':'slow down'}],unit:seg.unit==='g'?'g':'',dec:1,tfmt:t=>(t*1000).toFixed(0)+' ms',xunit:'s'});
+  $('#vinfo').innerHTML=e?`${e.n} edges averaged. 10-90% rise <b>${e.rise!=null?Math.round(e.rise*1000)+' ms':'not reached'}</b>, overshoot <b>${Math.round(e.overshoot*100)}%</b>, signal to noise ${e.snr??'-'}.`:'Not enough data for this edge.'}}
+function baselineOf(wins){let s=0,n=0;for(const w of wins)for(let i=0;i<w.t.length;i++)if(w.t[i]<-.05){s+=w.f[i];n++}return n?s/n:0}
+function edgeWindows(seg,k,e){const pre=e&&e.pre!=null?e.pre:.3,post=e&&e.post!=null?e.post:.5,out=[];
+ for(const f of(seg.markers||[]).filter(x=>x.name==='fast')){const te=k==='rise'?f.t0:f.t1,t=[],v=[];
+  for(let i=0;i<seg.t.length;i++){if(seg.t[i]>=te-pre&&seg.t[i]<=te+post){t.push(seg.t[i]-te);v.push(seg.f[i])}}if(t.length>5)out.push({t,f:v})}return out}
+$$('#vmode button').forEach(b=>b.onclick=()=>{vmode=b.dataset.m;drawViewer()});$$('#vedge button').forEach(b=>b.onclick=()=>{vedge=b.dataset.e;drawViewer()});
+$('#vcsv').onclick=()=>{if(!cur)return;const{seg,m}=cur;const rows=['time_s,force_'+(seg.unit||'g')];for(let i=0;i<seg.t.length;i++)rows.push(seg.t[i]+','+seg.f[i]);
+ const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([rows.join('\n')],{type:'text/csv'}));a.download=(m.name+'_pa_'+(seg.pa??'x')).replace(/\s+/g,'_')+'.csv';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),2000)};
 
 /* ---- compare ---- */
-const cmp=new Map();
-function cmpUi(){$('#ncmp').textContent=cmp.size;redrawCmp()}
-function redrawCmp(){const al=$('#align').value,ent=[...cmp.entries()];
- const ser=ent.map(([k,e],i)=>{let sh=0;if(al==='fast'){const m=(e.seg.markers||[]).find(x=>x.name==='fast');if(m)sh=m.t0}
-  return{t:e.seg.t.map(x=>x-sh),f:e.seg.f,color:COL[i%COL.length]}});
- draw($('#cc'),ser,{unit:ent[0]?.[1].seg.unit});
- $('#legend').innerHTML=ent.map(([k,e],i)=>`<span data-k="${k}"><i style="background:${COL[i%COL.length]}"></i>${esc(e.label)} &times;</span>`).join('');
- document.querySelectorAll('#legend span').forEach(s=>s.onclick=()=>{cmp.delete(s.dataset.k);cmpUi()})}
-$('#align').onchange=redrawCmp;$('#cclear').onclick=()=>{cmp.clear();cmpUi()};
+const cmp=[];let cmode='edge',cedge='rise';const cchart=new Chart($('#cc'),$('#ccTip'));
+const inCmp=(id,idx)=>cmp.some(e=>e.id===id&&e.idx===idx);
+function toggleCmp(id,idx){const i=cmp.findIndex(e=>e.id===id&&e.idx===idx);
+ if(i>=0)cmp.splice(i,1);else{const m=meta[id],s=m.segments.find(x=>x.idx===idx);cmp.push({id,idx,label:`${m.name}, PA ${s.pa}`,edge:s.edge,unit:s.unit})}renderCmp()}
+async function renderCmp(){$('#nCmp').textContent=cmp.length;$$('#cmode button').forEach(b=>b.setAttribute('aria-pressed',b.dataset.m===cmode));$$('#cedge button').forEach(b=>b.setAttribute('aria-pressed',b.dataset.e===cedge));
+ $('#cedge').style.display=cmode==='edge'?'':'none';$('#calign').hidden=cmode!=='raw';
+ $('#legend').innerHTML=cmp.map((e,i)=>`<button data-i="${i}" title="Remove"><i style="background:${PAL[i%PAL.length]}"></i>${esc(e.label)} &times;</button>`).join('');
+ $$('#legend button').forEach(b=>b.onclick=()=>{cmp.splice(+b.dataset.i,1);renderCmp();$$('.pa .add').forEach(a=>{const r=a.closest('details');a.setAttribute('aria-pressed',inCmp(+r.dataset.id,+a.dataset.add))})});
+ if(!cmp.length){cchart.set({series:[],empty:'Open History, then press + on any PA value to add it here.'});$('#ctable').innerHTML='';return}
+ if(cmode==='edge'){const series=cmp.map((e,i)=>{const d=e.edge&&e.edge[cedge];return d?{t:d.t,f:d.y,color:PAL[i%PAL.length],name:e.label,w:2}:null}).filter(Boolean);
+  cchart.set({series,vlines:[{t:0,color:css('--dim')}],y0:-.3,y1:1.6,dec:2,tfmt:t=>(t*1000).toFixed(0)+' ms',empty:'These runs have no edge data.'})}
+ else{try{const al=$('#calign').value,segs=await Promise.all(cmp.map(e=>getSeg(e.id,e.idx)));
+   const series=cmp.map((e,i)=>{const sg=segs[i];let sh=0;if(al==='fast'){const f=(sg.markers||[]).find(k=>k.name==='fast');if(f)sh=f.t0}return{t:sg.t.map(x=>x-sh),f:sg.f,color:PAL[i%PAL.length],name:e.label}});
+   cchart.set({series,unit:cmp[0].unit==='g'?'g':'',dec:1,tfmt:t=>t.toFixed(2)+' s'})}catch(e){toast(e.message)}}
+ const rows=cmp.map((e,i)=>{const d=e.edge&&e.edge[cedge];return`<tr><td><i style="display:inline-block;width:10px;height:3px;background:${PAL[i%PAL.length]};margin-right:8px"></i>${esc(e.label)}</td><td class="num">${d&&d.rise!=null?Math.round(d.rise*1000)+' ms':'-'}</td><td class="num">${d?Math.round(d.overshoot*100)+'%':'-'}</td><td class="num">${d?.snr??'-'}</td><td class="num">${d?.n??'-'}</td></tr>`}).join('');
+ $('#ctable').innerHTML=`<table><thead><tr><th>Curve</th><th>10-90% rise</th><th>Overshoot</th><th>Signal to noise</th><th>Edges</th></tr></thead><tbody>${rows}</tbody></table>`}
+$$('#cmode button').forEach(b=>b.onclick=()=>{cmode=b.dataset.m;renderCmp()});$$('#cedge button').forEach(b=>b.onclick=()=>{cedge=b.dataset.e;renderCmp()});
+$('#calign').onchange=renderCmp;$('#cclear').onclick=()=>{cmp.length=0;renderCmp();$$('.pa .add').forEach(a=>a.setAttribute('aria-pressed','false'))};
 
-/* ---- tabs, lifecycle ---- */
-document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{
- document.querySelectorAll('nav button').forEach(x=>x.classList.toggle('on',x===b));
- document.querySelectorAll('section').forEach(s=>s.classList.toggle('show',s.id===b.dataset.tab));
- if(b.dataset.tab==='hist')loadRuns();redrawCur();redrawCmp()});
-document.addEventListener('visibilitychange',()=>{if(!document.hidden)state.samples=[]});  /* pollLoop resumes from `seq` */
-addEventListener('resize',()=>{redrawCur();redrawCmp()});
-rpc.connect();pollLoop();frame();
+/* ---- tabs ---- */
+function setTab(t){$$('#tabs button').forEach(b=>b.setAttribute('aria-selected',b.dataset.tab===t));$$('section').forEach(s=>s.classList.toggle('on',s.id===t));
+ if(t==='hist'){loadRuns();setTimeout(()=>hchart.render(),0)}if(t==='cmp')setTimeout(renderCmp,0);if(t==='test'&&!DEF)loadDefaults()}
+$$('#tabs button').forEach(b=>b.onclick=()=>setTab(b.dataset.tab));
+function redrawAll(){try{drawViewer();renderCmp()}catch{}}
+addEventListener('resize',()=>{hchart.render();cchart.render()});
+rpc.connect();pollLoop();frame();renderCmp();
+(function waitDefaults(){if(rpc.up)loadDefaults();else setTimeout(waitDefaults,300)})();
+setTab(Q.get('tab')||'live');
 </script></body></html>

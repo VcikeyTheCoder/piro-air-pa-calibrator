@@ -8,6 +8,7 @@ import os
 import re
 import shutil
 import time
+from . import analysis
 
 
 def _atomic(path, obj):
@@ -75,10 +76,18 @@ class RunStore:
         idx = len(meta['segments'])
         seg = dict(seg, samples=len(seg['t']))
         _atomic(os.path.join(self._dir(rid), 'seg_%03d.json' % idx), seg)
-        meta['segments'].append({
+        entry = {
             'idx': idx, 'pa': seg.get('pa'), 'samples': seg['samples'],
             'duration': seg['t'][-1] if seg['t'] else 0.0,
-            'partial': bool(seg.get('partial')), 'unit': seg.get('unit')})
+            'partial': bool(seg.get('partial')), 'unit': seg.get('unit')}
+        if seg.get('markers'):
+            rise = analysis.edge_summary(seg['t'], seg['f'], seg['markers'],
+                                         'rise')
+            fall = analysis.edge_summary(seg['t'], seg['f'], seg['markers'],
+                                         'fall')
+            if rise or fall:
+                entry['edge'] = {'rise': rise, 'fall': fall}
+        meta['segments'].append(entry)
         _atomic(self._meta_path(rid), meta)
         return idx
 

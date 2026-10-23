@@ -33,6 +33,7 @@ class PATestRunner:
         self.progress = 0.0
         self.current_pa = None
         self.run_id = None
+        self.started = 0.0
 
     @property
     def toolhead(self):
@@ -89,12 +90,12 @@ class PATestRunner:
                               "longer EXTRUDE_LEN or lower FAST_SPEED"
                               % s.fast_duration())
         self.state, self.cancel_flag, self.progress = 'running', False, 0.0
+        self.started = self.reactor.monotonic()
         now = self.reactor.monotonic()
         ext = self.toolhead.get_extruder()
         orig_pa = ext.get_status(now).get('pressure_advance', 0.)
         th_st = self.toolhead.get_status(now)
         orig_acc = th_st.get('max_accel')
-        orig_a2d = th_st.get('max_accel_to_decel')
         orig_e_acc = getattr(ext, 'max_e_accel', None)
         self.run_id = self.store.new_run('test', {
             'filament': s.filament, 'nozzle_temp': round(temp, 1),
@@ -105,8 +106,7 @@ class PATestRunner:
             self.bus.subscribe(col.on_samples)
             self._g("SAVE_GCODE_STATE NAME=PA_LC\nG90\nM83")
             saved = True
-            self._g("SET_VELOCITY_LIMIT ACCEL=%.1f ACCEL_TO_DECEL=%.1f"
-                    % (s.accel, s.accel))
+            self._g("SET_VELOCITY_LIMIT ACCEL=%.1f" % s.accel)
             if orig_e_acc is not None:
                 ext.max_e_accel = s.accel
             self._g("G1 X%.2f Y%.2f F6000" % (s.test_x, s.test_y))
@@ -122,7 +122,7 @@ class PATestRunner:
             status, err = 'error', str(e)
             gcmd.respond_info("PA_LOADCELL_TEST stopped: %s" % err)
         finally:
-            self._cleanup(s, orig_pa, orig_acc, orig_a2d, orig_e_acc, ext,
+            self._cleanup(s, orig_pa, orig_acc, orig_e_acc, ext,
                           saved, col)
             self.store.finalize(self.run_id, status, err)
             self.state, self.current_pa = 'idle', None
@@ -177,14 +177,13 @@ class PATestRunner:
             raise PAError("no load cell samples in this PA window")
         return out
 
-    def _cleanup(self, s, orig_pa, acc, a2d, e_acc, ext, saved, col):
+    def _cleanup(self, s, orig_pa, acc, e_acc, ext, saved, col):
         steps = [lambda: self.bus.unsubscribe(col.on_samples),
                  lambda: self._g("SET_PRESSURE_ADVANCE ADVANCE=%.5f"
                                  % orig_pa)]
         if acc is not None:
             steps.append(lambda: self._g(
-                "SET_VELOCITY_LIMIT ACCEL=%.1f ACCEL_TO_DECEL=%.1f"
-                % (acc, a2d if a2d is not None else acc)))
+                "SET_VELOCITY_LIMIT ACCEL=%.1f" % acc))
         if e_acc is not None:
             steps.append(lambda: setattr(ext, 'max_e_accel', e_acc))
         steps.append(lambda: self._g("G1 X%.2f Y%.2f F6000"
