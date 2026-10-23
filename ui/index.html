@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PA Load Cell</title>
+<style>
+:root{--bg:#fff;--fg:#1d2330;--mut:#6b7385;--card:#f3f5f9;--line:#d5d9e2;--grid:#e3e6ed;--acc:#2a6df4;--bad:#d64545;--ok:#2e9d5b}
+@media(prefers-color-scheme:dark){:root{--bg:#14171e;--fg:#e4e8f0;--mut:#8b93a7;--card:#1e222c;--line:#323848;--grid:#2a2f3c;--acc:#5b8cff}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:14px system-ui,sans-serif}
+header{display:flex;gap:12px;align-items:center;flex-wrap:wrap;padding:10px 14px;border-bottom:1px solid var(--line)}
+nav{display:flex;gap:6px;margin-left:auto}main{padding:12px 14px;max-width:1100px;margin:auto}
+button,select,input,textarea{font:inherit;color:inherit;background:var(--card);border:1px solid var(--line);border-radius:6px;padding:5px 10px}
+button{cursor:pointer}button.on,button.pri{background:var(--acc);border-color:var(--acc);color:#fff}button.bad{color:var(--bad)}
+.pill{padding:2px 9px;border-radius:99px;font-size:12px;background:var(--card);border:1px solid var(--line)}
+.pill.ok{color:var(--ok)}.pill.bad{color:var(--bad)}.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:8px 0}
+canvas{width:100%;height:320px;display:block;background:var(--card);border:1px solid var(--line);border-radius:8px}
+section{display:none}section.show{display:block}.mut{color:var(--mut)}
+details{border:1px solid var(--line);border-radius:8px;margin:8px 0;background:var(--card)}
+summary{cursor:pointer;padding:9px 12px}details>div{padding:4px 12px 12px}
+.kv{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:2px 12px;font-size:12px;margin:6px 0}
+.pas{display:flex;flex-wrap:wrap;gap:5px;margin:8px 0}.pas button{padding:3px 8px;font-size:12px}
+.pas button.cur{outline:2px solid var(--acc)}.legend span{display:inline-flex;gap:5px;align-items:center;margin-right:12px;cursor:pointer}
+.legend i{width:12px;height:3px;display:inline-block}textarea{width:100%;min-height:50px}
+#toast{position:fixed;bottom:14px;left:50%;transform:translateX(-50%);background:var(--fg);color:var(--bg);padding:8px 14px;border-radius:8px;display:none}
+</style></head><body>
+<header><b>PA Load Cell</b><span id="conn" class="pill">connecting</span>
+<span id="tstat" class="mut"></span>
+<nav><button data-tab="live" class="on">Live</button><button data-tab="hist">History</button><button data-tab="cmp">Compare (<span id="ncmp">0</span>)</button></nav></header>
+<main>
+<section id="live" class="show">
+ <div class="row">
+  <select id="win"><option value="10">10 s</option><option value="30" selected>30 s</option><option value="120">2 min</option></select>
+  <button id="pause">Pause view</button>
+  <input id="label" placeholder="Label (filament, note)" size="22">
+  <button id="rec" class="pri">Record</button><button id="cancel" class="bad" hidden>Cancel test</button>
+  <span id="lstat" class="mut"></span></div>
+ <canvas id="lc"></canvas>
+</section>
+<section id="hist">
+ <div id="viewer" hidden><div class="row"><b id="vtitle"></b><button id="vadd">+ Compare</button></div><canvas id="hc"></canvas></div>
+ <div class="row"><button id="refresh">Refresh</button><span class="mut">Expand a run, then click a PA value.</span></div>
+ <div id="runs"></div>
+</section>
+<section id="cmp">
+ <div class="row">Align at <select id="align"><option value="start">segment start</option><option value="fast">first fast phase</option></select>
+ <button id="cclear">Clear</button></div>
+ <canvas id="cc"></canvas><div class="legend" id="legend"></div>
+ <p class="mut">Add curves from History with "+ Compare". Click a legend entry to remove it.</p>
+</section>
+</main><div id="toast"></div>
+<script>
+'use strict';
+const $=s=>document.querySelector(s), sleep=ms=>new Promise(r=>setTimeout(r,ms));
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const COL=['#2a6df4','#e8590c','#2e9d5b','#a23bd1','#d6336c','#0c8599','#b08900','#868e96'];
+function toast(m){const t=$('#toast');t.textContent=m;t.style.display='block';clearTimeout(toast.h);toast.h=setTimeout(()=>t.style.display='none',3500)}
+
+/* ---- JSON-RPC over Moonraker websocket, auto-reconnect with backoff ---- */
+const rpc={id:1,pend:new Map(),ws:null,back:500,up:false,
+ connect(){const ws=this.ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host+'/websocket');
+  ws.onopen=()=>{this.up=true;this.back=500;setConn()};
+  ws.onmessage=e=>{let m;try{m=JSON.parse(e.data)}catch{return}
+   const p=this.pend.get(m.id);if(!p)return;this.pend.delete(m.id);clearTimeout(p.to);
+   m.error?p.rej(new Error(m.error.message||'RPC error')):p.res(m.result)};
+  ws.onclose=()=>{this.up=false;setConn();for(const[,p]of this.pend){clearTimeout(p.to);p.rej(new Error('disconnected'))}this.pend.clear();
+   setTimeout(()=>this.connect(),this.back);this.back=Math.min(this.back*2,10000)};
+  ws.onerror=()=>ws.close()},
+ call(method,params={},ms=8000){return new Promise((res,rej)=>{
+  if(!this.up)return rej(new Error('offline'));const id=this.id++;
+  const to=setTimeout(()=>{this.pend.delete(id);rej(new Error('timeout'))},ms);
+  this.pend.set(id,{res,rej,to});this.ws.send(JSON.stringify({jsonrpc:'2.0',method,params,id}))})}};
+const api=(n,p,ms)=>rpc.call('printer.pa_loadcell.'+n,p,ms);
+function setConn(){const c=$('#conn');c.textContent=rpc.up?'online':'reconnecting...';c.className='pill '+(rpc.up?'ok':'bad')}
+
+/* ---- chart ---- */
+function nice(range,n){const r=range/n,p=Math.pow(10,Math.floor(Math.log10(r))),f=r/p;return(f<1.5?1:f<3?2:f<7?5:10)*p}
+function draw(cv,series,o={}){
+ const dpr=devicePixelRatio||1,w=cv.clientWidth,h=cv.clientHeight;if(!w)return;
+ if(cv.width!==Math.round(w*dpr)||cv.height!==Math.round(h*dpr)){cv.width=Math.round(w*dpr);cv.height=Math.round(h*dpr)}
+ const c=cv.getContext('2d');c.setTransform(dpr,0,0,dpr,0,0);c.clearRect(0,0,w,h);
+ const st=getComputedStyle(document.body),fg=st.getPropertyValue('--mut'),gr=st.getPropertyValue('--grid');
+ const L=54,R=10,T=8,B=22,pw=w-L-R,ph=h-T-B;
+ let x0=o.x0,x1=o.x1;
+ if(x0===undefined){x0=1e18;x1=-1e18;for(const s of series)if(s.t.length){x0=Math.min(x0,s.t[0]);x1=Math.max(x1,s.t[s.t.length-1])}}
+ if(!(x1>x0)){c.fillStyle=fg;c.fillText('no data',L+10,T+20);return}
+ const cols=series.map(s=>{const mn=new Float32Array(pw).fill(Infinity),mx=new Float32Array(pw).fill(-Infinity);
+  for(let i=0;i<s.t.length;i++){const k=Math.floor((s.t[i]-x0)/(x1-x0)*(pw-1));if(k<0||k>=pw)continue;
+   const v=s.f[i];if(v<mn[k])mn[k]=v;if(v>mx[k])mx[k]=v}return{mn,mx}});
+ let y0=1e18,y1=-1e18;for(const k of cols)for(let i=0;i<pw;i++){if(k.mn[i]<y0)y0=k.mn[i];if(k.mx[i]>y1)y1=k.mx[i]}
+ if(!(y1>y0)){y0=0;y1=1}const pad=(y1-y0)*.08;y0-=pad;y1+=pad;
+ const X=t=>L+(t-x0)/(x1-x0)*pw,Y=v=>T+ph-(v-y0)/(y1-y0)*ph;
+ c.font='11px system-ui';c.fillStyle=fg;c.strokeStyle=gr;c.lineWidth=1;
+ for(const b of o.bands||[]){c.fillStyle=b.color;const a=Math.max(X(b.t0),L),z=Math.min(X(b.t1),L+pw);if(z>a)c.fillRect(a,T,z-a,ph)}
+ c.fillStyle=fg;const sy=nice(y1-y0,5);
+ for(let v=Math.ceil(y0/sy)*sy;v<y1;v+=sy){const y=Y(v);c.beginPath();c.moveTo(L,y);c.lineTo(L+pw,y);c.stroke();c.fillText(+v.toPrecision(4),4,y+4)}
+ const sx=nice(x1-x0,6);for(let t=Math.ceil(x0/sx)*sx;t<x1;t+=sx){const x=X(t);c.beginPath();c.moveTo(x,T);c.lineTo(x,T+ph);c.stroke();c.fillText(+t.toFixed(2)+'s',x-12,h-6)}
+ if(o.unit)c.fillText(o.unit,L+4,T+11);
+ series.forEach((s,j)=>{const k=cols[j];c.strokeStyle=s.color;c.lineWidth=1.4;c.beginPath();let on=false;
+  for(let i=0;i<pw;i++){if(k.mn[i]===Infinity){on=false;continue}const x=L+i;
+   if(!on){c.moveTo(x,Y(k.mn[i]));on=true}else c.lineTo(x,Y(k.mn[i]));c.lineTo(x,Y(k.mx[i]))}c.stroke()})}
+
+/* ---- live view: fixed ring buffer, cursor-based resume ---- */
+const CAP=40000,lt=new Float64Array(CAP),lf=new Float32Array(CAP);let lh=0,lc=0,seq=0,epoch=null,unit='',frozen=false,state={};
+function push(t,f){lt[lh]=t;lf[lh]=f;lh=(lh+1)%CAP;if(lc<CAP)lc++}
+function liveSlice(win){const t=[],f=[];if(!lc)return{t,f};const tn=lt[(lh-1+CAP)%CAP];
+ for(let k=0;k<lc;k++){const i=(lh-1-k+CAP)%CAP;if(tn-lt[i]>win)break;t.push(lt[i]);f.push(lf[i])}
+ t.reverse();f.reverse();const e=t.length?t[t.length-1]:0;return{t:t.map(x=>x-e),f}}
+async function pollLoop(){for(;;){
+ if(document.hidden||!rpc.up){await sleep(500);continue}
+ try{const r=await api('live',{since:seq});
+  if(r.epoch!==epoch){epoch=r.epoch;lh=lc=0;if(seq!==0){seq=0;continue}}
+  if(r.gap){lh=lc=0}
+  for(const[s,v]of r.samples)push(s,v);seq=r.seq;unit=r.unit;state=r;ui(r)}
+ catch(e){await sleep(1000)}await sleep(r_busy()?120:250)}}
+const r_busy=()=>state.samples&&state.samples.length>=5000;
+function ui(r){const t=r.test||{},rc=r.rec||{};
+ $('#tstat').textContent=t.state&&t.state!=='idle'?`Test ${t.state}: PA ${t.pa??'-'} (${Math.round(t.progress*100)}%)`:'';
+ $('#cancel').hidden=!(t.state==='running');$('#rec').textContent=rc.active?`Stop (${rc.elapsed}s)`:'Record';
+ $('#rec').className=rc.active?'bad':'pri';$('#rec').disabled=t.state&&t.state!=='idle';
+ $('#lstat').textContent=`${r.rate} Hz, ${unit}`}
+function frame(){if(!document.hidden&&$('#live').classList.contains('show')&&!frozen){const s=liveSlice(+$('#win').value);
+  draw($('#lc'),[{...s,color:COL[0]}],{x0:-(+$('#win').value),x1:0,unit})}requestAnimationFrame(()=>setTimeout(frame,66))}
+$('#pause').onclick=e=>{frozen=!frozen;e.target.textContent=frozen?'Resume view':'Pause view'};
+$('#rec').onclick=async()=>{try{if(state.rec&&state.rec.active){const r=await api('record_stop');toast('Saved as Run '+r.run);loadRuns()}
+ else await api('record_start',{label:$('#label').value})}catch(e){toast(e.message)}};
+$('#cancel').onclick=()=>api('cancel').then(()=>toast('Cancelling after current phase...')).catch(e=>toast(e.message));
+
+/* ---- history ---- */
+let runs=[],cur=null;const BANDS={slow:'rgba(42,109,244,.10)',fast:'rgba(232,89,12,.12)'};
+async function loadRuns(){try{runs=(await api('runs')).runs;renderRuns()}catch(e){toast('History: '+e.message)}}
+function renderRuns(){$('#runs').innerHTML=runs.map(r=>{const s=r.settings||{};
+ return`<details data-id="${r.id}"><summary><b>${esc(r.name)}</b> &middot; ${r.kind} &middot; ${esc(r.date)} &middot; ${r.status}
+ &middot; ${r.segments} PA${r.pa_pick!=null?' &middot; pick '+r.pa_pick:''}</summary><div class="body mut">loading...</div></details>`}).join('')||'<p class="mut">No runs yet.</p>';
+ document.querySelectorAll('#runs details').forEach(d=>d.addEventListener('toggle',()=>{if(d.open)openRun(+d.dataset.id,d.querySelector('.body'))}))}
+async function openRun(id,box){let m;try{m=await api('run',{run:id})}catch(e){box.textContent=e.message;return}
+ const st=m.settings||{},near=m.pa_pick==null?null:m.segments.reduce((a,b)=>Math.abs(b.pa-m.pa_pick)<Math.abs(a.pa-m.pa_pick)?b:a,m.segments[0]||{});
+ box.className='body';box.innerHTML=`<div class="kv">${[['filament',m.filament],['nozzle C',m.nozzle_temp],...Object.entries(st)].map(([k,v])=>`<div><span class="mut">${esc(k)}</span> ${esc(v)}</div>`).join('')}</div>
+ ${m.error?`<div class="mut">note: ${esc(m.error)}</div>`:''}
+ <div class="pas">${m.segments.map(s=>`<button data-i="${s.idx}" title="${s.samples} samples${s.partial?' (partial)':''}">${s.pa}${near&&near.idx===s.idx?' &#9733;':''}${s.partial?'*':''}</button>`).join('')}</div>
+ <div class="row"><input class="pick" placeholder="my PA pick" size="10" value="${m.pa_pick??''}"><input class="nm" placeholder="rename" size="14" value="${esc(m.name)}">
+ <button class="save">Save tag</button><button class="del bad">Delete</button></div><textarea class="notes" placeholder="notes">${esc(m.notes)}</textarea>`;
+ box.querySelectorAll('.pas button').forEach(b=>b.onclick=()=>{box.querySelectorAll('.pas button').forEach(x=>x.classList.remove('cur'));b.classList.add('cur');showSeg(m,+b.dataset.i)});
+ box.querySelector('.save').onclick=async()=>{try{await api('tag',{run:id,pa_pick:box.querySelector('.pick').value.trim(),notes:box.querySelector('.notes').value,name:box.querySelector('.nm').value});toast('Saved');loadRuns()}catch(e){toast(e.message)}};
+ box.querySelector('.del').onclick=async()=>{if(confirm('Delete '+m.name+'?'))try{await api('delete',{run:id});loadRuns()}catch(e){toast(e.message)}}}
+async function showSeg(m,idx){try{const seg=await api('segment',{run:m.id,idx,max_points:3000});cur={m,idx,seg};
+ $('#viewer').hidden=false;$('#vtitle').textContent=`${m.name} - PA ${seg.pa} (${seg.samples} samples)`;redrawCur()}catch(e){toast(e.message)}}
+function redrawCur(){if(!cur)return;const{seg}=cur;draw($('#hc'),[{t:seg.t,f:seg.f,color:COL[0]}],
+ {unit:seg.unit,bands:(seg.markers||[]).map(k=>({t0:k.t0,t1:k.t1,color:BANDS[k.name]}))})}
+$('#vadd').onclick=()=>{if(!cur)return;const k=cur.m.id+':'+cur.idx;if(!cmp.has(k))cmp.set(k,{label:`${cur.m.name} PA ${cur.seg.pa}`,seg:cur.seg});cmpUi();toast('Added to compare')};
+$('#refresh').onclick=loadRuns;
+
+/* ---- compare ---- */
+const cmp=new Map();
+function cmpUi(){$('#ncmp').textContent=cmp.size;redrawCmp()}
+function redrawCmp(){const al=$('#align').value,ent=[...cmp.entries()];
+ const ser=ent.map(([k,e],i)=>{let sh=0;if(al==='fast'){const m=(e.seg.markers||[]).find(x=>x.name==='fast');if(m)sh=m.t0}
+  return{t:e.seg.t.map(x=>x-sh),f:e.seg.f,color:COL[i%COL.length]}});
+ draw($('#cc'),ser,{unit:ent[0]?.[1].seg.unit});
+ $('#legend').innerHTML=ent.map(([k,e],i)=>`<span data-k="${k}"><i style="background:${COL[i%COL.length]}"></i>${esc(e.label)} &times;</span>`).join('');
+ document.querySelectorAll('#legend span').forEach(s=>s.onclick=()=>{cmp.delete(s.dataset.k);cmpUi()})}
+$('#align').onchange=redrawCmp;$('#cclear').onclick=()=>{cmp.clear();cmpUi()};
+
+/* ---- tabs, lifecycle ---- */
+document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{
+ document.querySelectorAll('nav button').forEach(x=>x.classList.toggle('on',x===b));
+ document.querySelectorAll('section').forEach(s=>s.classList.toggle('show',s.id===b.dataset.tab));
+ if(b.dataset.tab==='hist')loadRuns();redrawCur();redrawCmp()});
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)state.samples=[]});  /* pollLoop resumes from `seq` */
+addEventListener('resize',()=>{redrawCur();redrawCmp()});
+rpc.connect();pollLoop();frame();
+</script></body></html>
