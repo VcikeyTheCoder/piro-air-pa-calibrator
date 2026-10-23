@@ -40,6 +40,12 @@ if [ "${1:-}" = "--uninstall" ]; then
   say "Uninstalling"
   rm -rf "$EXTRAS/pa_loadcell" "$UI_DIR"
   [ -f "$CONFIG_DIR/printer.cfg" ] && sed -i '/^\[include pa_loadcell.cfg\]$/d' "$CONFIG_DIR/printer.cfg"
+  python3 - "$CONFIG_DIR/.theme/navi.json" <<'PY' 2>/dev/null || true
+import json, sys
+p = sys.argv[1]; items = json.load(open(p))
+items = [i for i in items if i.get('href') != '/loadcell/']
+json.dump(items, open(p, 'w'), indent=2)
+PY
   nginx_remove
   restart_services
   say "Done. Config ($CONFIG_DIR/pa_loadcell.cfg) and recorded data (~/printer_data/pa_loadcell) were kept."
@@ -94,6 +100,20 @@ fi
 say "Installing web page to $UI_DIR"
 rm -rf "$UI_DIR"; mkdir -p "$UI_DIR"; cp "$REPO/ui/index.html" "$UI_DIR/"
 
+say "Adding 'Load Cell' link to the Mainsail sidebar"
+python3 - "$CONFIG_DIR/.theme/navi.json" <<'PY'
+import json, os, sys
+p = sys.argv[1]; os.makedirs(os.path.dirname(p), exist_ok=True)
+try: items = json.load(open(p))
+except (OSError, ValueError): items = []
+if not isinstance(items, list): items = []
+items = [i for i in items if i.get('href') != '/loadcell/']      # idempotent
+items.append({"title": "Load Cell", "href": "/loadcell/", "target": "_self",
+              "position": 85,
+              "icon": "M16,11.78L20.24,4.45L21.97,5.45L16.74,14.5L10.23,10.75L5.46,19H22V21H2V3H4V17.54L9.5,8L16,11.78Z"})
+json.dump(items, open(p, 'w'), indent=2)
+PY
+
 if [ -f "$NGINX_SITE" ]; then
   if grep -q "$MARK" "$NGINX_SITE"; then echo "    nginx already configured"
   else
@@ -112,5 +132,5 @@ cat <<MSG
 Installed. Next:
   1. Edit $CFG  (park_x/y and test_x/y for your bed)
   2. In the Mainsail console run:  PA_LOADCELL_DIAG
-  3. Open the page:  http://$H.local/loadcell/
+  3. Open the page:  http://$H.local/loadcell/   (also in the Mainsail sidebar: 'Load Cell', after a browser refresh)
 MSG
