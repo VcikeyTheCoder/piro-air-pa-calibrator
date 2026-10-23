@@ -9,11 +9,13 @@ separately for every PA value, stored on the printer, and viewed on a live / his
 
 ## Install
 
-On the Pi (SSH), from the cloned repo:
+On the Pi (SSH), one command clones the repo and installs:
 
 ```bash
-./install.sh
+git clone https://github.com/VcikeyTheCoder/piro-air-pa-calibrator.git && cd piro-air-pa-calibrator && bash install.sh
 ```
+
+To update later: `cd piro-air-pa-calibrator && git pull && bash install.sh`
 
 That's it. It copies the Klipper module, creates `pa_loadcell.cfg` (auto-detects your `[load_cell]`),
 adds `[include pa_loadcell.cfg]` to `printer.cfg` (above `SAVE_CONFIG`), installs the page, wires nginx and
