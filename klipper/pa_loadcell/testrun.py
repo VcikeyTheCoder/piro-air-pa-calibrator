@@ -28,12 +28,17 @@ class PATestRunner:
         self.limits = limits        # dict: min_temp, required_z, z_tol, timeout
         self.reactor = printer.get_reactor()
         self.gcode = printer.lookup_object('gcode')
-        self.toolhead = printer.lookup_object('toolhead')
         self.state = 'idle'         # idle | running | cancelling
         self.cancel_flag = False
         self.progress = 0.0
         self.current_pa = None
         self.run_id = None
+
+    @property
+    def toolhead(self):
+        # Looked up lazily: Klipper creates 'toolhead' only after all config
+        # sections are loaded, so it does not exist yet inside __init__.
+        return self.printer.lookup_object('toolhead')
 
     def cancel(self):
         if self.state == 'running':
