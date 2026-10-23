@@ -64,7 +64,7 @@ if [ -f "$CFG" ]; then
   warn "$CFG exists: kept your settings (new defaults: $REPO/klipper/pa_loadcell.cfg)"
 else
   cp "$REPO/klipper/pa_loadcell.cfg" "$CFG"
-  LC_SEC="$(grep -rhE '^\[load_cell( [^]]+)?\]' "$CONFIG_DIR" --include='*.cfg' 2>/dev/null | head -n1 | tr -d '[]' || true)"
+  LC_SEC="$(grep -rhE '^\[load_cell(_probe)?( [^]]+)?\]' "$CONFIG_DIR" --include='*.cfg' 2>/dev/null | head -n1 | tr -d '[]' || true)"
   if [ -n "$LC_SEC" ]; then
     sed -i "s|^load_cell:.*|load_cell: $LC_SEC|" "$CFG"; say "Detected load cell section: [$LC_SEC]"
   else

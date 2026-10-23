@@ -36,25 +36,42 @@ class SampleBus:
         self.lc = None
 
     # -- sensor access ------------------------------------------------
+    def _candidates(self):
+        """Objects that may hold the load cell. [load_cell_probe] setups
+        often have no plain [load_cell], so try the configured name, then
+        'load_cell', then 'load_cell_probe' (and its .load_cell member)."""
+        out = []
+        for name in (self.lc_name, 'load_cell', 'load_cell_probe'):
+            obj = self.printer.lookup_object(name, None)
+            if obj is not None and obj not in out:
+                out.append(obj)
+                inner = getattr(obj, 'load_cell', None)
+                if inner is not None and inner not in out:
+                    out.append(inner)
+        return out
+
     def _sensor(self):
-        lc = self.printer.lookup_object(self.lc_name, None)
-        if lc is None:
-            raise PAError("load cell '%s' not found: check [load_cell] and "
-                          "the load_cell option" % self.lc_name)
-        self.lc = lc
-        # ASSUMPTION 2: the load cell exposes its bulk sensor.
-        get = getattr(lc, 'get_sensor', None)
-        sensor = get() if get else getattr(lc, 'sensor', None)
-        if sensor is None or not hasattr(sensor, 'add_client'):
-            raise PAError("this Klipper's load_cell API is not supported "
-                          "(no sensor.add_client); adapt feed.py")
-        # ASSUMPTION 3: counts_to_grams() exists; otherwise raw counts.
-        self._c2g = getattr(lc, 'counts_to_grams', None)
-        self.unit = 'g' if self._c2g else 'counts'
-        return sensor
+        cands = self._candidates()
+        if not cands:
+            raise PAError("load cell '%s' not found: check [load_cell] / "
+                          "[load_cell_probe] and the load_cell option"
+                          % self.lc_name)
+        for lc in cands:
+            # ASSUMPTION 2: the load cell exposes its bulk sensor.
+            get = getattr(lc, 'get_sensor', None)
+            sensor = get() if callable(get) else getattr(lc, 'sensor', None)
+            if sensor is not None and hasattr(sensor, 'add_client'):
+                self.lc = lc
+                # ASSUMPTION 3: counts_to_grams() exists; else raw counts.
+                self._c2g = getattr(lc, 'counts_to_grams', None)
+                self.unit = 'g' if self._c2g else 'counts'
+                return sensor
+        raise PAError("this Klipper's load_cell API is not supported (no "
+                      "sensor.add_client on %s); adapt feed.py"
+                      % ", ".join(type(c).__name__ for c in cands))
 
     def available(self):
-        return self.printer.lookup_object(self.lc_name, None) is not None
+        return bool(self._candidates())
 
     def ensure(self):
         now = self.reactor.monotonic()
