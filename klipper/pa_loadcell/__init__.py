@@ -7,7 +7,7 @@ from .feed import SampleBus
 from .recorder import ManualRecorder
 from .settings import Settings
 from .storage import RunStore
-from .testrun import PATestRunner
+from .testrun import PATestRunner, extruder_info
 
 
 class PALoadCell:
@@ -83,6 +83,7 @@ class PALoadCell:
         r = self.runner
         out['test'] = {'state': r.state, 'progress': round(r.progress, 3),
                        'pa': r.current_pa, 'run': r.run_id,
+                       'phase': r.phase, 'pa_t': r.pa_t,
                        'elapsed': round(self.reactor.monotonic() - r.started,
                                         1) if r.state != 'idle' else 0}
         out['rec'] = {'active': self.rec.active,
@@ -99,6 +100,8 @@ class PALoadCell:
     def _wh_defaults(self, req):
         out = asdict(self.defaults)
         out['limits'] = self.runner.limits
+        th = self.printer.lookup_object('toolhead', None)
+        out['extruder'] = extruder_info(th.get_extruder()) if th else None
         return out
 
     def _wh_mark(self, req):

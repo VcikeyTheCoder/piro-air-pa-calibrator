@@ -32,26 +32,24 @@ def _interp(t, f, x):
 
 def _windows(markers, kind, tmax):
     """[(t_edge, pre_s, post_s)] for every usable edge.
-    The window must stay inside the phase on each side of the edge: before
-    a rising edge that is the rest period, after it the fast phase; before
-    a falling edge the fast phase, after it the rest period."""
+    Works for back-to-back legs (slow, fast, slow, ...) and for legs with
+    rests between them: the window before an edge reaches back no further
+    than the previous flow change, the window after it stops before the
+    next flow change (minus GUARD), so neighbouring edges never leak in."""
+    legs = [m for m in markers if m.get('name') in ('slow', 'fast')]
+    cuts = sorted({round(m['t0'], 6) for m in legs} |
+                  {round(m['t1'], 6) for m in legs} | {0.0})
     out = []
-    slows = [m for m in markers if m.get('name') == 'slow']
-    for m in markers:
+    for m in legs:
         if m.get('name') != 'fast':
             continue
-        if kind == 'rise':
-            te = m['t0']
-            prev = [s for s in slows if s['t1'] <= te + 1e-6]
-            gap = te - prev[-1]['t1'] if prev else PRE + GUARD
-            pre = max(MIN_PRE, min(PRE, gap - GUARD))
-            post = max(MIN_POST, m['t1'] - m['t0'] - GUARD)
-        else:
-            te = m['t1']
-            pre = max(MIN_PRE, min(PRE, (m['t1'] - m['t0']) * 0.6))
-            nxt = [s for s in slows if s['t0'] >= te - 1e-6]
-            rest = (nxt[0]['t0'] if nxt else tmax) - te
-            post = max(MIN_POST, min(rest - GUARD, 2.0))
+        te = m['t0'] if kind == 'rise' else m['t1']
+        before = [c for c in cuts if c < te - 1e-6]
+        after = [c for c in cuts if c > te + 1e-6]
+        tp = before[-1] if before else te - PRE - GUARD
+        tn = after[0] if after else tmax
+        pre = max(MIN_PRE, min(PRE, te - tp - GUARD))
+        post = max(MIN_POST, min(2.0, tn - te - GUARD))
         out.append((te, pre, post))
     return out
 

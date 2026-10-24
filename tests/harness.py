@@ -15,7 +15,7 @@ import test_backend as tb
 import pa_loadcell
 from pa_loadcell.errors import PAError
 
-TAU0, K, NOISE = 0.045, 4.0, 1.2
+TAU0, K, NOISE = 0.045, 10.0, 1.2
 RATE = 320.0
 SPEED = int(os.environ.get('SPEED', '1'))
 
@@ -25,14 +25,13 @@ class Gcode(tb.Gcode):
     def register_command(s, n, cb, desc=None): s.cmds[n] = cb
     def run_script_from_command(s, script):
         for line in script.split('\n'):
-            m = re.match(r'G1 E([\d.]+) F([\d.]+)', line)
-            if m:
-                L, F = float(m.group(1)), float(m.group(2)) / 60
-                s.p.speeds.append((s.p.pt, s.p.pt + L / F, F))
+            n = len(s.p.windows)
+            super().run_script_from_command(line)
+            for a, b, v in s.p.windows[n:]:     # E speed in mm/s per leg
+                s.p.speeds.append((a, b, v))
             m = re.match(r'SET_PRESSURE_ADVANCE ADVANCE=([\d.]+)', line)
             if m:
                 s.p.pa_tl.append((s.p.pt, float(m.group(1))))
-        super().run_script_from_command(script)
 
 
 class LoadCell(tb.LoadCell):
@@ -124,7 +123,7 @@ def seed_history(p, plug):
     g = p.objs['gcode']
     for fil in ('PLA grey', 'PETG black'):
         g.cmds['PA_LOADCELL_TEST'](Gcmd({'PA_START': '0', 'PA_END': '0.08',
-            'PA_STEP': '0.01', 'SWEEPS': '3', 'FILAMENT': fil}))
+            'PA_STEP': '0.01', 'CYCLES': '3', 'FILAMENT': fil}))
     rid = plug.store.list_runs()[0]['id']
     plug.store.set_tag(rid, pa_pick=0.04, notes='felt right on the 0.5 corner')
     # a 5 minute manual recording: pushes of varying size, a slow drift and

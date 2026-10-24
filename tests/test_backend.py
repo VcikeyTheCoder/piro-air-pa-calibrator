@@ -30,6 +30,8 @@ class Printer:
 
 class Extruder:
     max_e_velocity, max_e_accel = 100.0, 5000.0
+    filament_area = 3.14159265 * 0.875 ** 2
+    max_extrude_ratio = 120.0 / filament_area     # max_extrude_cross_section 120
     def __init__(s, p): s.p = p
     def get_status(s, now):
         return {'temperature': s.p.temp, 'pressure_advance': 0.05}
@@ -47,16 +49,22 @@ class Toolhead:
                 'max_accel_to_decel': 2000}
 
 class Gcode:
-    def __init__(s, p): s.p, s.n_e = p, 0
+    """Times E moves like Klipper: an XY+E move runs at F over the XY
+    distance, an extrude-only move at F over the E distance."""
+    def __init__(s, p): s.p, s.n_e, s.pos = p, 0, {'X': 0.0, 'Y': 0.0}
     def run_script_from_command(s, script):
         for line in script.split('\n'):
             s.p.log.append(line)
-            m = re.match(r'G1 E([\d.]+) F([\d.]+)', line)
-            if m:
-                L, F = float(m.group(1)), float(m.group(2)) / 60
-                s.p.windows.append((s.p.pt, s.p.pt + L / F))
-                s.p.pt += L / F
+            w = dict((k, float(v)) for k, v in re.findall(r'([XYEF])([-\d.]+)', line)) if line.startswith('G1') else {}
+            if 'E' in w and 'F' in w:
+                xy = [abs(w[a] - s.pos[a]) for a in 'XY' if a in w]
+                d = max(xy) if xy and max(xy) > 0 else w['E']
+                dur = d / (w['F'] / 60)
+                s.p.windows.append((s.p.pt, s.p.pt + dur, w['E'] / dur))
+                s.p.pt += dur
                 s.n_e += 1
+            for a in 'XY':
+                if a in w: s.pos[a] = w[a]
 
 class LoadCell:
     """Mimics klippy/extras/load_cell.py: add_client callbacks receive
@@ -75,8 +83,9 @@ class LoadCell:
         data = []
         for i in range(n0, n1):
             t = 1000 + i / 320.0
-            on = any(a <= t <= b for a, b in p.windows)
-            counts = 10000.0 if on else 0.0
+            v = sum((w[2] if len(w) > 2 else 10.0)
+                    for w in p.windows if w[0] <= t < w[1])
+            counts = v * 1000.0          # 8 mm/s fast leg -> 80 g
             data.append((t, counts / 100.0, counts, 0))
         p.sent = 1000 + n1 / 320.0
         if not p.client({'data': data}):      # falsy = unregister
@@ -95,9 +104,8 @@ def make(temp=210.0, z=20.0):
     return p, bus, store, PATestRunner(p, bus, store, lim)
 
 def S(**kw):
-    d = dict(pa_start=0, pa_end=0.004, pa_step=0.002, sweeps=2,
-             extrude_len=10, slow_speed=5, fast_speed=20, test_x=100,
-             test_y=100, park_x=10, park_y=10)
+    d = dict(pa_start=0, pa_end=0.004, pa_step=0.002, cycles=2,
+             test_x=100, test_y=100, park_x=10, park_y=10)
     d.update(kw); s = Settings(**d); s.validate(); return s
 
 
@@ -107,9 +115,22 @@ def test_full_run():
     m = store.get_run(rid)
     assert m['status'] == 'complete' and len(m['segments']) == 3, m
     seg = store.get_segment(rid, 1)
-    assert seg['pa'] == 0.002 and len(seg['markers']) == 4
+    names = [k['name'] for k in seg['markers']]
+    assert seg['pa'] == 0.002 and names == ['slow', 'fast', 'slow', 'fast', 'slow'], names
     assert seg['samples'] > 500 and abs(len(seg['t']) - len(seg['f'])) == 0
-    assert max(seg['f']) > 90 and min(seg['f']) < 1       # force pulses seen
+    assert max(seg['f']) > 70 and min(seg['f']) < 10       # fast / slow seen
+    fast = seg['markers'][1]
+    assert abs(fast['t1'] - fast['t0'] - 0.25) < 1e-3     # leg lasts FAST_TIME
+    assert any('SET_PRESSURE_ADVANCE ADVANCE=0.05000' in l for l in p.log)
+    assert 'G1 X10.00 Y10.00 F6000' in p.log                # parked at end
+    assert 'SET_VELOCITY_LIMIT ACCEL=1000.0' in p.log       # XY accel only
+    assert p.objs['toolhead'].ext.max_e_accel == 5000.0     # extruder untouched
+    legs = [l for l in p.log if l.startswith('G1 Y')]
+    assert legs and all(' E' in l for l in legs), legs[:3]   # wobble + E
+    ys = sorted({l.split()[1] for l in legs})
+    assert ys == ['Y100.0000', 'Y100.0500'], ys
+    first = store.get_segment(rid, 0)['markers'][0]           # warm-up lead-in
+    assert abs(first['t1'] - first['t0'] - 4.0) < 1e-3, first
     assert any('SET_PRESSURE_ADVANCE ADVANCE=0.05000' in l for l in p.log)
     assert 'G1 X10.00 Y10.00 F6000' in p.log                # parked at end
 
@@ -125,6 +146,12 @@ def test_cancel_saves_partial():
     assert m['status'] == 'cancelled' and 1 <= len(m['segments']) < 11, m
 
 def test_safety():
+    p, bus, store, r = make(); p.objs['toolhead'].ext.max_extrude_ratio = 0.3
+    try: r.run(Gcmd(), S()); assert False
+    except PAError as e: assert 'max_extrude_cross_section: 100' in str(e), e
+    p, bus, store, r = make()
+    try: r.run(Gcmd(), S(pa_end=0.08, pa_step=0.001, max_filament=100)); assert False
+    except PAError as e: assert 'MAX_FILAMENT' in str(e), e
     for kw, msg in ((dict(temp=150.0), 'nozzle'), (dict(z=5.0), 'Z must')):
         p, bus, store, r = make(**kw)
         try: r.run(Gcmd(), S()); assert False
@@ -203,7 +230,7 @@ def test_edge_overshoot_detected():
 
 def test_segment_meta_has_edges():
     p, bus, store, r = make()
-    rid = r.run(Gcmd(), S(extrude_len=10, fast_speed=20, slow_speed=5))
+    rid = r.run(Gcmd(), S())
     m = store.get_run(rid)
     e = m['segments'][0].get('edge')
     assert e and e['rise'] and len(e['rise']['y']) == 80, m['segments'][0]
@@ -266,6 +293,24 @@ def test_segment_time_range():
     thin = st.get_segment(rid, 0, 200, 5.0, 7.0)
     assert len(thin['t']) <= 200 and thin['decimated']
     assert st.get_segment(rid, 0, 0, 30.0, 40.0)['t'] == []
+
+def test_settings_amounts_match_kapat():
+    s = Settings(pa_start=0, pa_end=0.08, pa_step=0.005, cycles=8)
+    area = 3.14159265 * 0.875 ** 2
+    fast, slow = s.leg_mm(area)
+    assert abs(fast - 2.0) < 0.01 and abs(slow - 0.8) < 0.01, (fast, slow)
+    # KAPAT: per_k = slow + cycles*(fast+slow); total = per_k*n + (warmup-1)*slow
+    assert abs(s.filament_mm(area) - ((0.8 + 8 * 2.8) * 17 + 3 * 0.8)) < 0.5
+    assert abs(s.cross_section_needed(area) - 2.0 / 0.05 * area) < 0.5
+
+def test_back_to_back_windows():
+    from pa_loadcell import analysis
+    m = [{'name': 'slow', 't0': 0, 't1': 1.0}, {'name': 'fast', 't0': 1.0, 't1': 1.25},
+         {'name': 'slow', 't0': 1.25, 't1': 2.25}]
+    (te, pre, post), = analysis._windows(m, 'rise', 2.25)
+    assert te == 1.0 and abs(pre - 0.3) < 1e-9 and abs(post - 0.21) < 1e-9
+    (te, pre, post), = analysis._windows(m, 'fall', 2.25)
+    assert te == 1.25 and abs(pre - 0.21) < 1e-9 and abs(post - 0.96) < 1e-9
 
 if __name__ == '__main__':
     for n, fn in list(globals().items()):

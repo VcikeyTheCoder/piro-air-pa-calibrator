@@ -3,7 +3,8 @@
 Pressure advance (PA) calibration for **Klipper + Mainsail** using a load cell, built for the **PIRO-AIR toolhead**
 (HX717 at 320 Hz). Works with `[load_cell]` and `[load_cell_probe]`, whichever your printer has.
 
-The nozzle extrudes into air at a spot you choose, slow then fast, once for every PA value. Force is recorded
+The nozzle extrudes into air at a spot you choose, in slow and fast pulses (volumetric flow, same pulse shape as
+[KAPAT](https://github.com/vzagranichnyy/KAPAT)), once for every PA value. Force is recorded
 separately for each PA value, stored on the printer, and shown in a scope-style page inside your Mainsail sidebar:
 live graph, one-click recording, test launcher, history with a thumbnail of every PA value, and an overlay to compare them.
 
@@ -24,12 +25,14 @@ Update later from Mainsail (**Machine** page, "pa_loadcell", Update) or by hand:
 What the installer does (every step is safe to repeat, backups are saved as `*.bak-pa_loadcell`):
 
 1. Links the Klipper module into `klippy/extras/pa_loadcell`.
-2. Creates `pa_loadcell.cfg` (detects your load cell section) and adds `[include pa_loadcell.cfg]` above `SAVE_CONFIG`.
+2. Creates `pa_loadcell.cfg` (detects your load cell section), or updates an existing one (options from older versions
+   are commented out, new ones are added, your positions are kept), and adds `[include pa_loadcell.cfg]` above `SAVE_CONFIG`.
 3. Links the web page, adds the **Load Cell** entry to the Mainsail sidebar (`.theme/navi.json`) and the nginx route `/loadcell/`.
 4. Adds an `[update_manager pa_loadcell]` block to `moonraker.conf` so Mainsail can update it.
 5. Restarts Moonraker, nginx and Klipper.
 
-Then set `park_x/y` and `test_x/y` in `pa_loadcell.cfg` (spots where the nozzle can extrude into air), refresh
+Then add `max_extrude_cross_section: 100` to `[extruder]` in printer.cfg (see [Run a test](#run-a-test) for why),
+set `park_x/y` and `test_x/y` in `pa_loadcell.cfg` (spots where the nozzle can extrude into air), refresh
 Mainsail with Ctrl+F5, and open **Load Cell** in the sidebar (or `http://<printer>.local/loadcell/`).
 
 Uninstall: `bash install.sh --uninstall` (keeps your config and recorded data).
@@ -56,8 +59,8 @@ resumes without losing samples.
 | Tab | What it does |
 |---|---|
 | **Live** | Big current force, min / max / mean / noise of what is on screen, and the graph. The page keeps the last 10 minutes: drag the graph or the strip under it to go back, **Follow live** (or End) to return. **Tare**. **Record** starts and stops a recording any time (not during a test); **Mark** drops a labelled marker while recording, handy during manual PA tuning. |
-| **PA test** | Form with every test setting (defaults come from the config file; the test height and minimum temperature are shown but only set in the config), a live summary of PA values, duration, filament used and fast-phase flow in mm3/s, **Start test**, **Cancel test**, progress. |
-| **History** | Tests and recordings with their settings. Each PA value shows a thumbnail of its average rising edge with rise time and overshoot. Click one for the full trace (slow / fast phases shaded, marks shown) in the same scrollable graph as Live, starting from your Live time window and Y settings; zooming in loads every sample of that part or the **Edges** view (every sweep overlaid with the mean). Add your own PA pick and notes, rename, delete, export CSV. |
+| **PA test** | Settings grouped as PA values, Pulse (flows in mm3/s and times), Motion, Position and Run, with a picture of the pulse for one PA value that redraws as you type. A summary shows PA values, time, filament against the cap and leg lengths, and checks your printer's extrusion limit. **Start test**, **Cancel test**, progress (PA value and leg), and a live load cell graph with a marker where each PA value starts. The test height and minimum temperature are shown but only set in the config. |
+| **History** | Tests and recordings with their settings. Each PA value shows a thumbnail of its average rising edge with rise time and overshoot. Click one for the full trace (slow / fast phases shaded, marks shown) in the same scrollable graph as Live (it starts from your Live time window and Y settings, and zooming in loads every sample of that part), or the **Edges** view (every pulse overlaid with the mean). Add your own PA pick and notes, rename, delete, export CSV. |
 | **Compare** | Press **+** on any PA value, from one run or several. **Edge response** overlays the average edge of each PA so you can see the shape change: slow and rounded at low PA, a spike above the plateau at high PA. A table lists rise time, overshoot and signal to noise. **Raw trace** overlays the recorded force. |
 
 **Graph controls** (Live and History):
@@ -87,36 +90,60 @@ Optional embedded view: the page also works inside an iframe with `?embed=1`. In
 From the PA test tab, or the console. Preheat to 200 C or more, home all axes, move Z to 20 mm, then:
 
 ```
-PA_LOADCELL_TEST PA_START=0 PA_END=0.08 PA_STEP=0.002 SWEEPS=5 EXTRUDE_LEN=10 \
-  SLOW_SPEED=2 FAST_SPEED=20 ACCEL=3000 PARK_X=10 PARK_Y=10 TEST_X=150 TEST_Y=10 FILAMENT="PLA red"
+PA_LOADCELL_TEST PA_START=0 PA_END=0.08 PA_STEP=0.005 CYCLES=3 FAST_FLOW=19.24 FAST_TIME=0.25 \
+  SLOW_FLOW=1.92 SLOW_TIME=1 WARMUP=4 WOBBLE=0.05 WOBBLE_AXIS=Y ACCEL=1000 MAX_FILAMENT=400 \
+  PARK_X=10 PARK_Y=10 TEST_X=150 TEST_Y=10 FILAMENT="PLA red"
 ```
 
-First try something small: `PA_LOADCELL_TEST PA_START=0 PA_END=0.01 PA_STEP=0.005 SWEEPS=1`
+First try something small: `PA_LOADCELL_TEST PA_START=0 PA_END=0.01 PA_STEP=0.005 CYCLES=1`
 
-Every parameter is optional; defaults come from `pa_loadcell.cfg`.
+### What the nozzle does
+
+For every PA value: set the PA, one slow lead-in leg, then `CYCLES` pairs of a fast leg and a slow leg, back to back
+with no pause. The very first PA value gets a lead-in `WARMUP` times longer so the melt is steady before measuring.
+
+Every leg is one move: `G1 Y<y> E<mm> F<feed>`. The nozzle moves `WOBBLE` mm (alternating forward and back) while it
+extrudes, and the feed is set so the leg lasts exactly `FAST_TIME` or `SLOW_TIME`. The wobble is what makes the test
+work: **Klipper only applies pressure advance to moves that include X or Y motion**
+(`can_pressure_advance` in `klippy/kinematics/extruder.py`), so a plain `G1 E` would give the same force at every PA.
+
+Because each leg extrudes millimetres of filament over 0.05 mm of travel, Klipper's over-extrusion check
+must allow it. Add this to `[extruder]` (the PA test tab shows the exact value your settings need):
+
+```
+max_extrude_cross_section: 100
+```
+
+That check only exists to catch slicer mistakes; raising it does not change how prints are extruded.
+
+`ACCEL` is set with `SET_VELOCITY_LIMIT`, so it applies to the toolhead (X/Y). The extruder's own limits
+(`max_extrude_only_velocity`, `max_extrude_only_accel`) are not changed: they only apply to extrude-only moves, which
+the test does not use. Speed and flow overrides (M220 / M221) are set to 100 % during the test and restored after.
 
 | Parameter | Default | Meaning |
 |---|---|---|
-| `PA_START` `PA_END` `PA_STEP` | 0 / 0.08 / 0.002 | PA range and resolution |
-| `SWEEPS` | 5 | slow+fast sweeps per PA value |
-| `EXTRUDE_LEN` | 10 | mm of filament per slow / fast phase |
-| `SLOW_SPEED` `FAST_SPEED` | 2 / 20 | mm/s of filament |
-| `ACCEL` | 3000 | toolhead and extruder-only accel during the test |
-| `SETTLE` | 0.5 | seconds of rest after each phase |
+| `PA_START` `PA_END` `PA_STEP` | 0 / 0.08 / 0.005 | PA range and resolution |
+| `CYCLES` | 3 | fast + slow pulses per PA value |
+| `FAST_FLOW` `FAST_TIME` | 19.24 mm3/s / 0.25 s | fast leg (2.0 mm of 1.75 mm filament) |
+| `SLOW_FLOW` `SLOW_TIME` | 1.92 mm3/s / 1.0 s | lead-in and slow legs (0.8 mm) |
+| `WARMUP` | 4 | lead-in multiplier for the first PA value |
+| `WOBBLE` `WOBBLE_AXIS` | 0.05 mm / Y | X or Y travel per leg; 0 turns it off (then PA has no effect) |
+| `ACCEL` | 1000 | toolhead (X/Y) acceleration during the test |
+| `MAX_FILAMENT` | 400 mm | a test that would use more is refused |
 | `PARK_X` `PARK_Y` | config | nozzle rests here after the test (also after cancel or error) |
 | `TEST_X` `TEST_Y` | config | where the nozzle extrudes into air |
-| `FILAMENT` | "" | name stored in run metadata |
+| `FILAMENT` | empty | name stored in run metadata |
 
-The defaults use a lot of filament (about 4 m) and a fast phase of about 48 mm3/s for 1.75 mm filament. The PA test
-tab shows both numbers before you start; lower `FAST_SPEED`, `SWEEPS` or the range if your hotend cannot melt that fast.
-Keep the fast phase at least 0.3 s (`EXTRUDE_LEN / FAST_SPEED`).
+With the defaults a test has 17 PA values, takes about 1.5 minutes and uses about 160 mm of filament.
+The filament cross-section comes from your `[extruder]` `filament_diameter`.
 
 ### Safety checks (the test aborts with a clear message)
 
-- not all axes homed, Z not at 20 mm (+/- 0.5), nozzle below 200 C
+- not all axes homed, Z not at `required_z` (+/- `z_tolerance`), nozzle below `min_temp`
 - no load cell found, or no samples for `sample_timeout` seconds
-- `FAST_SPEED` above `max_extrude_only_velocity`, or park/test position outside the axes
-- **Cancel** stops after the current phase and keeps everything recorded so far (the cut segment is marked partial).
+- more filament than `MAX_FILAMENT`, `max_extrude_cross_section` too low for the pulses (the message gives the line to add),
+  park/test position (plus the wobble) outside the axes, or with `WOBBLE=0` a fast leg above `max_extrude_only_velocity`
+- **Cancel** stops after the current leg and keeps everything recorded so far (the cut segment is marked partial).
   PA, accel and G-code state are always restored.
 
 ## How it works
@@ -166,8 +193,9 @@ sequenceDiagram
   T->>S: create run (settings, nozzle temp, filament)
   loop each PA value
     T->>T: SET_PRESSURE_ADVANCE (segment start)
-    loop SWEEPS
-      T->>T: slow extrude, rest, fast extrude, rest (phase markers)
+    T->>T: slow lead-in leg (longer on the first PA value)
+    loop CYCLES
+      T->>T: fast leg, slow leg: G1 Y(wobble) E F (phase markers)
     end
     B-->>T: samples in this PA window
     T->>S: save segment + average edge (rise time, overshoot)
@@ -178,7 +206,7 @@ sequenceDiagram
 
 Key points:
 
-- **One segment per PA value**, starting at the PA change and ending when that value's sweeps finish. Nothing is mixed
+- **One segment per PA value**, starting at the PA change and ending when that value's pulses finish. Nothing is mixed
   into one long stream. Each segment carries slow / fast phase markers and its own sample count.
 - **Whichever load cell you have.** The data comes from Klipper's own load cell feed (`[load_cell]` or the load cell
   inside `[load_cell_probe]`), so the HX717 is not read twice and probing is unaffected. Grams are used when the sensor
@@ -222,7 +250,7 @@ klipper/pa_loadcell/        Klipper extras package
   __init__.py               commands + webhooks
   settings.py               per-run settings, config + command parameters merged
   feed.py                   SampleBus: the only file touching Klipper's load cell API
-  testrun.py                PA_LOADCELL_TEST: safety checks, sweeps, cleanup
+  testrun.py                PA_LOADCELL_TEST: safety checks, wobble pulses, cleanup
   recorder.py               manual recording and marks
   analysis.py               edge rise time / overshoot (pure Python)
   storage.py                Run -> PA values -> data on disk

@@ -97,7 +97,35 @@ fi
 say "Installing config"
 CFG="$CONFIG_DIR/pa_loadcell.cfg"
 if [ -f "$CFG" ]; then
-  warn "$CFG exists: kept your settings (new defaults: $REPO/klipper/pa_loadcell.cfg)"
+  say "Updating $CFG (your positions and choices are kept)"
+  cp "$CFG" "$CFG.bak-pa_loadcell"
+  python3 - "$CFG" "$REPO/klipper/pa_loadcell.cfg" <<'PY'
+import re, sys
+cfg, new = sys.argv[1], sys.argv[2]
+lines = open(cfg).read().split('\n')
+OBSOLETE = ('sweeps', 'extrude_len', 'slow_speed', 'fast_speed', 'settle')
+OLD_DEFAULTS = {'accel': '3000', 'pa_step': '0.002'}   # first-version defaults
+key = lambda l: (re.match(r'^([a-z_]+)\s*:', l) or [None, None])[1]
+have = set()
+for i, l in enumerate(lines):
+    k = key(l)
+    if k in OBSOLETE:
+        lines[i] = '# no longer used: ' + l
+    elif k:
+        have.add(k)
+newl = {key(l): l for l in open(new).read().split('\n') if key(l)}
+for k, v in OLD_DEFAULTS.items():                 # untouched old default -> new
+    for i, l in enumerate(lines):
+        if key(l) == k and re.match(r'^%s\s*:\s*%s\b' % (k, re.escape(v)), l):
+            lines[i] = newl[k]
+add = [newl[k] for k in newl if k not in have]
+if add:
+    while lines and lines[-1] == '':
+        lines.pop()
+    lines += ['# added by install.sh'] + add + ['']
+open(cfg, 'w').write('\n'.join(lines))
+print('    obsolete options commented out, new options added: %s' % (', '.join(key(l) for l in add) or 'none'))
+PY
 else
   cp "$REPO/klipper/pa_loadcell.cfg" "$CFG"
   LC_SEC="$(grep -rhE '^\[load_cell(_probe)?( [^]]+)?\]' "$CONFIG_DIR" --include='*.cfg' 2>/dev/null | head -n1 | tr -d '[]' || true)"
