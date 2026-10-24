@@ -111,8 +111,16 @@ class PALoadCell:
         return self.store.get_run(req.get_int('run'))
 
     def _wh_segment(self, req):
+        def opt(name):
+            v = req.get(name, None)
+            if v is None:
+                return None
+            if not isinstance(v, (int, float)):
+                raise req.error("%s must be a number" % name)
+            return float(v)
         return self.store.get_segment(req.get_int('run'), req.get_int('idx'),
-                                      req.get_int('max_points', 3000))
+                                      max(0, req.get_int('max_points', 3000)),
+                                      opt('t0'), opt('t1'))
 
     def _wh_tag(self, req):
         pick = req.get_str('pa_pick', '__keep__')

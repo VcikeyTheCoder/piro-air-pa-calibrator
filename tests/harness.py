@@ -17,6 +17,7 @@ from pa_loadcell.errors import PAError
 
 TAU0, K, NOISE = 0.045, 4.0, 1.2
 RATE = 320.0
+SPEED = int(os.environ.get('SPEED', '1'))
 
 
 class Gcode(tb.Gcode):
@@ -98,6 +99,7 @@ class Req:
     def get_int(s, k, d=None): return s._g(k, d, int)
     def get_float(s, k, d=None): return s._g(k, d, float)
     def get_str(s, k, d=None): return s._g(k, d, str)
+    def get(s, k, d=None): return s.params.get(k, d)
     def send(s, x): s.out = x
 
 
@@ -125,6 +127,25 @@ def seed_history(p, plug):
             'PA_STEP': '0.01', 'SWEEPS': '3', 'FILAMENT': fil}))
     rid = plug.store.list_runs()[0]['id']
     plug.store.set_tag(rid, pa_pick=0.04, notes='felt right on the 0.5 corner')
+    # a 5 minute manual recording: pushes of varying size, a slow drift and
+    # two marks, so long-trace scrolling and zooming can be tried
+    rng = random.Random(7)
+    t, f = [], []
+    for i in range(int(300 * RATE)):
+        x = i / RATE
+        push = 0.0
+        for k in range(0, 300, 11):
+            if k + 2 <= x < k + 5:
+                push = 30 + (k % 40) * 2
+        f.append(round(push + 3 * math.sin(x / 40) + rng.gauss(0, NOISE), 3))
+        t.append(round(x, 4))
+    st = plug.store
+    mid = st.new_run('manual', {'filament': 'PLA grey', 'nozzle_temp': 215.0,
+                                'pa_current': 0.04})
+    st.add_segment(mid, {'unit': 'g', 'rate': RATE, 't': t, 'f': f,
+                         'markers': [{'name': 'mark', 'label': 'nozzle wipe', 't0': 64.0, 't1': 64.0},
+                                     {'name': 'mark', 'label': 'retract test', 't0': 201.5, 't1': 201.5}]})
+    st.finalize(mid, 'complete')
 
 
 def main(seed=True, host='127.0.0.1', ws_port=8765, http_port=8080):
@@ -140,10 +161,11 @@ def main(seed=True, host='127.0.0.1', ws_port=8765, http_port=8080):
         while True:
             await asyncio.sleep(0.1)
             if p.busy: continue
-            p.now += 0.1; p.pt += 0.1; state['t'] += 0.1
-            if int(state['t'] * 10) % 90 == 0:       # a manual push every 9 s
-                p.speeds.append((p.pt, p.pt + 1.2, 3.0))
-            lc.pump()
+            for _ in range(SPEED):               # SPEED>1 fast-forwards time
+                p.now += 0.1; p.pt += 0.1; state['t'] += 0.1
+                if int(round(state['t'] * 10)) % 90 == 0:   # a push every 9 s
+                    p.speeds.append((p.pt, p.pt + 1.2, 3.0))
+                lc.pump()
 
     def call(method, params):
         if method == 'printer.gcode.script':

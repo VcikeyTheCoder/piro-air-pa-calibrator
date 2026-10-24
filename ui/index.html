@@ -19,8 +19,12 @@ button.primary{background:var(--trace);border-color:var(--trace);color:#06121a;f
 button.rec{background:var(--rec);border-color:var(--rec);color:#fff;font-weight:600}
 button.quiet{background:none;border-color:transparent;color:var(--dim)}button.quiet:hover:not(:disabled){color:var(--text);border-color:var(--rule)}
 button.danger{color:var(--rec)}
+button.tog{display:inline-flex;align-items:center;gap:6px}
+button.tog[aria-pressed=true]{border-color:var(--trace);color:var(--text);box-shadow:inset 0 0 0 1px var(--trace)}
+button.tog .dot{width:7px;height:7px;border-radius:50%;background:var(--dim)}button.tog[aria-pressed=true] .dot{background:var(--ok)}
 :focus-visible{outline:2px solid var(--trace);outline-offset:2px}
 input,select,textarea{background:var(--bg);border:1px solid var(--rule);border-radius:var(--r);padding:6px 9px;min-width:0}
+input.bad{border-color:var(--rec)}
 textarea{width:100%;min-height:56px;resize:vertical}
 header{display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:10px 16px;background:var(--panel);border-bottom:1px solid var(--rule)}
 header h1{font-size:15px;margin:0;font-weight:650;letter-spacing:-.01em}
@@ -44,7 +48,6 @@ section{display:none}section.on{display:block}
 .big small{font-size:16px;font-weight:500;color:var(--dim);margin-left:4px;letter-spacing:0}
 .stat{display:flex;flex-direction:column;gap:1px;font-size:12px;color:var(--dim)}.stat b{font-size:15px;color:var(--text);font-weight:600}
 .scope{position:relative}.scope canvas{display:block;width:100%;background:var(--panel);border:1px solid var(--rule);border-radius:var(--r)}
-#lc{height:min(52vh,460px);min-height:260px}
 .tip{position:absolute;pointer-events:none;background:var(--panel2);border:1px solid var(--rule);border-radius:var(--r);padding:4px 8px;font-size:12px;display:none;white-space:nowrap;z-index:3}
 .ctl{margin-top:10px}
 .ctl .grp{display:flex;gap:6px;align-items:center;padding-right:10px;margin-right:2px;border-right:1px solid var(--rule)}.ctl .grp:last-child{border:0}
@@ -54,6 +57,7 @@ label.f{display:flex;flex-direction:column;gap:3px;font-size:12px;color:var(--di
 .form legend{padding:0 6px;color:var(--text);font-weight:600}
 .fg{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 .summary{margin:12px 0;padding:10px 14px}
+.fixed{margin-top:10px;font-size:13px;color:var(--dim)}.fixed b{color:var(--text);font-weight:500}
 .prog{height:8px;background:var(--panel2);border-radius:99px;overflow:hidden;margin-top:8px}.prog i{display:block;height:100%;width:0;background:var(--amber);transition:width .3s}
 .runs{display:flex;flex-direction:column;gap:8px;margin-top:10px}
 .run>summary{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:10px 14px;cursor:pointer;list-style:none}
@@ -73,7 +77,27 @@ table{border-collapse:collapse;width:100%;font-size:13px}th,td{text-align:left;p
 .seg{display:inline-flex;border:1px solid var(--rule);border-radius:var(--r);overflow:hidden}.seg button{border:0;border-radius:0;background:none;padding:4px 11px;color:var(--dim)}.seg button[aria-pressed=true]{background:var(--panel2);color:var(--text)}
 #toast{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);background:var(--text);color:var(--bg);padding:8px 14px;border-radius:var(--r);display:none;max-width:90vw;z-index:9}
 .embed header .mainsail{display:none}.embed main{padding-top:8px}
-@media(max-width:620px){.big{font-size:34px}header{padding:8px 12px}main{padding:10px 12px 30px}.ctl .grp{border:0;padding:0}.fg{grid-template-columns:1fr 1fr}}
+
+/* Graph viewer: main graph, overview strip, navigation row, view settings row */
+.vw{overflow:hidden}
+.vw .scope canvas{border:0;border-radius:0}
+.vw .main canvas{touch-action:pan-y;cursor:grab}.vw .main canvas.drag{cursor:grabbing}
+.vw.static .main canvas{cursor:default}
+#lvw .main canvas{height:min(50vh,440px);min-height:250px}
+#hvw .main canvas{height:320px}
+.vw .ov{padding:8px 10px 0;border-top:1px solid var(--rule)}
+.vw .ov canvas{display:block;width:100%;height:36px;touch-action:none;cursor:pointer;border-radius:4px}
+.vw .bar{padding:6px 10px 8px;gap:10px}
+.vw .vset{border-top:1px solid var(--rule);padding-top:8px}
+.vw .btns{display:inline-flex;gap:4px}.vw .btns button{padding:5px 8px;line-height:0}
+.vw .pos{font-size:13px}.vw .pos span{color:var(--dim)}
+.vw .hint{font-size:12px;color:var(--dim)}
+.vw label.in{display:inline-flex;gap:6px;align-items:center;font-size:12px;color:var(--dim)}
+.vw label.in select,.vw label.in input{color:var(--text);padding:4px 7px}
+.vw .ymin,.vw .ymax{width:84px}.vw .xcus{width:74px}
+.vw .yfix{display:inline-flex;gap:6px;align-items:center;font-size:12px;color:var(--dim)}
+@media(max-width:620px){.big{font-size:34px}header{padding:8px 12px}main{padding:10px 12px 30px}.ctl .grp{border:0;padding:0}.fg{grid-template-columns:1fr 1fr}
+ .vw .hint{display:none}#lvw .main canvas{height:44vh;min-height:220px}#hvw .main canvas{height:260px}}
 @media(prefers-reduced-motion:reduce){*{transition:none!important}}
 </style></head>
 <body>
@@ -98,18 +122,13 @@ table{border-collapse:collapse;width:100%;font-size:13px}th,td{text-align:left;p
 <section id="live" class="on">
  <div class="read">
   <div class="big num" id="now">--<small id="unit"></small></div>
-  <div class="stat"><span>min</span><b class="num" id="sMin">-</b></div>
-  <div class="stat"><span>max</span><b class="num" id="sMax">-</b></div>
-  <div class="stat"><span>mean</span><b class="num" id="sMean">-</b></div>
+  <div class="stat"><span>min in view</span><b class="num" id="sMin">-</b></div>
+  <div class="stat"><span>max in view</span><b class="num" id="sMax">-</b></div>
+  <div class="stat"><span>mean in view</span><b class="num" id="sMean">-</b></div>
   <div class="stat"><span>noise (std dev)</span><b class="num" id="sStd">-</b></div>
  </div>
- <div class="scope"><canvas id="lc" aria-label="Live load cell force"></canvas><div class="tip" id="lcTip"></div></div>
+ <div id="lvw"></div>
  <div class="row ctl card" style="padding:10px 12px">
-  <div class="grp">
-   <select id="win" aria-label="Time window"><option value="5">5 s</option><option value="10">10 s</option><option value="30" selected>30 s</option><option value="60">1 min</option><option value="120">2 min</option></select>
-   <button id="pause">Pause view</button>
-   <button id="ylock" aria-pressed="false">Lock scale</button>
-  </div>
   <div class="grp">
    <input id="label" placeholder="Label, e.g. PLA grey" size="18" aria-label="Recording label">
    <button id="rec" class="primary">Record</button>
@@ -117,12 +136,15 @@ table{border-collapse:collapse;width:100%;font-size:13px}th,td{text-align:left;p
    <input id="markText" placeholder="Mark note" size="10" hidden aria-label="Mark note">
   </div>
   <div class="grp"><button id="tare" title="Set the current force as zero">Tare</button></div>
+  <span class="sp"></span>
+  <span style="font-size:12px;color:var(--dim)">The page keeps the last 10 minutes. Press Record to keep longer.</span>
  </div>
 </section>
 
 <section id="test">
- <p style="color:var(--dim);margin:0 0 12px;max-width:70ch">Extrudes into air at a spot you choose, slow then fast, once for every pressure advance value. Each value is recorded as its own segment. Preheat, home all axes and move Z to 20 mm first.</p>
+ <p style="color:var(--dim);margin:0 0 12px;max-width:70ch">Extrudes into air at a spot you choose, slow then fast, once for every pressure advance value. Each value is recorded as its own segment. Preheat, home all axes and move Z to <span id="zNeed">the test height</span> first.</p>
  <form id="form" class="form" autocomplete="off"></form>
+ <div class="fixed" id="fixed" hidden></div>
  <div class="card summary"><div id="sum" class="num"></div>
   <div class="prog" id="tprog" hidden><i></i></div><div id="tstat" class="num" style="margin-top:6px;color:var(--dim)"></div></div>
  <div class="row"><button id="tstart" class="primary">Start test</button><button id="tcancel" class="danger" hidden>Cancel test</button><button id="treset" class="quiet">Reset to defaults</button></div>
@@ -132,12 +154,12 @@ table{border-collapse:collapse;width:100%;font-size:13px}th,td{text-align:left;p
  <div class="row"><div class="seg" id="kind"><button data-k="all" aria-pressed="true">All</button><button data-k="test" aria-pressed="false">Tests</button><button data-k="manual" aria-pressed="false">Recordings</button></div>
   <input id="search" type="search" placeholder="Search name, filament, notes" size="26" aria-label="Search runs"><span class="sp"></span><button id="refresh" class="quiet">Refresh</button></div>
  <div class="runs" id="runs"></div>
- <div id="viewer" class="card" style="margin-top:14px;padding:12px 14px" hidden>
+ <div id="viewer" style="margin-top:14px" hidden>
   <div class="row" style="margin-bottom:8px"><b id="vtitle"></b><span class="sp"></span>
    <div class="seg" id="vmode"><button data-m="trace" aria-pressed="true">Full trace</button><button data-m="edges" aria-pressed="false">Edges</button></div>
    <div class="seg" id="vedge"><button data-e="rise" aria-pressed="true">Rising</button><button data-e="fall" aria-pressed="false">Falling</button></div>
    <button id="vcsv" class="quiet">Export CSV</button></div>
-  <div class="scope"><canvas id="hc" style="height:300px"></canvas><div class="tip" id="hcTip"></div></div>
+  <div id="hvw"></div>
   <div id="vinfo" class="num" style="color:var(--dim);margin-top:6px;font-size:13px"></div>
  </div>
 </section>
@@ -146,7 +168,7 @@ table{border-collapse:collapse;width:100%;font-size:13px}th,td{text-align:left;p
  <div class="row"><div class="seg" id="cmode"><button data-m="edge" aria-pressed="true">Edge response</button><button data-m="raw" aria-pressed="false">Raw trace</button></div>
   <div class="seg" id="cedge"><button data-e="rise" aria-pressed="true">Rising</button><button data-e="fall" aria-pressed="false">Falling</button></div>
   <select id="calign" hidden aria-label="Align"><option value="start">Align at segment start</option><option value="fast">Align at first fast phase</option></select>
-  <span class="sp"></span><button id="cclear" class="quiet">Clear</button></div>
+  <span class="sp"></span><button class="inv tog quiet" aria-pressed="false" title="Flip the graph: negative up"></button><button id="cclear" class="quiet">Clear</button></div>
  <div class="legend" id="legend"></div>
  <div class="scope"><canvas id="cc" style="height:340px"></canvas><div class="tip" id="ccTip"></div></div>
  <div id="ctable" style="margin-top:12px"></div>
@@ -164,16 +186,24 @@ if(Q.get('embed')==='1')document.body.classList.add('embed');
 const PAL=['#5ec8ff','#ffb44d','#6fd49a','#c792ea','#ff7b9c','#4dd0c4','#e6d36a','#9aa7b8'];
 function toast(m,ms=4200){const t=$('#toast');t.textContent=m;t.style.display='block';clearTimeout(toast.h);toast.h=setTimeout(()=>t.style.display='none',ms)}
 const fmt=(v,d=1)=>v==null||!isFinite(v)?'-':(Math.abs(v)>=1000?v.toFixed(0):v.toFixed(d));
+const clamp=(v,a,b)=>Math.min(b,Math.max(a,v));
+/* durations: 4.2 s, 1:05, 10:00 */
+function fdur(s){s=Math.abs(s);if(s<60)return(s<10?s.toFixed(1):s.toFixed(0))+' s';const m=Math.floor(s/60),r=Math.floor(s-m*60);return m+':'+(r<10?'0':'')+r}
+/* tick labels on a time axis */
+function ftick(v,step){const a=Math.abs(v),sg=v<-1e-9?'-':'';if(step>=60||(a>=120&&step>=10)){const m=Math.floor(a/60+1e-9),r=Math.round(a-m*60);return sg+m+':'+(r<10?'0':'')+r}
+ const d=step<.01?3:step<.1?2:step<1?1:0;return sg+a.toFixed(d)+' s'}
 
+/* wall clock label from unix seconds */
+function hms(v,frac){const d=new Date(v*1000),p=n=>(n<10?'0':'')+n;return p(d.getHours())+':'+p(d.getMinutes())+':'+p(d.getSeconds())+(frac?'.'+Math.floor((v%1+1)%1*10):'')}
 /* theme */
-function theme(t){document.documentElement.dataset.theme=t;store.set('theme',t);if(window.hchart)redrawAll()}
+function theme(t){document.documentElement.dataset.theme=t;store.set('theme',t);if(window.ready)redrawAll()}
 theme(Q.get('theme')||store.get('theme','dark'));
 $('#themeBtn').onclick=()=>theme(document.documentElement.dataset.theme==='dark'?'light':'dark');
 
 /* ---- Moonraker JSON-RPC over websocket with auto-reconnect ---- */
 const rpc={id:1,pend:new Map(),ws:null,back:500,up:false,
  connect(){const ws=this.ws=new WebSocket(Q.get('ws')?'ws://'+Q.get('ws'):(location.protocol==='https:'?'wss://':'ws://')+location.host+'/websocket');
-  ws.onopen=()=>{this.up=true;this.back=500;status()};
+  ws.onopen=()=>{this.up=true;this.back=500;status();if($('#hist').classList.contains('on'))loadRuns()};
   ws.onmessage=e=>{let m;try{m=JSON.parse(e.data)}catch{return}const p=this.pend.get(m.id);if(!p)return;this.pend.delete(m.id);clearTimeout(p.to);
    m.error?p.rej(new Error(m.error.message||'Request failed')):p.res(m.result)};
   ws.onclose=()=>{this.up=false;status();for(const[,p]of this.pend){clearTimeout(p.to);p.rej(new Error('disconnected'))}this.pend.clear();setTimeout(()=>this.connect(),this.back);this.back=Math.min(this.back*2,8000)};
@@ -184,59 +214,207 @@ const rpc={id:1,pend:new Map(),ws:null,back:500,up:false,
 const api=(n,p,ms)=>rpc.call('printer.pa_loadcell.'+n,p,ms);
 const gcode=(script,ms=0)=>rpc.call('printer.gcode.script',{script},ms);
 
-/* ---- chart ---- */
+/* ---- chart: draws one frame; knows nothing about scrolling ----
+   series: [{t,f,color,...}] with t sorted (plain or typed arrays).
+   Only the visible index range is touched, so long buffers stay cheap. */
 const css=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim();
 function nice(range,n){const r=range/n,p=Math.pow(10,Math.floor(Math.log10(r||1))),f=r/p;return(f<1.5?1:f<3?2:f<7?5:10)*p}
-function at(s,t){const a=s.t;if(!a.length||t<a[0]||t>a[a.length-1])return null;let lo=0,hi=a.length-1;while(hi-lo>1){const m=(lo+hi)>>1;a[m]<=t?lo=m:hi=m}return s.f[Math.abs(a[lo]-t)<=Math.abs(a[hi]-t)?lo:hi]}
+const TSTEPS=[15,30,60,120,300,600,900,1800,3600];
+function tstep(range){const s=nice(range,7);if(s<10)return s;for(const x of TSTEPS)if(range/x<=8)return x;return 3600}
+function lb(a,x,n=a.length){let lo=0,hi=n;while(lo<hi){const m=(lo+hi)>>1;if(a[m]<x)lo=m+1;else hi=m}return lo}
+function at(s,t){const a=s.t,n=a.length;if(!n||t<a[0]||t>a[n-1])return null;let i=lb(a,t);if(i>=n||(i>0&&Math.abs(a[i-1]-t)<Math.abs(a[i]-t)))i--;return s.f[i]}
 class Chart{
- constructor(cv,tip,mini){this.cv=cv;this.tip=tip;this.mini=!!mini;this.cfg={series:[]};this.hx=null;this.g=null;
-  if(tip){cv.addEventListener('mousemove',e=>{const r=cv.getBoundingClientRect();this.hx=e.clientX-r.left;this.hy=e.clientY-r.top;this.render()});
-   cv.addEventListener('mouseleave',()=>{this.hx=null;this.render()})}}
+ constructor(cv,tip,mini){this.cv=cv;this.tip=tip;this.mini=!!mini;this.cfg={series:[]};this.hx=null;this.g=null;this.noTip=false;
+  if(tip){cv.addEventListener('pointermove',e=>{if(e.pointerType!=='mouse')return;const r=cv.getBoundingClientRect();this.hx=e.clientX-r.left;this.hy=e.clientY-r.top;this.render()});
+   cv.addEventListener('pointerleave',()=>{this.hx=null;this.render()})}}
  set(c){this.cfg=c;this.render()}
  render(){const cv=this.cv,w=cv.clientWidth,h=cv.clientHeight;if(!w||!h)return;const dpr=devicePixelRatio||1;
   if(cv.width!==Math.round(w*dpr)||cv.height!==Math.round(h*dpr)){cv.width=Math.round(w*dpr);cv.height=Math.round(h*dpr)}
   const c=cv.getContext('2d');c.setTransform(dpr,0,0,dpr,0,0);c.clearRect(0,0,w,h);
-  const C=this.cfg,S=C.series||[],mini=this.mini,L=mini?2:50,R=mini?2:14,T=mini?3:10,B=mini?3:22,pw=w-L-R,ph=h-T-B;
-  let x0=C.x0,x1=C.x1;if(x0===undefined){x0=1e18;x1=-1e18;for(const s of S)if(s.t.length){x0=Math.min(x0,s.t[0]);x1=Math.max(x1,s.t[s.t.length-1])}}
+  const C=this.cfg,S=C.series||[],mini=this.mini,L=mini?1:54,R=mini?1:14,T=mini?2:10,B=mini?2:22,pw=Math.max(10,w-L-R),ph=Math.max(10,h-T-B);
+  if(mini){c.fillStyle=css('--panel2');c.fillRect(0,0,w,h)}
+  let x0=C.x0,x1=C.x1;if(x0==null){x0=Infinity;x1=-Infinity;for(const s of S)if(s.t.length){x0=Math.min(x0,s.t[0]);x1=Math.max(x1,s.t[s.t.length-1])}}
   const dim=css('--dim'),grid=css('--grid');c.font='11px '+css('--font');
   if(!(x1>x0)){if(!mini){c.fillStyle=dim;c.textAlign='center';c.fillText(C.empty||'No data yet',w/2,h/2)}this.g=null;if(this.tip)this.tip.style.display='none';return}
-  const cols=S.map(s=>{const mn=new Float32Array(pw).fill(Infinity),mx=new Float32Array(pw).fill(-Infinity),sc=(pw-1)/(x1-x0);
-   for(let i=0;i<s.t.length;i++){const k=Math.round((s.t[i]-x0)*sc);if(k<0||k>=pw)continue;const v=s.f[i];if(v<mn[k])mn[k]=v;if(v>mx[k])mx[k]=v}return{mn,mx}});
-  let y0=C.y0,y1=C.y1;if(y0===undefined){y0=1e18;y1=-1e18;for(const k of cols)for(let i=0;i<pw;i++){if(k.mn[i]<y0)y0=k.mn[i];if(k.mx[i]>y1)y1=k.mx[i]}
+  const sc=(pw-1)/(x1-x0);
+  /* per series: visible index range, then min/max per pixel column when dense */
+  const vis=S.map(s=>{const n=s.t.length,a=Math.max(0,lb(s.t,x0)-1),b=Math.min(n,lb(s.t,x1)+1);if(b-a<pw*1.5)return{a,b,cols:null};
+   const mn=new Float32Array(pw).fill(Infinity),mx=new Float32Array(pw).fill(-Infinity);
+   for(let i=a;i<b;i++){const k=Math.round((s.t[i]-x0)*sc);if(k<0||k>=pw)continue;const v=s.f[i];if(v<mn[k])mn[k]=v;if(v>mx[k])mx[k]=v}return{a,b,cols:{mn,mx}}});
+  let y0=C.y0,y1=C.y1;if(y0==null||y1==null||!(y1>y0)){y0=Infinity;y1=-Infinity;
+   S.forEach((s,j)=>{const V=vis[j];if(V.cols){for(let i=0;i<pw;i++){if(V.cols.mn[i]<y0)y0=V.cols.mn[i];if(V.cols.mx[i]>y1)y1=V.cols.mx[i]}}
+    else for(let i=V.a;i<V.b;i++){if(s.t[i]<x0||s.t[i]>x1)continue;const v=s.f[i];if(v<y0)y0=v;if(v>y1)y1=v}});
    if(!(y1>y0)){y0=(isFinite(y0)?y0:0)-1;y1=y0+2}const pad=(y1-y0)*.08;y0-=pad;y1+=pad}
-  const X=t=>L+(t-x0)/(x1-x0)*pw,Y=v=>T+ph-(v-y0)/(y1-y0)*ph;this.g={L,R,T,B,pw,ph,x0,x1,y0,y1,X,Y,w,h};
+  const inv=!!C.invert,X=t=>L+(t-x0)/(x1-x0)*pw,Y=v=>inv?T+(v-y0)/(y1-y0)*ph:T+ph-(v-y0)/(y1-y0)*ph,xo=C.xoff||0;
+  this.g={L,R,T,B,pw,ph,x0,x1,y0,y1,X,Y,w,h,xo};
   for(const b of C.bands||[]){const a=Math.max(X(b.t0),L),z=Math.min(X(b.t1),L+pw);if(z>a){c.fillStyle=b.color;c.fillRect(a,T,z-a,ph)}}
-  if(!mini){c.strokeStyle=grid;c.lineWidth=1;c.fillStyle=dim;c.textAlign='left';const sy=nice(y1-y0,5);
-   for(let v=Math.ceil(y0/sy)*sy;v<y1;v+=sy){const y=Math.round(Y(v))+.5;c.beginPath();c.moveTo(L,y);c.lineTo(L+pw,y);c.stroke();c.fillText(+v.toPrecision(4),4,y+4)}
-   const sx=nice(x1-x0,7);for(let t=Math.ceil(x0/sx)*sx;t<x1;t+=sx){const x=Math.round(X(t))+.5;c.beginPath();c.moveTo(x,T);c.lineTo(x,T+ph);c.stroke();c.fillText(+t.toFixed(3)+(C.xunit||'s'),x-12,h-6)}
+  if(!mini){c.strokeStyle=grid;c.lineWidth=1;c.fillStyle=dim;const sy=nice(y1-y0,5);c.textAlign='right';
+   for(let v=Math.ceil(y0/sy)*sy;v<y1;v+=sy){const y=Math.round(Y(v))+.5;c.beginPath();c.moveTo(L,y);c.lineTo(L+pw,y);c.stroke();c.fillText(+v.toPrecision(4),L-6,y+4)}
+   const r0=x0-xo,r1=x1-xo,sx=C.timeAxis===false?nice(r1-r0,7):tstep(r1-r0);c.textAlign='center';
+   for(let v=Math.ceil(r0/sx)*sx;v<r1;v+=sx){const x=Math.round(X(v+xo))+.5;c.beginPath();c.moveTo(x,T);c.lineTo(x,T+ph);c.stroke();
+    const lab=C.xtick?C.xtick(v,sx):ftick(v,sx);const tw=c.measureText(lab).width/2;c.fillText(lab,clamp(x,L+tw,L+pw-tw),h-6)}
    if(y0<0&&y1>0){c.strokeStyle=dim;c.globalAlpha=.5;const y=Math.round(Y(0))+.5;c.beginPath();c.moveTo(L,y);c.lineTo(L+pw,y);c.stroke();c.globalAlpha=1}}
-  for(const v of C.vlines||[]){const x=Math.round(X(v.t))+.5;if(x<L||x>L+pw)continue;c.strokeStyle=v.color||css('--amber');c.setLineDash([4,3]);c.beginPath();c.moveTo(x,T);c.lineTo(x,T+ph);c.stroke();c.setLineDash([]);
+  c.save();c.beginPath();c.rect(L,T,pw,ph);c.clip();
+  for(const v of C.vlines||[]){const x=Math.round(X(v.t))+.5;if(x<L||x>L+pw)continue;c.strokeStyle=v.color||css('--amber');c.lineWidth=1;c.setLineDash(mini?[2,2]:[4,3]);c.beginPath();c.moveTo(x,T);c.lineTo(x,T+ph);c.stroke();c.setLineDash([]);
    if(v.label&&!mini){c.fillStyle=v.color||css('--amber');c.textAlign='left';c.fillText(v.label,x+4,T+11)}}
-  S.forEach((s,j)=>{const k=cols[j];c.strokeStyle=s.color;c.globalAlpha=s.alpha??1;c.lineWidth=s.w||(mini?1.2:1.5);c.lineJoin='round';c.beginPath();let on=false;
-   if(s.t.length<pw){for(let i=0;i<s.t.length;i++){const x=X(s.t[i]),y=Y(s.f[i]);i?c.lineTo(x,y):c.moveTo(x,y)}c.stroke();c.globalAlpha=1;return}
-   for(let i=0;i<pw;i++){if(k.mn[i]===Infinity){on=false;continue}const x=L+i+.5,a=Y(k.mn[i]),b=Y(k.mx[i]);
+  S.forEach((s,j)=>{const V=vis[j];c.strokeStyle=s.color;c.globalAlpha=s.alpha??1;c.lineWidth=s.w||(mini?1:1.5);c.lineJoin='round';c.beginPath();
+   if(!V.cols){for(let i=V.a;i<V.b;i++){const x=X(s.t[i]),y=Y(s.f[i]);i>V.a?c.lineTo(x,y):c.moveTo(x,y)}c.stroke();c.globalAlpha=1;return}
+   let on=false;const{mn,mx}=V.cols;for(let i=0;i<pw;i++){if(mn[i]===Infinity){on=false;continue}const x=L+i+.5,a=Y(mn[i]),b=Y(mx[i]);
     if(!on){c.moveTo(x,a);on=true}else c.lineTo(x,a);if(b!==a)c.lineTo(x,b)}c.stroke();c.globalAlpha=1});
-  if(C.now!=null&&!mini){const x=L+pw,y=Y(C.now);c.fillStyle=S[0].color;c.beginPath();c.arc(x-1,y,3.5,0,7);c.fill();
+  c.restore();
+  if(C.hl){/* overview: shade what is outside the visible window */const a=clamp(X(C.hl[0]),L,L+pw),z0=clamp(X(C.hl[1]),L,L+pw),z=Math.max(z0,a+3);
+   c.fillStyle=css('--bg');c.globalAlpha=.6;c.fillRect(L,T,a-L,ph);c.fillRect(z,T,L+pw-z,ph);c.globalAlpha=1;
+   c.strokeStyle=css('--trace');c.lineWidth=1.5;c.strokeRect(a+.75,T+.75,z-a-1.5,ph-1.5);
+   c.fillStyle=css('--trace');c.fillRect(a,T+ph/2-6,2.5,12);c.fillRect(z-2.5,T+ph/2-6,2.5,12)}
+  if(C.now!=null&&!mini){const x=L+pw,y=clamp(Y(C.now),T,T+ph);c.fillStyle=S[0].color;c.beginPath();c.arc(x-1,y,3.5,0,7);c.fill();
    const txt=C.nowText,tw=c.measureText(txt).width+10,ty=Math.max(T,Math.min(T+ph-16,y-8));c.fillRect(L+pw-tw-8,ty,tw,16);c.fillStyle=css('--bg');c.textAlign='left';c.fillText(txt,L+pw-tw-3,ty+12)}
-  if(this.tip&&this.hx!=null&&this.hx>=L&&this.hx<=L+pw){const t=x0+(this.hx-L)/pw*(x1-x0);const x=Math.round(this.hx)+.5;c.strokeStyle=dim;c.lineWidth=1;c.beginPath();c.moveTo(x,T);c.lineTo(x,T+ph);c.stroke();
-   const lines=[(C.tfmt?C.tfmt(t):t.toFixed(3)+'s')];S.forEach(s=>{if(s.name||S.length===1){const v=at(s,t);if(v!=null)lines.push((s.name?'<span style="color:'+s.color+'">&#9632;</span> '+esc(s.name)+' ':'')+fmt(v,C.dec??2)+(C.unit?' '+C.unit:''))}});
+  if(this.tip&&!this.noTip&&this.hx!=null&&this.hx>=L&&this.hx<=L+pw){const t=x0+(this.hx-L)/pw*(x1-x0);const x=Math.round(this.hx)+.5;c.strokeStyle=dim;c.lineWidth=1;c.beginPath();c.moveTo(x,T);c.lineTo(x,T+ph);c.stroke();
+   const lines=[(C.tfmt?C.tfmt(t-xo):ftick(t-xo,.01))];S.forEach(s=>{if(s.name||S.length===1){const v=at(s,t);if(v!=null)lines.push((s.name?'<span style="color:'+s.color+'">&#9632;</span> '+esc(s.name)+' ':'')+fmt(v,C.dec??2)+(C.unit?' '+C.unit:''))}});
    this.tip.innerHTML=lines.join('<br>');this.tip.style.display='block';const tw=this.tip.offsetWidth;this.tip.style.left=Math.min(this.hx+12,w-tw-4)+'px';this.tip.style.top=Math.max(4,this.hy-10)+'px'}
   else if(this.tip)this.tip.style.display='none'}
 }
 
-/* ---- live buffer ---- */
-const CAP=60000,bt=new Float64Array(CAP),bf=new Float32Array(CAP);let bh=0,bn=0,seq=0,epoch=null,unitGen=null;
-function pushS(t,f){bt[bh]=t;bf[bh]=f;bh=(bh+1)%CAP;if(bn<CAP)bn++}
-function resetBuf(){bh=bn=0;seq=0}
-function slice(win){const t=[],f=[];if(!bn)return{t,f};const tn=bt[(bh-1+CAP)%CAP];
- for(let k=0;k<bn;k++){const i=(bh-1-k+CAP)%CAP;if(tn-bt[i]>win)break;t.push(bt[i]);f.push(bf[i])}t.reverse();f.reverse();const e=t[t.length-1]||0;return{t:t.map(x=>x-e),f}}
-let info={},tst={state:'idle'},rec={active:false},liveErr='',frozen=false,ylock=null;
-const live=new Chart($('#lc'),$('#lcTip'));
+/* ---- view settings shared by every graph ---- */
+let INVERT=!!store.get('invert',false);
+const viewers=[];
+const ICON={start:'M5 5h2.2v14H5zM8.5 12L19 5v14z',back:'M16 5L6.5 12l9.5 7z',fwd:'M8 5l9.5 7L8 19z',end:'M16.8 5H19v14h-2.2zM15.5 12L5 19V5z',
+ inv:'M7 3L3 7.5h3V15h2V7.5h3zM17 21l4-4.5h-3V9h-2v7.5h-3z'};
+const svg=d=>`<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="${d}"/></svg>`;
+function paintInvert(){$$('button.inv').forEach(b=>{b.setAttribute('aria-pressed',INVERT);b.innerHTML=svg(ICON.inv)+'<span>'+(INVERT?'Inverted':'Invert')+'</span>'})}
+function setInvert(v){INVERT=!!v;store.set('invert',INVERT);paintInvert();redrawAll()}
+document.addEventListener('click',e=>{const b=e.target.closest('button.inv');if(b)setInvert(!INVERT)});
+const WINS=[1,2,5,10,30,60,120,300,600];
+const wname=s=>s<60?s+' s':(s/60)+' min';
+
+/* ---- Viewer: one scrollable graph with overview strip, navigation and
+   view settings. Live and History both use it.
+   d = {series, ovSeries, tmin, tmax, bands, vlines, unit, dec, tfmt, empty, now, nowText, static}
+   Settings S = {win (s, 0 = whole), ymode 'auto'|'fixed', ymin, ymax} */
+class Viewer{
+ constructor(root,o){this.o=o;this.live=!!o.live;this.follow=this.live;this.x0=null;this.anchor=0;this.d={series:[]};
+  this.S=Object.assign({win:o.live?30:10,ymode:'auto',ymin:'',ymax:''},store.get('view.'+o.key,null)||{});
+  root.classList.add('vw','card');
+  root.innerHTML=`<div class="scope main"><canvas tabindex="0" aria-label="${esc(o.label||'Graph')}. Drag or use arrow keys to move, mouse wheel or plus and minus to zoom."></canvas><div class="tip"></div></div>
+   <div class="scroll"><div class="ov"><canvas aria-hidden="true"></canvas></div>
+    <div class="row bar"><div class="btns">
+     <button data-go="start" title="Go to start (Home)" aria-label="Go to start">${svg(ICON.start)}</button>
+     <button data-go="back" title="Back half a window (Left arrow)" aria-label="Back">${svg(ICON.back)}</button>
+     <button data-go="fwd" title="Forward half a window (Right arrow)" aria-label="Forward">${svg(ICON.fwd)}</button>
+     <button data-go="end" title="${this.live?'Back to live (End)':'Go to end (End)'}" aria-label="${this.live?'Back to live':'Go to end'}">${svg(ICON.end)}</button></div>
+     <span class="pos num"></span><span class="sp"></span><span class="hint">Drag to move, scroll to zoom</span>
+     ${this.live?'<button class="tog follow" aria-pressed="true"><i class="dot"></i>Follow live</button>':''}</div></div>
+   <div class="row bar vset">
+    <label class="in xg">Time window <select class="xwin">${WINS.map(s=>`<option value="${s}">${wname(s)}</option>`).join('')}<option value="0">${this.live?'Whole buffer':'Whole run'}</option><option value="c">Custom</option></select>
+     <input class="xcus num" type="number" min="0.05" step="any" hidden aria-label="Custom time window in seconds"></label>
+    <label class="in">Y axis <select class="ymode"><option value="auto">Auto</option><option value="fixed">Fixed</option></select></label>
+    <span class="yfix" hidden><input class="ymin num" type="number" step="any" placeholder="min" aria-label="Y axis minimum"> to <input class="ymax num" type="number" step="any" placeholder="max" aria-label="Y axis maximum">
+     <button class="yfill quiet" title="Copy the range you see now">Use current</button></span>
+    <span class="sp"></span><button class="inv tog" aria-pressed="false" title="Flip the graph: negative up"></button></div>`;
+  this.root=root;const q=s=>root.querySelector(s);this.q=q;
+  this.cv=q('.main canvas');this.chart=new Chart(this.cv,q('.main .tip'));this.ov=new Chart(q('.ov canvas'),null,true);
+  this.bindMain();this.bindOv();this.bindControls();this.sync();viewers.push(this)}
+ save(){store.set('view.'+this.o.key,this.S);this.sync()}
+ /* settings -> controls */
+ sync(){const S=this.S,q=this.q,xs=q('.xwin'),xc=q('.xcus');const known=S.win===0||WINS.includes(+S.win);
+  xs.value=known?String(+S.win):'c';xc.hidden=known;if(!known&&document.activeElement!==xc)xc.value=+(+S.win).toPrecision(3);
+  q('.ymode').value=S.ymode;q('.yfix').hidden=S.ymode!=='fixed';
+  for(const k of['ymin','ymax'])if(document.activeElement!==q('.'+k))q('.'+k).value=S[k];
+  const bad=S.ymode==='fixed'&&!this.yfixed();q('.ymin').classList.toggle('bad',bad);q('.ymax').classList.toggle('bad',bad);
+  const f=q('.follow');if(f)f.setAttribute('aria-pressed',this.follow)}
+ yfixed(){const a=parseFloat(this.S.ymin),b=parseFloat(this.S.ymax);return isFinite(a)&&isFinite(b)&&b>a?[a,b]:null}
+ bindControls(){const q=this.q;
+  q('.xwin').onchange=e=>{const v=e.target.value;if(v==='c'){q('.xcus').hidden=false;q('.xcus').value=+this.width().toPrecision(3);q('.xcus').focus();return}this.setWin(+v)};
+  q('.xcus').onchange=e=>{const v=parseFloat(e.target.value);if(v>0)this.setWin(v)};
+  q('.ymode').onchange=e=>{this.S.ymode=e.target.value;if(this.S.ymode==='fixed'&&!this.yfixed())this.fillY();this.save();this.render()};
+  for(const k of['ymin','ymax'])q('.'+k).oninput=e=>{this.S[k]=e.target.value;this.save();this.render()};
+  q('.yfill').onclick=()=>{this.fillY();this.save();this.render()};
+  $$('[data-go]',this.root).forEach(b=>b.onclick=()=>this.go(b.dataset.go));
+  const f=q('.follow');if(f)f.onclick=()=>{if(this.follow){const r=this.range();this.unfollow();if(r)this.x0=r[0]}else this.follow=true;this.sync();this.render()}}
+ fillY(){const g=this.chart.g;if(!g)return;const lo=Math.min(g.y0,g.y1),hi=Math.max(g.y0,g.y1),st=nice(hi-lo,8);
+  this.S.ymin=+(Math.floor(lo/st)*st).toPrecision(6);this.S.ymax=+(Math.ceil(hi/st)*st).toPrecision(6)}
+ /* geometry */
+ has(){return this.d.tmin!=null&&this.d.tmax!=null}
+ total(){return this.has()?this.d.tmax-this.d.tmin:0}
+ maxW(){return this.live?Math.max(this.o.keep||600,this.total()):Math.max(this.total(),.05)}
+ width(){const tot=this.total(),w=+this.S.win;if(!w)return Math.max(tot,this.live?1:.05);return this.live?w:Math.min(w,Math.max(tot,.05))}
+ range(){if(!this.has())return null;const{tmin,tmax}=this.d,w=this.width();if(this.live&&this.follow)return[tmax-w,tmax];
+  const lo=Math.min(tmin,tmax-w),hi=Math.max(lo,tmax-w);let x0=this.x0==null?lo:this.x0;x0=clamp(x0,lo,hi);this.x0=x0;return[x0,x0+w]}
+ unfollow(){if(this.follow){this.follow=false;this.anchor=this.d.tmax||0}}
+ setX0(x0){if(!this.has())return;const w=this.width();
+  if(this.live&&x0+w>=this.d.tmax-1e-6){this.follow=true}else{this.unfollow();this.x0=x0}this.sync();this.render()}
+ pan(frac){const r=this.range();if(r)this.setX0(r[0]+frac*(r[1]-r[0]))}
+ setWin(w,anchorT){const r=this.range();if(w){w=clamp(w,.05,this.maxW());if(!this.live&&w>=this.total()-1e-9)w=0}
+  const old=r?r[1]-r[0]:w;this.S.win=w?+w.toPrecision(4):0;this.save();if(!r){this.render();return}
+  const nw=this.width(),t=anchorT==null?(r[0]+r[1])/2:anchorT,frac=(t-r[0])/old;
+  if(this.live&&this.follow)this.render();else this.setX0(t-frac*nw)}
+ zoom(f,t){const r=this.range();if(r)this.setWin((r[1]-r[0])*f,t)}
+ go(k){if(!this.has())return;const{tmin,tmax}=this.d;
+  if(k==='start')this.setX0(tmin);else if(k==='back')this.pan(-.5);else if(k==='fwd')this.pan(.5);
+  else if(this.live){this.follow=true;this.sync();this.render()}else this.setX0(tmax)}
+ /* pointer, wheel and keyboard on the main graph */
+ bindMain(){const cv=this.cv,P=new Map();let g=null;
+  const snap=()=>{const r=this.range();g=r?{r,ps:new Map([...P].map(([k,v])=>[k,{x:v.x}])),moved:false}:null};
+  const geo=()=>{const G=this.chart.g,rc=cv.getBoundingClientRect();return{L:G?G.L:0,pw:G?G.pw:rc.width,left:rc.left}};
+  cv.addEventListener('pointerdown',e=>{if(this.d.static||e.button>0)return;try{cv.setPointerCapture(e.pointerId)}catch{}P.set(e.pointerId,{x:e.clientX});snap()});
+  cv.addEventListener('pointermove',e=>{if(!P.has(e.pointerId)||!g)return;P.get(e.pointerId).x=e.clientX;const{L,pw,left}=geo();
+   if(P.size===1){const p0=g.ps.get(e.pointerId);if(!p0)return;const dx=e.clientX-p0.x;if(!g.moved&&Math.abs(dx)<4)return;
+    g.moved=true;cv.classList.add('drag');this.chart.noTip=true;const w=g.r[1]-g.r[0];this.setX0(g.r[0]-dx/pw*w)}
+   else if(P.size===2){const[A,B]=[...P.values()],[A0,B0]=[...g.ps.values()];if(!A0||!B0)return;g.moved=true;
+    const d=Math.max(20,Math.abs(A.x-B.x)),d0=Math.max(20,Math.abs(A0.x-B0.x)),w0=g.r[1]-g.r[0];
+    const m0=((A0.x+B0.x)/2-left-L)/pw,m1=((A.x+B.x)/2-left-L)/pw,tm=g.r[0]+m0*w0,nw=clamp(w0*d0/d,.05,this.maxW());
+    this.S.win=+nw.toPrecision(4);this.unfollow();this.setX0(tm-m1*this.width())}});
+  const up=e=>{if(!P.has(e.pointerId))return;P.delete(e.pointerId);if(g&&g.moved)this.save();cv.classList.remove('drag');this.chart.noTip=false;if(P.size)snap();else g=null};
+  cv.addEventListener('pointerup',up);cv.addEventListener('pointercancel',up);
+  cv.addEventListener('wheel',e=>{if(this.d.static)return;const r=this.range();if(!r)return;e.preventDefault();const{L,pw,left}=geo(),w=r[1]-r[0];
+   if(e.shiftKey||Math.abs(e.deltaX)>Math.abs(e.deltaY)){this.setX0(r[0]+(e.deltaX||e.deltaY)/pw*w)}
+   else{const fx=clamp((e.clientX-left-L)/pw,0,1),k=e.deltaMode===1?40:1;this.zoom(Math.exp(clamp(e.deltaY*k,-300,300)*.0015),r[0]+fx*w)}},{passive:false});
+  cv.addEventListener('dblclick',()=>{if(this.d.static)return;if(this.live){this.follow=true;this.sync();this.render()}else this.setWin(0)});
+  cv.addEventListener('keydown',e=>{if(this.d.static)return;const k=e.key,m={ArrowLeft:()=>this.pan(-.5),ArrowRight:()=>this.pan(.5),Home:()=>this.go('start'),End:()=>this.go('end'),
+   '+':()=>this.zoom(.5),'=':()=>this.zoom(.5),'-':()=>this.zoom(2)}[k];if(m){e.preventDefault();m()}})}
+ /* overview strip: drag the box to move, drag its edges to resize, click to jump */
+ bindOv(){const cv=this.ov.cv;let g=null;
+  const tAt=e=>{const G=this.ov.g,rc=cv.getBoundingClientRect();return G?G.x0+(e.clientX-rc.left-G.L)/G.pw*(G.x1-G.x0):null};
+  const zone=e=>{const G=this.ov.g,r=this.range();if(!G||!r)return null;const px=e.clientX-cv.getBoundingClientRect().left,a=G.X(r[0]),b=G.X(r[1]);
+   if(b-a>16){if(Math.abs(px-a)<8)return'l';if(Math.abs(px-b)<8)return'r'}return px>=a&&px<=b?'move':'out'};
+  cv.addEventListener('pointerdown',e=>{const z=zone(e),t=tAt(e);if(!z||t==null)return;try{cv.setPointerCapture(e.pointerId)}catch{}
+   if(z==='out'){const r=this.range();this.setX0(t-(r[1]-r[0])/2)}g={m:z==='out'?'move':z,t0:t,r:this.range()}});
+  cv.addEventListener('pointermove',e=>{if(!g){const z=zone(e);cv.style.cursor=z==='l'||z==='r'?'ew-resize':z==='move'?'grab':'pointer';return}
+   const t=tAt(e);if(t==null)return;const dt=t-g.t0;
+   if(g.m==='move')this.setX0(g.r[0]+dt);
+   else if(g.m==='l'){const a=Math.min(g.r[0]+dt,g.r[1]-.05);this.S.win=+(g.r[1]-a).toPrecision(4);this.unfollow();this.setX0(a)}
+   else{const b=Math.max(g.r[1]+dt,g.r[0]+.05);this.S.win=+(b-g.r[0]).toPrecision(4);this.unfollow();this.setX0(g.r[0])}});
+  const up=()=>{if(g&&g.m!=='move')this.save();g=null};cv.addEventListener('pointerup',up);cv.addEventListener('pointercancel',up)}
+ /* draw */
+ render(){const d=this.d,st=!!d.static;this.root.classList.toggle('static',st);this.q('.scroll').hidden=st;this.q('.xg').hidden=st;
+  const yf=this.S.ymode==='fixed'?this.yfixed():null,yy=yf?{y0:yf[0],y1:yf[1]}:{};
+  if(st){this.chart.set(Object.assign({},d,yy,{invert:INVERT}));return}
+  const r=this.range();if(!r){this.chart.set({series:[],empty:d.empty});this.ov.set({series:[]});this.q('.pos').textContent='';return}
+  const[x0,x1]=r;let xc={xoff:0};
+  if(this.live&&this.follow)xc={xoff:d.tmax};
+  else if(this.live&&d.clock!=null)xc={xoff:-d.clock,xtick:(v,st)=>hms(v,st<1),tfmt:v=>hms(v,true)+'  ('+fdur(d.tmax+d.clock-v)+' ago)'};   // scrolled back: real clock time
+  else if(this.live)xc={xoff:this.anchor};
+  this.chart.set(Object.assign({},d,yy,xc,{x0,x1,invert:INVERT,now:this.live&&this.follow?d.now:null}));
+  const ox0=Math.min(d.tmin,x0),ox1=Math.max(d.tmax,x1);
+  this.ov.set({series:(d.ovSeries||d.series).map(s=>Object.assign({},s,{w:1,alpha:.9})),bands:d.bands,vlines:d.vlines,x0:ox0,x1:ox1,hl:[x0,x1],invert:INVERT,y0:yy.y0,y1:yy.y1});
+  const tot=this.total();
+  this.q('.pos').innerHTML=this.live?(this.follow?'Following live':'<b>'+fdur(d.tmax-x1)+'</b> behind live')+`<span style="margin-left:12px">Buffer ${fdur(Math.min(tot,this.o.keep||600))} of ${fdur(this.o.keep||600)}</span>`
+   :`${fdur(x0-d.tmin)} to ${fdur(x1-d.tmin)} <span>of ${fdur(tot)}</span>`;
+  if(this.o.onView)this.o.onView(x0,x1)}
+}
+
+/* ---- live buffer: last KEEP seconds as typed arrays (about 190k samples at 320 Hz) ---- */
+const KEEP=600;let CAPN=1<<18,bt=new Float64Array(CAPN),bf=new Float32Array(CAPN),bn=0,seq=0,epoch=null,unitGen=null;
+function pushS(t,f){if(bn&&t<=bt[bn-1])return;if(bn===CAPN){const k=CAPN>>2;bt.copyWithin(0,k,bn);bf.copyWithin(0,k,bn);bn-=k}bt[bn]=t;bf[bn]=f;bn++}
+function trimBuf(){if(!bn)return;const k=lb(bt,bt[bn-1]-KEEP,bn);if(k>640){bt.copyWithin(0,k,bn);bf.copyWithin(0,k,bn);bn-=k}}
+function resetBuf(){bn=0;seq=0;clk=null;lv.follow=true;lv.x0=null}
+let clk=null,info={},tst={state:'idle'},rec={active:false},liveErr='';
+const lv=new Viewer($('#lvw'),{key:'live',live:true,keep:KEEP,label:'Live load cell force',onView:liveStats});
 async function pollLoop(){for(;;){
  if(document.hidden||!rpc.up){await sleep(400);continue}
  try{const r=await api('live',{since:seq},6000);liveErr='';
   if(r.reset||r.epoch!==epoch||r.unit_gen!==unitGen){resetBuf();epoch=r.epoch;unitGen=r.unit_gen}
-  for(const[t,v]of r.samples)pushS(t,v);seq=r.seq;info=r;tst=r.test||tst;rec=r.rec||rec;status()}
+  for(const[t,v]of r.samples)pushS(t,v);trimBuf();
+  if(r.samples.length){const off=Date.now()/1000-r.samples[r.samples.length-1][0];clk=clk==null||Math.abs(off-clk)>5?off:clk+(off-clk)*.05}seq=r.seq;info=r;tst=r.test||tst;rec=r.rec||rec;status()}
  catch(e){liveErr=e.message;status()}await sleep(liveErr?1500:110)}}
 
 /* ---- status ---- */
@@ -262,16 +440,16 @@ function status(){const s=$('#cSrc'),k=info.source;let cls='',txt='';
  $('#tstat').textContent=busy?('PA '+(tst.pa??'-')+', '+Math.round((tst.progress||0)*100)+' %, '+Math.round(tst.elapsed||0)+' s elapsed'):''}
 
 /* ---- live drawing ---- */
-function frame(){if(!document.hidden&&$('#live').classList.contains('on')&&!frozen){const win=+$('#win').value;
-  const s=slice(win);let last=null,mn=1e18,mx=-1e18,sum=0,sq=0;const n=s.f.length;
-  for(let i=0;i<n;i++){const v=s.f[i];if(v<mn)mn=v;if(v>mx)mx=v;sum+=v;sq+=v*v}
-  if(n){const tail=Math.min(n,Math.max(3,Math.round((info.rate||320)*.1)));let a=0;for(let i=n-tail;i<n;i++)a+=s.f[i];last=a/tail;
-   const mean=sum/n;$('#now').firstChild.nodeValue=fmt(last,info.unit==='g'?1:0);$('#sMin').textContent=fmt(mn);$('#sMax').textContent=fmt(mx);$('#sMean').textContent=fmt(mean);$('#sStd').textContent=fmt(Math.sqrt(Math.max(0,sq/n-mean*mean)),2)}
-  const cfg={series:[{t:s.t,f:s.f,color:css('--trace')}],x0:-win,x1:0,unit:info.unit==='g'?'g':'',dec:1,tfmt:t=>t.toFixed(1)+' s',empty:rpc.up?'Waiting for load cell data':'Offline',now:last,nowText:last==null?'':fmt(last,1)};
-  if(ylock){cfg.y0=ylock[0];cfg.y1=ylock[1]}live.set(cfg)}
+function liveStats(x0,x1){const a=lb(bt,x0,bn),b=lb(bt,x1+1e-9,bn),n=b-a;if(!n){['#sMin','#sMax','#sMean','#sStd'].forEach(s=>$(s).textContent='-');return}
+ let mn=Infinity,mx=-Infinity,sum=0;for(let i=a;i<b;i++){const v=bf[i];if(v<mn)mn=v;if(v>mx)mx=v;sum+=v}const mean=sum/n;let sq=0;for(let i=a;i<b;i++){const e=bf[i]-mean;sq+=e*e}
+ $('#sMin').textContent=fmt(mn);$('#sMax').textContent=fmt(mx);$('#sMean').textContent=fmt(mean);$('#sStd').textContent=fmt(Math.sqrt(sq/n),2)}
+function frame(){if(!document.hidden&&$('#live').classList.contains('on')){let last=null;
+  if(bn){const tail=Math.min(bn,Math.max(3,Math.round((info.rate||320)*.1)));let a=0;for(let i=bn-tail;i<bn;i++)a+=bf[i];last=a/tail;$('#now').firstChild.nodeValue=fmt(last,info.unit==='g'?1:0)}
+  const ser={t:bt.subarray(0,bn),f:bf.subarray(0,bn),color:css('--trace')};
+  lv.d={series:[ser],tmin:bn?bt[0]:null,tmax:bn?bt[bn-1]:null,unit:info.unit==='g'?'g':'',dec:1,tfmt:t=>ftick(t,.1),
+   clock:clk,empty:rpc.up?'Waiting for load cell data':'Offline',now:last,nowText:last==null?'':fmt(last,1)};
+  lv.render()}
  setTimeout(frame,66)}
-$('#pause').onclick=e=>{frozen=!frozen;e.target.textContent=frozen?'Resume view':'Pause view'};
-$('#ylock').onclick=e=>{if(ylock){ylock=null;e.target.setAttribute('aria-pressed','false');e.target.textContent='Lock scale'}else if(live.g){ylock=[live.g.y0,live.g.y1];e.target.setAttribute('aria-pressed','true');e.target.textContent='Auto scale'}};
 $('#rec').onclick=async()=>{try{if(rec.active){const r=await api('record_stop');toast('Saved as Run '+r.run);loadRuns()}else await api('record_start',{label:$('#label').value})}catch(e){toast(e.message)}};
 $('#mark').onclick=async()=>{try{await api('mark',{label:$('#markText').value});$('#markText').value='';toast('Marked')}catch(e){toast(e.message)}};
 $('#markText').addEventListener('keydown',e=>{if(e.key==='Enter')$('#mark').click()});
@@ -287,7 +465,10 @@ const FIELDS=[
 let DEF=null;
 async function loadDefaults(){try{const d=await api('defaults');DEF=d;const saved=store.get('form',{});
   $('#form').innerHTML=FIELDS.map(([g,fs])=>`<fieldset><legend>${g}</legend><div class="fg">${fs.map(([k,l,st])=>`<label class="f">${l}<input name="${k}" ${st==='text'?'type="text"':`type="number" step="${st}"`} value="${esc(saved[k]??d[k])}"></label>`).join('')}</div></fieldset>`).join('');
-  $$('#form input').forEach(i=>i.addEventListener('input',()=>{store.set('form',formVals());summary()}));summary()}catch(e){$('#form').innerHTML='<div class="empty">Could not read defaults: '+esc(e.message)+'</div>'}}
+  $$('#form input').forEach(i=>i.addEventListener('input',()=>{store.set('form',formVals());summary()}));summary();
+  const L=d.limits||{};if(L.required_z!=null){$('#zNeed').textContent=fmt(L.required_z,1)+' mm';const fx=$('#fixed');fx.hidden=false;
+   fx.innerHTML=`Set in pa_loadcell.cfg, not here: test height <b>Z ${fmt(L.required_z,1)} mm</b> (within ${fmt(L.z_tol,1)} mm), minimum nozzle temperature <b>${fmt(L.min_temp,0)} &deg;C</b>.`}}
+ catch(e){$('#form').innerHTML='<div class="empty">Could not read defaults: '+esc(e.message)+'</div>'}}
 const formVals=()=>Object.fromEntries($$('#form input').map(i=>[i.name,i.type==='number'?parseFloat(i.value):i.value]));
 function plan(v){const n=Math.max(0,Math.floor((v.pa_end-v.pa_start)/v.pa_step+1e-6)+1),per=v.sweeps*(v.extrude_len/v.slow_speed+v.extrude_len/v.fast_speed+2*v.settle);
  return{n,secs:n*per,fil:n*v.sweeps*2*v.extrude_len,fastDur:v.extrude_len/v.fast_speed}}
@@ -308,7 +489,8 @@ $('#tcancel').onclick=()=>api('cancel').then(()=>toast('Cancelling after the cur
 
 /* ---- history ---- */
 let runs=[],kind='all',cur=null,vmode='trace',vedge='rise';const meta={},segCache={};
-const hchart=new Chart($('#hc'),$('#hcTip'));window.hchart=hchart;
+const OVPTS=4000;   // points for the overview of a long recording; detail is loaded per view
+const hv=new Viewer($('#hvw'),{key:'hist',label:'Recorded load cell force',onView:needDetail});
 async function loadRuns(){try{runs=(await api('runs')).runs;renderRuns()}catch(e){$('#runs').innerHTML='<div class="empty">'+esc(e.message)+'</div>'}}
 function renderRuns(){const q=$('#search').value.toLowerCase();const list=runs.filter(r=>(kind==='all'||r.kind===kind)&&(!q||(r.name+' '+(r.filament||'')+' '+(r.notes||'')).toLowerCase().includes(q)));
  $('#runs').innerHTML=list.map(r=>`<details class="run card" data-id="${r.id}"><summary><b>${esc(r.name)}</b><span class="chip">${r.kind==='test'?'PA test':'Recording'}</span>
@@ -320,47 +502,66 @@ $('#search').oninput=renderRuns;$('#refresh').onclick=loadRuns;
 $$('#kind button').forEach(b=>b.onclick=()=>{kind=b.dataset.k;$$('#kind button').forEach(x=>x.setAttribute('aria-pressed',x===b));renderRuns()});
 function candidate(m){let best=null;for(const s of m.segments){const e=s.edge&&s.edge.rise;if(!e||e.rise==null||s.partial)continue;
   const lim=.05+(e.snr?3/e.snr:.05);if(e.overshoot<=lim&&(!best||e.rise<best.e.rise))best={s,e}}return best&&best.s.idx}
+const thumbs=[];
+function drawThumbs(){for(let i=thumbs.length-1;i>=0;i--)if(!thumbs[i][0].cv.isConnected)thumbs.splice(i,1);for(const[ch,e]of thumbs)ch.set({series:e?[{t:e.t,f:e.y,color:css('--trace')}]:[],y0:-.3,y1:1.5,invert:INVERT})}
 async function openRun(id,box){let m;try{m=await api('run',{run:id})}catch(e){box.textContent=e.message;return}meta[id]=m;
  const cand=candidate(m),st=m.settings||{},pick=m.pa_pick;let near=null;if(pick!=null&&m.kind==='test'&&m.segments.length)near=m.segments.reduce((a,b)=>Math.abs(b.pa-pick)<Math.abs(a.pa-pick)?b:a).idx;
  box.style.color='';box.innerHTML=`<div class="kv">${[['Nozzle',m.nozzle_temp!=null?m.nozzle_temp+' C':'-'],['Filament',m.filament||'-'],...Object.entries(st)].map(([k,v])=>`<span>${esc(k)} <b>${esc(v)}</b></span>`).join('')}</div>
   ${m.error?`<div style="color:var(--amber);margin-bottom:6px">${esc(m.error)}</div>`:''}
   <div class="grid">${m.segments.map(s=>{const e=s.edge&&s.edge.rise;return`<div class="pa card ${s.idx===cand?'cand':''} ${s.idx===near?'pick':''}" data-i="${s.idx}" role="button" tabindex="0" aria-pressed="false" title="${s.samples} samples${s.partial?', partial':''}">
-   <canvas></canvas><div class="t num"><b>${m.kind==='test'?s.pa:'trace'}</b><span class="m">${s.idx===cand&&s.idx===near?'both':s.idx===cand?'candidate':s.idx===near?'your pick':''}</span></div>
+   <canvas></canvas><div class="t num"><b>${m.kind==='test'?s.pa:fdur(s.duration||0)}</b><span class="m">${s.idx===cand&&s.idx===near?'both':s.idx===cand?'candidate':s.idx===near?'your pick':''}</span></div>
    <div class="m num">${e&&e.rise!=null?'rise '+Math.round(e.rise*1000)+' ms':'&nbsp;'}${e?', ov '+Math.round(e.overshoot*100)+'%':''}</div>
    ${m.kind==='test'?`<button class="add quiet" data-add="${s.idx}" aria-pressed="${inCmp(id,s.idx)}" title="Add to Compare">+</button>`:''}</div>`}).join('')}</div>
   ${m.kind==='test'?'<div style="color:var(--dim);font-size:12px">Thumbnails show the average rising edge. Green is the candidate (fastest rise without overshoot), amber is your pick, and a chip with both shows amber. Indicative only: force is not the same as nozzle pressure.</div>':''}
   <div class="row" style="margin-top:12px"><label class="f" style="width:130px">Your PA pick<input class="pick" value="${esc(m.pa_pick??'')}" placeholder="e.g. 0.04"></label>
    <label class="f" style="width:170px">Name<input class="nm" value="${esc(m.name)}"></label><span class="sp"></span><button class="save">Save tag</button><button class="del danger quiet">Delete run</button></div>
   <label class="f" style="margin-top:8px">Notes<textarea class="notes">${esc(m.notes)}</textarea></label>`;
- $$('.pa',box).forEach((el,i)=>{const s=m.segments[i],e=s.edge&&s.edge.rise;const ch=new Chart(el.querySelector('canvas'),null,true);
-  ch.set({series:e?[{t:e.t,f:e.y,color:css('--trace')}]:[],y0:-.3,y1:1.5});
+ $$('.pa',box).forEach((el,i)=>{const s=m.segments[i],e=s.edge&&s.edge.rise;const ch=new Chart(el.querySelector('canvas'),null,true);thumbs.push([ch,e]);
+  if(!e)el.querySelector('canvas').style.visibility='hidden';
   el.onclick=ev=>{if(ev.target.closest('.add'))return;$$('.pa',box).forEach(x=>x.setAttribute('aria-pressed','false'));el.setAttribute('aria-pressed','true');showSeg(id,s.idx)};
   el.onkeydown=ev=>{if(ev.target===el&&(ev.key==='Enter'||ev.key===' ')){ev.preventDefault();el.click()}};
   const add=el.querySelector('.add');if(add)add.onclick=()=>{toggleCmp(id,s.idx);add.setAttribute('aria-pressed',inCmp(id,s.idx))}});
+ drawThumbs();
  box.querySelector('.save').onclick=async()=>{try{await api('tag',{run:id,pa_pick:box.querySelector('.pick').value.trim(),notes:box.querySelector('.notes').value,name:box.querySelector('.nm').value});toast('Saved');loadRuns()}catch(e){toast(e.message)}};
  box.querySelector('.del').onclick=async()=>{if(confirm('Delete '+m.name+'? This cannot be undone.'))try{await api('delete',{run:id});if(cur&&cur.id===id){cur=null;$('#viewer').hidden=true}loadRuns()}catch(e){toast(e.message)}};
  if(m.kind==='manual'&&m.segments.length)box.querySelector('.pa').click()}
-async function getSeg(id,idx){const k=id+':'+idx;if(!segCache[k]){const m=meta[id];segCache[k]=await api('segment',{run:id,idx,max_points:m&&m.kind==='test'?0:8000},20000)}return segCache[k]}
-async function showSeg(id,idx){try{const seg=await getSeg(id,idx);cur={id,idx,seg,m:meta[id]};$('#viewer').hidden=false;
+/* PA test segments are short: load them whole. Long recordings: an overview
+   now, full detail for the part on screen later (needDetail). */
+async function getSeg(id,idx){const k=id+':'+idx;if(!segCache[k]){const m=meta[id];segCache[k]=await api('segment',{run:id,idx,max_points:m&&m.kind==='test'?0:OVPTS},20000)}return segCache[k]}
+async function showSeg(id,idx){try{const seg=await getSeg(id,idx),first=!cur||cur.id!==id||cur.idx!==idx;
+  if(first&&!store.get('view.hist',null)){hv.S=Object.assign({},lv.S);hv.sync()}   // History starts from your Live settings
+  cur={id,idx,seg,m:meta[id],key:id+':'+idx};if(first)hv.x0=null;$('#viewer').hidden=false;
   $('#vtitle').textContent=`${meta[id].name}, ${meta[id].kind==='test'?'PA '+seg.pa:'recording'}`;
   const hasEdges=!!(meta[id].segments.find(s=>s.idx===idx)||{}).edge;$('#vmode').hidden=!hasEdges;if(!hasEdges)vmode='trace';
   drawViewer();$('#viewer').scrollIntoView({block:'nearest',behavior:'smooth'})}catch(e){toast(e.message)}}
+let chunk=null,ctok=0,ctimer=null;
+function needDetail(a,b){if(!cur||vmode!=='trace'||!cur.seg.decimated)return;const w=b-a,k=cur.key;
+ if(chunk&&chunk.key===k&&chunk.a<=a&&chunk.b>=b&&!(chunk.dec&&chunk.b-chunk.a>4*w))return;
+ clearTimeout(ctimer);ctimer=setTimeout(async()=>{const tok=++ctok,ka=a-w,kb=b+w,{id,idx}=cur;
+  try{const r=await api('segment',{run:id,idx,max_points:20000,t0:ka,t1:kb},20000);if(tok!==ctok||!cur||cur.key!==k)return;
+   chunk={key:k,a:ka,b:kb,dec:r.decimated,t:r.t,f:r.f};drawViewer()}catch(e){}},120)}
 const bandsOf=seg=>(seg.markers||[]).filter(k=>k.name==='slow'||k.name==='fast').map(k=>({t0:k.t0,t1:k.t1,color:k.name==='fast'?css('--fast'):css('--slow')}));
 function drawViewer(){if(!cur)return;const{seg,m,idx}=cur;$$('#vmode button').forEach(b=>b.setAttribute('aria-pressed',b.dataset.m===vmode));$$('#vedge button').forEach(b=>b.setAttribute('aria-pressed',b.dataset.e===vedge));
- $('#vedge').style.display=vmode==='edges'?'':'none';const sm=m.segments.find(s=>s.idx===idx),e=sm&&sm.edge&&sm.edge[vedge];
- if(vmode==='trace'){hchart.set({series:[{t:seg.t,f:seg.f,color:css('--trace')}],bands:bandsOf(seg),vlines:(seg.markers||[]).filter(k=>k.name==='mark').map(k=>({t:k.t0,label:k.label})),unit:seg.unit==='g'?'g':'',dec:1,tfmt:t=>t.toFixed(2)+' s'});
-  $('#vinfo').textContent=seg.samples+' samples'+(seg.rate?', '+seg.rate+' Hz':'')+(bandsOf(seg).length?'. Blue bands are slow phases, amber bands are fast phases.':'')}
+ $('#vedge').style.display=vmode==='edges'?'':'none';const sm=m.segments.find(s=>s.idx===idx),e=sm&&sm.edge&&sm.edge[vedge];const unit=seg.unit==='g'?'g':'';
+ if(vmode==='trace'){const span=seg.span||[seg.t[0]||0,seg.t[seg.t.length-1]||0],color=css('--trace'),ov={t:seg.t,f:seg.f,color};
+  hv.d={series:[ov],ovSeries:[ov],tmin:span[0],tmax:span[1],bands:bandsOf(seg),vlines:(seg.markers||[]).filter(k=>k.name==='mark').map(k=>({t:k.t0,label:k.label})),unit,dec:1,tfmt:t=>t.toFixed(3)+' s',empty:'No samples in this segment'};
+  const r=hv.range(),useChunk=r&&chunk&&chunk.key===cur.key&&chunk.a<=r[0]&&chunk.b>=r[1];
+  if(useChunk)hv.d.series=[{t:chunk.t,f:chunk.f,color}];
+  hv.render();
+  const thin=seg.decimated&&!(useChunk&&!chunk.dec);
+  $('#vinfo').textContent=(sm?sm.samples:seg.samples)+' samples'+(seg.rate?', '+seg.rate+' Hz':'')+'.'+(bandsOf(seg).length?' Blue bands are slow phases, amber bands are fast phases.':'')+(thin?' Zoom in to see every sample.':'')}
  else{const wins=edgeWindows(seg,vedge,e),series=wins.map(w=>({t:w.t,f:w.f,color:css('--dim'),alpha:.45,w:1}));
   if(e){const b=baselineOf(wins);series.push({t:e.t,f:e.y.map(v=>v*e.amp+b),color:css('--trace'),w:2.2,name:'mean'})}
-  hchart.set({series,vlines:[{t:0,color:css('--amber'),label:vedge==='rise'?'speed up':'slow down'}],unit:seg.unit==='g'?'g':'',dec:1,tfmt:t=>(t*1000).toFixed(0)+' ms',xunit:'s'});
+  hv.d={static:true,series,vlines:[{t:0,color:css('--amber'),label:vedge==='rise'?'speed up':'slow down'}],unit,dec:1,tfmt:t=>(t*1000).toFixed(0)+' ms'};hv.render();
   $('#vinfo').innerHTML=e?`${e.n} edges averaged. 10-90% rise <b>${e.rise!=null?Math.round(e.rise*1000)+' ms':'not reached'}</b>, overshoot <b>${Math.round(e.overshoot*100)}%</b>, signal to noise ${e.snr??'-'}.`:'Not enough data for this edge.'}}
 function baselineOf(wins){let s=0,n=0;for(const w of wins)for(let i=0;i<w.t.length;i++)if(w.t[i]<-.05){s+=w.f[i];n++}return n?s/n:0}
 function edgeWindows(seg,k,e){const pre=e&&e.pre!=null?e.pre:.3,post=e&&e.post!=null?e.post:.5,out=[];
  for(const f of(seg.markers||[]).filter(x=>x.name==='fast')){const te=k==='rise'?f.t0:f.t1,t=[],v=[];
   for(let i=0;i<seg.t.length;i++){if(seg.t[i]>=te-pre&&seg.t[i]<=te+post){t.push(seg.t[i]-te);v.push(seg.f[i])}}if(t.length>5)out.push({t,f:v})}return out}
 $$('#vmode button').forEach(b=>b.onclick=()=>{vmode=b.dataset.m;drawViewer()});$$('#vedge button').forEach(b=>b.onclick=()=>{vedge=b.dataset.e;drawViewer()});
-$('#vcsv').onclick=()=>{if(!cur)return;const{seg,m}=cur;const rows=['time_s,force_'+(seg.unit||'g')];for(let i=0;i<seg.t.length;i++)rows.push(seg.t[i]+','+seg.f[i]);
- const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([rows.join('\n')],{type:'text/csv'}));a.download=(m.name+'_pa_'+(seg.pa??'x')).replace(/\s+/g,'_')+'.csv';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),2000)};
+$('#vcsv').onclick=async()=>{if(!cur)return;const{m,id,idx}=cur;let seg;try{seg=await api('segment',{run:id,idx,max_points:0},60000)}catch(e){toast(e.message);return}
+ const rows=['time_s,force_'+(seg.unit||'g')];for(let i=0;i<seg.t.length;i++)rows.push(seg.t[i]+','+seg.f[i]);
+ const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([rows.join('\n')],{type:'text/csv'}));a.download=(m.name+'_'+(seg.pa!=null?'pa_'+seg.pa:'trace')).replace(/\s+/g,'_')+'.csv';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),2000)};
 
 /* ---- compare ---- */
 const cmp=[];let cmode='edge',cedge='rise';const cchart=new Chart($('#cc'),$('#ccTip'));
@@ -373,10 +574,11 @@ async function renderCmp(){$('#nCmp').textContent=cmp.length;$$('#cmode button')
  $$('#legend button').forEach(b=>b.onclick=()=>{cmp.splice(+b.dataset.i,1);renderCmp();$$('.pa .add').forEach(a=>{const r=a.closest('details');a.setAttribute('aria-pressed',inCmp(+r.dataset.id,+a.dataset.add))})});
  if(!cmp.length){cchart.set({series:[],empty:'Open History, then press + on any PA value to add it here.'});$('#ctable').innerHTML='';return}
  if(cmode==='edge'){const series=cmp.map((e,i)=>{const d=e.edge&&e.edge[cedge];return d?{t:d.t,f:d.y,color:PAL[i%PAL.length],name:e.label,w:2}:null}).filter(Boolean);
-  cchart.set({series,vlines:[{t:0,color:css('--dim')}],y0:-.3,y1:1.6,dec:2,tfmt:t=>(t*1000).toFixed(0)+' ms',empty:'These runs have no edge data.'})}
+  const top=Math.max(1.6,...cmp.map(e=>{const d=e.edge&&e.edge[cedge];return d?1.1+(d.overshoot||0):0}));
+  cchart.set({series,vlines:[{t:0,color:css('--dim')}],y0:-.3,y1:top,invert:INVERT,dec:2,tfmt:t=>(t*1000).toFixed(0)+' ms',empty:'These runs have no edge data.'})}
  else{try{const al=$('#calign').value,segs=await Promise.all(cmp.map(e=>getSeg(e.id,e.idx)));
    const series=cmp.map((e,i)=>{const sg=segs[i];let sh=0;if(al==='fast'){const f=(sg.markers||[]).find(k=>k.name==='fast');if(f)sh=f.t0}return{t:sg.t.map(x=>x-sh),f:sg.f,color:PAL[i%PAL.length],name:e.label}});
-   cchart.set({series,unit:cmp[0].unit==='g'?'g':'',dec:1,tfmt:t=>t.toFixed(2)+' s'})}catch(e){toast(e.message)}}
+   cchart.set({series,invert:INVERT,unit:cmp[0].unit==='g'?'g':'',dec:1,tfmt:t=>t.toFixed(2)+' s'})}catch(e){toast(e.message)}}
  const rows=cmp.map((e,i)=>{const d=e.edge&&e.edge[cedge];return`<tr><td><i style="display:inline-block;width:10px;height:3px;background:${PAL[i%PAL.length]};margin-right:8px"></i>${esc(e.label)}</td><td class="num">${d&&d.rise!=null?Math.round(d.rise*1000)+' ms':'-'}</td><td class="num">${d?Math.round(d.overshoot*100)+'%':'-'}</td><td class="num">${d?.snr??'-'}</td><td class="num">${d?.n??'-'}</td></tr>`}).join('');
  $('#ctable').innerHTML=`<table><thead><tr><th>Curve</th><th>10-90% rise</th><th>Overshoot</th><th>Signal to noise</th><th>Edges</th></tr></thead><tbody>${rows}</tbody></table>`}
 $$('#cmode button').forEach(b=>b.onclick=()=>{cmode=b.dataset.m;renderCmp()});$$('#cedge button').forEach(b=>b.onclick=()=>{cedge=b.dataset.e;renderCmp()});
@@ -384,10 +586,11 @@ $('#calign').onchange=renderCmp;$('#cclear').onclick=()=>{cmp.length=0;renderCmp
 
 /* ---- tabs ---- */
 function setTab(t){$$('#tabs button').forEach(b=>b.setAttribute('aria-selected',b.dataset.tab===t));$$('section').forEach(s=>s.classList.toggle('on',s.id===t));
- if(t==='hist'){loadRuns();setTimeout(()=>hchart.render(),0)}if(t==='cmp')setTimeout(renderCmp,0);if(t==='test'&&!DEF)loadDefaults()}
+ if(t==='hist'){loadRuns();setTimeout(()=>hv.render(),0)}if(t==='cmp')setTimeout(renderCmp,0);if(t==='test'&&!DEF)loadDefaults()}
 $$('#tabs button').forEach(b=>b.onclick=()=>setTab(b.dataset.tab));
-function redrawAll(){try{drawViewer();renderCmp()}catch{}}
-addEventListener('resize',()=>{hchart.render();cchart.render()});
+function redrawAll(){for(const v of viewers)v.render();try{drawViewer();drawThumbs();renderCmp()}catch{}}
+addEventListener('resize',()=>{for(const v of viewers){v.chart.render();v.ov.render()}cchart.render()});
+paintInvert();window.ready=true;
 rpc.connect();pollLoop();frame();renderCmp();
 (function waitDefaults(){if(rpc.up)loadDefaults();else setTimeout(waitDefaults,300)})();
 setTab(Q.get('tab')||'live');

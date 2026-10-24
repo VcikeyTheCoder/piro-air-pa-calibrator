@@ -251,6 +251,22 @@ def test_sharp_edge_still_gets_rise_time():
     r = analysis.edge_summary(t, f, m, 'rise')
     assert r and r['rise'] is not None and r['rise'] < 0.03, r
 
+def test_segment_time_range():
+    import tempfile
+    from pa_loadcell.storage import RunStore
+    st = RunStore(tempfile.mkdtemp())
+    rid = st.new_run('manual', {})
+    tt = [i / 320.0 for i in range(320 * 20)]
+    st.add_segment(rid, {'t': tt, 'f': [float(i % 7) for i in range(len(tt))]})
+    full = st.get_segment(rid, 0)
+    assert len(full['t']) == len(tt) and full['span'] == [0.0, tt[-1]]
+    part = st.get_segment(rid, 0, 0, 5.0, 7.0)
+    assert part['t'][0] >= 5.0 and part['t'][-1] <= 7.0
+    assert abs(len(part['t']) - 641) <= 1 and not part['decimated']
+    thin = st.get_segment(rid, 0, 200, 5.0, 7.0)
+    assert len(thin['t']) <= 200 and thin['decimated']
+    assert st.get_segment(rid, 0, 0, 30.0, 40.0)['t'] == []
+
 if __name__ == '__main__':
     for n, fn in list(globals().items()):
         if n.startswith('test_'): fn(); print('ok', n)

@@ -55,10 +55,25 @@ resumes without losing samples.
 
 | Tab | What it does |
 |---|---|
-| **Live** | Big current force, min / max / mean / noise over the window, scrolling scope (5 s to 2 min), hover for values, pause, lock scale, **Tare**. **Record** starts and stops a recording any time (not during a test); **Mark** drops a labelled marker while recording, handy during manual PA tuning. |
-| **PA test** | Form with every test setting (defaults come from the config file), a live summary of PA values, duration, filament used and fast-phase flow in mm3/s, **Start test**, **Cancel test**, progress. |
-| **History** | Tests and recordings with their settings. Each PA value shows a thumbnail of its average rising edge with rise time and overshoot. Click one for the full trace (slow / fast phases shaded, marks shown) or the **Edges** view (every sweep overlaid with the mean). Add your own PA pick and notes, rename, delete, export CSV. |
+| **Live** | Big current force, min / max / mean / noise of what is on screen, and the graph. The page keeps the last 10 minutes: drag the graph or the strip under it to go back, **Follow live** (or End) to return. **Tare**. **Record** starts and stops a recording any time (not during a test); **Mark** drops a labelled marker while recording, handy during manual PA tuning. |
+| **PA test** | Form with every test setting (defaults come from the config file; the test height and minimum temperature are shown but only set in the config), a live summary of PA values, duration, filament used and fast-phase flow in mm3/s, **Start test**, **Cancel test**, progress. |
+| **History** | Tests and recordings with their settings. Each PA value shows a thumbnail of its average rising edge with rise time and overshoot. Click one for the full trace (slow / fast phases shaded, marks shown) in the same scrollable graph as Live, starting from your Live time window and Y settings; zooming in loads every sample of that part or the **Edges** view (every sweep overlaid with the mean). Add your own PA pick and notes, rename, delete, export CSV. |
 | **Compare** | Press **+** on any PA value, from one run or several. **Edge response** overlays the average edge of each PA so you can see the shape change: slow and rounded at low PA, a spike above the plateau at high PA. A table lists rise time, overshoot and signal to noise. **Raw trace** overlays the recorded force. |
+
+**Graph controls** (Live and History):
+
+| Control | What it does |
+|---|---|
+| Drag the graph, or Left / Right arrow | Move back and forward in time |
+| Mouse wheel, pinch, or + / - | Zoom the time axis around the cursor |
+| Strip under the graph | Shows the whole buffer or run. Drag the box to move, drag its edges to resize, click to jump |
+| Start / back / forward / end buttons | Jump to the start, move half a window, jump to the end (Live: back to following) |
+| Time window | 1 s to 10 min, whole buffer or run, or a custom number of seconds |
+| Y axis | Auto (fits what is on screen) or Fixed with your own min and max; **Use current** copies what you see |
+| Invert | Flips every graph so negative is up. Display only: data, CSV and analysis are unchanged |
+| Double-click | Live: back to following. History: whole run |
+
+Settings are remembered in your browser. When scrolled back on Live, the time axis shows the clock time.
 
 Reading the curves: with PA too low the force rises slowly; too high it overshoots the plateau and then settles.
 The thumbnail marked **candidate** is the one with the fastest rise that does not overshoot (indicative only: force at
@@ -191,10 +206,13 @@ Key points:
 Exposed by Moonraker as `printer.pa_loadcell.<name>` (JSON-RPC) and `/printer/pa_loadcell/<name>` (HTTP):
 `live`, `info`, `defaults`, `runs`, `run`, `segment`, `tag`, `delete`, `record_start`, `record_stop`, `mark`, `cancel`.
 
+`segment` takes `run`, `idx`, `max_points` (0 = every sample) and optional `t0` / `t1` (seconds from the segment start) to
+return only that stretch. It also returns `span` (first and last time) and `decimated`.
+
 ## Configuration
 
 All defaults live in `klipper/pa_loadcell.cfg` (installed to your config folder). Config-only options:
-`min_temp`, `required_z`, `z_tolerance`, `sample_timeout`, `data_dir`, `ring_size`, `live_idle`, `max_record_seconds`.
+`min_temp`, `required_z` (the Z height the test needs, default 20 mm), `z_tolerance`, `sample_timeout`, `data_dir`, `ring_size`, `live_idle`, `max_record_seconds`.
 
 ## Repository layout
 
@@ -218,7 +236,8 @@ tests/harness.py            runs the real backend + the page with fake physics, 
 Run the tests: `python3 tests/test_backend.py`. Optional check against your Klipper:
 `KLIPPER_DIR=~/klipper python3 tests/test_real_klipper.py` (needs `pip install numpy pyserial cffi greenlet jinja2`).
 Try the page without a printer: `pip install websockets && python3 tests/harness.py`, then open
-`http://127.0.0.1:8080/?ws=127.0.0.1:8765`.
+`http://127.0.0.1:8080/?ws=127.0.0.1:8765`. Add `SPEED=10` in front to run the fake printer ten times faster
+(fills the 10 minute Live buffer in one minute).
 
 ## Troubleshooting
 

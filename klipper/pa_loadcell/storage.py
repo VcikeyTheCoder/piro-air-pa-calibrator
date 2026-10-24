@@ -3,6 +3,7 @@
   <data_dir>/run_0001/seg_000.json  one file per PA value (own samples)
 Meta is rewritten after every segment, so a cancelled or crashed test still
 keeps everything recorded so far."""
+import bisect
 import json
 import os
 import re
@@ -112,9 +113,20 @@ class RunStore:
     def get_run(self, rid):
         return _load(self._meta_path(rid))
 
-    def get_segment(self, rid, idx, max_points=0):
+    def get_segment(self, rid, idx, max_points=0, t0=None, t1=None):
+        """One segment. t0/t1 (seconds, segment time) return only that
+        stretch, so the History graph can load full detail for the part
+        on screen; max_points then thins it with min/max buckets."""
         seg = _load(os.path.join(self._dir(rid), 'seg_%03d.json' % idx))
-        seg['t'], seg['f'] = decimate(seg['t'], seg['f'], max_points)
+        t, f = seg['t'], seg['f']
+        seg['span'] = [t[0], t[-1]] if t else [0.0, 0.0]
+        if t0 is not None or t1 is not None:
+            lo = bisect.bisect_left(t, t0) if t0 is not None else 0
+            hi = bisect.bisect_right(t, t1) if t1 is not None else len(t)
+            t, f = t[lo:hi], f[lo:hi]
+            seg['range'] = [t0, t1]
+        seg['t'], seg['f'] = decimate(t, f, max_points)
+        seg['decimated'] = len(seg['t']) < len(t)
         return seg
 
     def set_tag(self, rid, pa_pick=None, notes=None, name=None):
