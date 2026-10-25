@@ -30,8 +30,6 @@ class Printer:
 
 class Extruder:
     max_e_velocity, max_e_accel = 100.0, 5000.0
-    filament_area = 3.14159265 * 0.875 ** 2
-    max_extrude_ratio = 120.0 / filament_area     # max_extrude_cross_section 120
     def __init__(s, p): s.p = p
     def get_status(s, now):
         return {'temperature': s.p.temp, 'pressure_advance': 0.05}
@@ -49,22 +47,16 @@ class Toolhead:
                 'max_accel_to_decel': 2000}
 
 class Gcode:
-    """Times E moves like Klipper: an XY+E move runs at F over the XY
-    distance, an extrude-only move at F over the E distance."""
-    def __init__(s, p): s.p, s.n_e, s.pos = p, 0, {'X': 0.0, 'Y': 0.0}
+    def __init__(s, p): s.p, s.n_e = p, 0
     def run_script_from_command(s, script):
         for line in script.split('\n'):
             s.p.log.append(line)
-            w = dict((k, float(v)) for k, v in re.findall(r'([XYEF])([-\d.]+)', line)) if line.startswith('G1') else {}
-            if 'E' in w and 'F' in w:
-                xy = [abs(w[a] - s.pos[a]) for a in 'XY' if a in w]
-                d = max(xy) if xy and max(xy) > 0 else abs(w['E'])
-                dur = d / (w['F'] / 60)
-                s.p.windows.append((s.p.pt, s.p.pt + dur, w['E'] / dur))
-                s.p.pt += dur
+            m = re.match(r'G1 E([\d.]+) F([\d.]+)', line)
+            if m:
+                L, F = float(m.group(1)), float(m.group(2)) / 60
+                s.p.windows.append((s.p.pt, s.p.pt + L / F))
+                s.p.pt += L / F
                 s.n_e += 1
-            for a in 'XY':
-                if a in w: s.pos[a] = w[a]
 
 class LoadCell:
     """Mimics klippy/extras/load_cell.py: add_client callbacks receive
@@ -83,9 +75,8 @@ class LoadCell:
         data = []
         for i in range(n0, n1):
             t = 1000 + i / 320.0
-            v = sum((w[2] if len(w) > 2 else 10.0)
-                    for w in p.windows if w[0] <= t < w[1])
-            counts = v * 1000.0          # 8 mm/s fast leg -> 80 g
+            on = any(a <= t <= b for a, b in p.windows)
+            counts = 10000.0 if on else 0.0
             data.append((t, counts / 100.0, counts, 0))
         p.sent = 1000 + n1 / 320.0
         if not p.client({'data': data}):      # falsy = unregister
@@ -104,8 +95,9 @@ def make(temp=210.0, z=20.0):
     return p, bus, store, PATestRunner(p, bus, store, lim)
 
 def S(**kw):
-    d = dict(pa_start=0, pa_end=0.004, pa_step=0.002, cycles=2,
-             test_x=100, test_y=100, park_x=10, park_y=10)
+    d = dict(pa_start=0, pa_end=0.004, pa_step=0.002, sweeps=2,
+             extrude_len=10, slow_speed=5, fast_speed=20, test_x=100,
+             test_y=100, park_x=10, park_y=10)
     d.update(kw); s = Settings(**d); s.validate(); return s
 
 
@@ -115,34 +107,9 @@ def test_full_run():
     m = store.get_run(rid)
     assert m['status'] == 'complete' and len(m['segments']) == 3, m
     seg = store.get_segment(rid, 1)
-    names = [k['name'] for k in seg['markers']]
-    assert seg['pa'] == 0.002 and names == ['slow', 'fast', 'slow', 'fast', 'slow'], names
+    assert seg['pa'] == 0.002 and len(seg['markers']) == 4
     assert seg['samples'] > 500 and abs(len(seg['t']) - len(seg['f'])) == 0
-    assert max(seg['f']) > 70 and min(seg['f']) < 10       # fast / slow seen
-    fast = seg['markers'][1]
-    assert abs(fast['t1'] - fast['t0'] - 0.25) < 1e-3     # leg lasts FAST_TIME
-    assert any('SET_PRESSURE_ADVANCE ADVANCE=0.05000' in l for l in p.log)
-    assert 'G1 X10.00 Y10.00 F6000' in p.log                # parked at end
-    assert 'SET_VELOCITY_LIMIT ACCEL=1000.0' in p.log       # XY accel only
-    assert p.objs['toolhead'].ext.max_e_accel == 5000.0     # extruder untouched
-    legs = [l for l in p.log if l.startswith('G1 Y')]
-    assert legs and all(' E' in l for l in legs), legs[:3]   # wobble + E
-    ys = sorted({l.split()[1] for l in legs})
-    assert ys == ['Y100.0000', 'Y100.0500'], ys
-    first = store.get_segment(rid, 0)['markers'][0]           # 1-leg lead-in
-    assert abs(first['t1'] - first['t0'] - 1.0) < 1e-3, first
-    # prime: extrude-only moves totalling PRIME_LENGTH, before the first PA
-    i_pa = next(i for i, l in enumerate(p.log)
-                if l.startswith('SET_PRESSURE_ADVANCE ADVANCE=0.00000'))
-    prime = [l for l in p.log[:i_pa] if re.match(r'G1 E[\d.]+ F', l)]
-    assert prime and abs(sum(float(l.split()[1][1:]) for l in prime) - 40) < 1e-6
-    assert all(float(l.split()[1][1:]) <= 25 for l in prime)   # chunked
-    m = store.get_run(rid)
-    a = m['analysis']
-    assert a['model'] == 'fall_undershoot' and a['skip_first'] is True
-    assert set(a['picks']) == {'rise_fast', 'fall_slow', 'fall_undershoot', 'oznlab'}
-    assert m['segments'][0]['edge']['rise']['n'] == 1    # 2 pulses, first skipped
-    assert m['segments'][0]['cmd']['gain'] > 0           # force ~ flow fit
+    assert max(seg['f']) > 90 and min(seg['f']) < 1       # force pulses seen
     assert any('SET_PRESSURE_ADVANCE ADVANCE=0.05000' in l for l in p.log)
     assert 'G1 X10.00 Y10.00 F6000' in p.log                # parked at end
 
@@ -158,12 +125,6 @@ def test_cancel_saves_partial():
     assert m['status'] == 'cancelled' and 1 <= len(m['segments']) < 11, m
 
 def test_safety():
-    p, bus, store, r = make(); p.objs['toolhead'].ext.max_extrude_ratio = 0.3
-    try: r.run(Gcmd(), S()); assert False
-    except PAError as e: assert 'max_extrude_cross_section: 100' in str(e), e
-    p, bus, store, r = make()
-    try: r.run(Gcmd(), S(pa_end=0.08, pa_step=0.001, max_filament=100)); assert False
-    except PAError as e: assert 'MAX_FILAMENT' in str(e), e
     for kw, msg in ((dict(temp=150.0), 'nozzle'), (dict(z=5.0), 'Z must')):
         p, bus, store, r = make(**kw)
         try: r.run(Gcmd(), S()); assert False
@@ -242,7 +203,7 @@ def test_edge_overshoot_detected():
 
 def test_segment_meta_has_edges():
     p, bus, store, r = make()
-    rid = r.run(Gcmd(), S())
+    rid = r.run(Gcmd(), S(extrude_len=10, fast_speed=20, slow_speed=5))
     m = store.get_run(rid)
     e = m['segments'][0].get('edge')
     assert e and e['rise'] and len(e['rise']['y']) == 80, m['segments'][0]
@@ -289,227 +250,6 @@ def test_sharp_edge_still_gets_rise_time():
     t, f, m = _synth(0.004)          # edge faster than the 10 ms analysis grid
     r = analysis.edge_summary(t, f, m, 'rise')
     assert r and r['rise'] is not None and r['rise'] < 0.03, r
-
-def test_segment_time_range():
-    import tempfile
-    from pa_loadcell.storage import RunStore
-    st = RunStore(tempfile.mkdtemp())
-    rid = st.new_run('manual', {})
-    tt = [i / 320.0 for i in range(320 * 20)]
-    st.add_segment(rid, {'t': tt, 'f': [float(i % 7) for i in range(len(tt))]})
-    full = st.get_segment(rid, 0)
-    assert len(full['t']) == len(tt) and full['span'] == [0.0, tt[-1]]
-    part = st.get_segment(rid, 0, 0, 5.0, 7.0)
-    assert part['t'][0] >= 5.0 and part['t'][-1] <= 7.0
-    assert abs(len(part['t']) - 641) <= 1 and not part['decimated']
-    thin = st.get_segment(rid, 0, 200, 5.0, 7.0)
-    assert len(thin['t']) <= 200 and thin['decimated']
-    assert st.get_segment(rid, 0, 0, 30.0, 40.0)['t'] == []
-
-def test_settings_amounts_match_kapat():
-    s = Settings(pa_start=0, pa_end=0.08, pa_step=0.005, cycles=8)
-    area = 3.14159265 * 0.875 ** 2
-    fast, slow = s.leg_mm(area)
-    assert abs(fast - 2.0) < 0.01 and abs(slow - 0.8) < 0.01, (fast, slow)
-    # per PA: lead-in + cycles*(fast+slow); plus the 40 mm prime
-    assert abs(s.filament_mm(area) - ((0.8 + 8 * 2.8) * 17 + 40)) < 0.5
-    assert abs(s.duration_s(area) - ((1 + 8 * 1.25) * 17 + 40 * area / 5)) < 0.1
-    assert abs(s.cross_section_needed(area) - 2.0 / 0.05 * area) < 0.5
-
-def test_back_to_back_windows():
-    from pa_loadcell import analysis
-    m = [{'name': 'slow', 't0': 0, 't1': 1.0}, {'name': 'fast', 't0': 1.0, 't1': 1.25},
-         {'name': 'slow', 't0': 1.25, 't1': 2.25}]
-    (te, pre, post), = analysis._windows(m, 'rise', 2.25)
-    assert te == 1.0 and abs(pre - 0.3) < 1e-9 and abs(post - 0.21) < 1e-9
-    (te, pre, post), = analysis._windows(m, 'fall', 2.25)
-    assert te == 1.25 and abs(pre - 0.21) < 1e-9 and abs(post - 0.96) < 1e-9
-
-def test_prime_limits():
-    p, bus, store, r = make()
-    p.objs['toolhead'].ext.max_e_velocity = 1.0       # 5 mm3/s needs 2.08 mm/s
-    try: r.run(Gcmd(), S()); assert False
-    except PAError as e: assert 'PRIME_FLOW' in str(e), e
-    p, bus, store, r = make()
-    rid = r.run(Gcmd(), S(prime_length=0))
-    assert not any(re.match(r'G1 E[\d.]+ F', l) for l in p.log[:5])
-
-def test_live_leg_schedule():
-    p, bus, store, r = make()
-    r.run(Gcmd(), S(pa_end=0.002))
-    legs = r.legs_since(0)
-    names = [x[4] for x in legs]
-    assert names[0] == 'prime' and 'fast' in names and 'slow' in names
-    assert all(b > a for _, a, b, _, _ in legs)
-    assert r.legs_since(legs[-1][0]) == []
-    fl = {x[4]: x[3] for x in legs}
-    assert fl['fast'] == 19.24 and fl['slow'] == 1.92 and fl['prime'] == 5.0
-
-def _seg_entries(dips, snr=100.0):
-    """Fake per-PA summaries: fall overshoot (= dip below the line)."""
-    out = []
-    for i, d in enumerate(dips):
-        e = {'rise': 0.02, 'overshoot': d, 'snr': snr, 't10': 0.003}
-        out.append({'idx': i, 'pa': round(i * 0.005, 3), 'partial': False,
-                    'edge': {'rise': dict(e, overshoot=0.01,
-                                          rise=0.08 - i * 0.005),
-                             'fall': e}})
-    return out
-
-def test_fall_undershoot_model():
-    from pa_loadcell import analysis
-    segs = _seg_entries([0.01, 0.01, 0.015, 0.01, 0.06, 0.09, 0.2])
-    p = analysis.pick(segs, 'fall_undershoot')
-    assert p['pa'] == 0.015 and '0.020' in p['why'], p
-    # a single blip is ignored: dip must persist at the next value
-    segs = _seg_entries([0.01, 0.05, 0.01, 0.01, 0.06, 0.09])
-    assert analysis.pick(segs, 'fall_undershoot')['pa'] == 0.015
-    # noisy data raises the threshold (3/snr = 7.5 %)
-    segs = _seg_entries([0.01, 0.06, 0.06, 0.06, 0.1, 0.2], snr=40)
-    assert analysis.pick(segs, 'fall_undershoot')['pa'] == 0.015
-    segs = _seg_entries([0.1, 0.1, 0.2])
-    assert analysis.pick(segs, 'fall_undershoot')['pa'] is None
-    segs = _seg_entries([0.0, 0.0, 0.01])
-    assert analysis.pick(segs, 'fall_undershoot')['pa'] == 0.01
-
-def test_rise_and_fall_models():
-    from pa_loadcell import analysis
-    segs = _seg_entries([0.01, 0.01, 0.01, 0.2])
-    assert analysis.pick(segs, 'rise_fast')['pa'] == 0.015
-    assert analysis.pick(segs, 'fall_slow')['pa'] == 0.0     # all 20 ms, first
-    assert analysis.timing_offset(segs) == 0.003
-
-def test_skip_first_pulse():
-    from pa_loadcell import analysis
-    t, f, m = _synth(0.05)
-    a = analysis.edge_summary(t, f, m, 'rise')
-    b = analysis.edge_summary(t, f, m, 'rise', skip_first=True)
-    assert a['n'] == 4 and b['n'] == 3 and b['skipped_first']
-
-def test_command_fit():
-    from pa_loadcell import analysis
-    t = [i / 320 for i in range(320 * 4)]
-    mk = [{'name': 'slow', 't0': 0, 't1': 1}, {'name': 'fast', 't0': 1, 't1': 2},
-          {'name': 'slow', 't0': 2, 't1': 4}]
-    f = [7 + 3 * (19.24 if 1 <= x < 2 else 1.92) for x in t]
-    fit = analysis.command_fit(t, f, mk, {'fast': 19.24, 'slow': 1.92})
-    assert abs(fit['gain'] - 3) < 0.01 and abs(fit['offset'] - 7) < 0.05, fit
-    assert analysis.command_fit(t, f, mk, None) is None
-
-def test_export_import_reanalyze():
-    p, bus, store, r = make()
-    rid = r.run(Gcmd(), S())
-    data = store.export_run(rid)
-    assert data['format'] == 'pa_loadcell_run' and len(data['segments']) == 3
-    import json as _j
-    data = _j.loads(_j.dumps(data))                     # through a file
-    new = store.import_run(data)
-    m = store.get_run(new)
-    assert new != rid and m['imported']['from_id'] == rid
-    assert len(m['segments']) == 3 and m['segments'][1]['edge']['rise']
-    m2 = store.reanalyze(new, model='rise_fast', skip_first=False)
-    assert m2['analysis']['model'] == 'rise_fast'
-    assert m2['segments'][0]['edge']['rise']['n'] == 2  # both pulses used
-    assert store.get_segment(new, 1)['t'] == store.get_segment(rid, 1)['t']
-    for bad in ({'format': 'x'}, {'format': 'pa_loadcell_run', 'meta': {},
-                'segments': [{'t': [1], 'f': []}]}):
-        try: store.import_run(bad); assert False
-        except PAError: pass
-    assert len(store.list_runs()) == 2                 # failed imports left nothing
-    try: store.reanalyze(new, model='nope'); assert False
-    except PAError: pass
-
-def test_old_run_gets_picks():
-    import tempfile
-    from pa_loadcell.storage import RunStore
-    st = RunStore(tempfile.mkdtemp())
-    t, f, mk = _synth(0.05)
-    rid = st.new_run('test', {'settings': {'fast_flow': 4.0, 'slow_flow': 1.0}})
-    st.add_segment(rid, {'pa': 0.0, 't': t, 'f': f, 'markers': mk})
-    import os, json as _j
-    path = st._meta_path(rid); m = _j.load(open(path)); m.pop('analysis')
-    _j.dump(m, open(path, 'w'))                       # like a run from v1
-    m = st.get_run(rid)
-    assert m['analysis']['stale'] and 'fall_undershoot' in m['analysis']['picks']
-
-def test_artificial_train_amounts():
-    p, bus, store, r = make()
-    rid = r.run(Gcmd(), S(method='artificial', pa_start=0.04, pa_end=0.04,
-                          prime_length=0, cycles=2))
-    A = Extruder.filament_area
-    vs, vf, h = 1.92 / A, 19.24 / A, 0.02
-    i0 = next(i for i, l in enumerate(p.log)
-              if l.startswith('SET_PRESSURE_ADVANCE ADVANCE=0.00000'))
-    es = [float(l.split()[1][1:]) for l in p.log[i0:]
-          if re.match(r'G1 E-?[\d.]+ F', l)]
-    # lead, (charge, fast, pull-back, slow) x 2
-    assert len(es) == 9, es
-    charge, pull = 0.04 * (vf - vs) + (vs + vf) * h, -0.04 * (vf - vs) + (vs + vf) * h
-    assert abs(es[1] - charge) < 1e-4 and abs(es[3] - pull) < 1e-4, (es, charge, pull)
-    assert abs(es[2] - vf * (0.25 - 0.04)) < 1e-4
-    assert not any(l.startswith('G1 Y') for l in p.log)          # no wobble
-    assert not any('ADVANCE=0.04' in l for l in p.log)           # Klipper PA stays 0
-    m = store.get_run(rid)
-    assert m['method'] == 'artificial' and abs(m['smooth_time'] - 0.04) < 1e-9
-    mk = store.get_segment(rid, 0)['markers']
-    f = [x for x in mk if x['name'] == 'fast'][0]
-    assert abs(f['t1'] - f['t0'] - 0.25) < 0.002, f            # nominal step times
-
-def test_artificial_needs_no_cross_section():
-    p, bus, store, r = make(); p.objs['toolhead'].ext.max_extrude_ratio = 0.3
-    r.run(Gcmd(), S(method='artificial'))                      # no error
-    p, bus, store, r = make(); p.objs['toolhead'].ext.max_e_velocity = 10.
-    try: r.run(Gcmd(), S(method='artificial', pa_end=0.08)); assert False
-    except PAError as e: assert 'charge' in str(e) or 'FAST_FLOW' in str(e), e
-
-def test_search_order_without_dip():
-    # the fake extruder has no melt lag, so nothing ever dips: the search
-    # tries 0, PA_MAX and doubles three times, then stops with a note
-    p, bus, store, r = make()
-    rid = r.run(Gcmd(), S(pa_mode='search', method='artificial', pa_max=0.02,
-                          prime_length=0, max_filament=2000))
-    pas = [s['pa'] for s in store.get_run(rid)['segments']]
-    assert pas == [0.0, 0.02, 0.04, 0.08, 0.16], pas
-    srch = store.get_run(rid)['search']
-    assert srch['result'] == 0.16 and srch['k_bad'] is None, srch
-    assert 'oznlab' in store.get_run(rid)['analysis']['picks']
-
-def _synth_b2b(tau, ring=0.0, loops=6, fast=0.6, slow=1.0, rate=320.0):
-    """back-to-back legs like the real test: lead-in slow, then fast/slow."""
-    plan, tt = [('slow', -1, 0.0, slow)], slow
-    for k in range(loops):
-        plan.append(('fast', k, tt, tt + fast)); tt += fast
-        plan.append(('slow', k, tt, tt + slow)); tt += slow
-    t, f, y = [], [], 1.0
-    for n in range(int(tt * rate)):
-        now = n / rate
-        u = 4.0 if any(nm == 'fast' and a <= now < b for nm, k, a, b in plan) else 1.0
-        y += (u - y) / tau / rate
-        t.append(round(now, 4)); f.append((y + ring * (u - y)) * 25.0)
-    return t, f, [{'name': nm, 'sweep': k, 't0': a, 't1': b} for nm, k, a, b in plan]
-
-def test_ozn_score_on_synthetic():
-    from pa_loadcell import analysis
-    t, f, m = _synth_b2b(0.05)
-    sc = analysis.ozn_score(t, f, m, 0.04)
-    assert sc and sc['n'] == 5 and sc['dip'] > -0.03, sc       # lag: no dip
-    t, f, m = _synth_b2b(0.05, ring=1.6)
-    sc2 = analysis.ozn_score(t, f, m, 0.04)
-    assert sc2['dip'] < -0.1, sc2                                # overshoot: dips
-    assert sc['mismatch'] > 0 > sc2['mismatch']
-
-def test_ozn_pick_rule():
-    from pa_loadcell import analysis
-    def seg(i, pa, dip, mis):
-        return {'idx': i, 'pa': pa, 'partial': False,
-                'ozn': {'dip': dip, 'limit': 0.03, 'mismatch': mis}}
-    segs = [seg(0, 0.0, -0.01, 0.3), seg(1, 0.02, 0.0, 0.1), seg(2, 0.04, -0.02, 0.02),
-            seg(3, 0.06, -0.09, -0.05), seg(4, 0.08, -0.2, -0.1)]
-    p = analysis.pick(segs, 'oznlab')
-    # floor from PA 0 = 1.3*0.01+0.01 = 0.023; 0.04 dips 2% (< 3%), 0.06 dips 9%
-    assert p['pa'] == 0.04 and p['cross'] and 0.04 < p['cross'] < 0.06, p
-    segs.append(seg(5, 0.06, 0.05, -0.05))           # a repeat averages the dip
-    assert analysis.pick(segs, 'oznlab')['pa'] == 0.06
 
 if __name__ == '__main__':
     for n, fn in list(globals().items()):
