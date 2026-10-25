@@ -3,9 +3,18 @@ every field can be overridden by the same-named (UPPERCASE) command parameter.
 
 Every test starts with a prime (PRIME_LENGTH mm at PRIME_FLOW mm^3/s,
 extrude-only) and then goes straight into the first PA value.
-Pulse defaults follow KAPAT (github.com/vzagranichnyy/KAPAT): a slow/fast
-volumetric square wave, each leg paired with a tiny XY wobble so Klipper
-applies pressure advance to it (Klipper skips PA on extrude-only moves)."""
+Two ways to make pressure advance act on the pulses (METHOD):
+  wobble      KAPAT (github.com/vzagranichnyy/KAPAT): every leg is paired
+              with a tiny XY move so Klipper applies its own PA (Klipper
+              skips PA on extrude-only moves).
+  artificial  OznLab (github.com/ozancs/oznlab-sensor): extrude-only moves,
+              the PA charge K*(fast-slow) is put in by hand over the
+              smoothing window around every speed-up and taken back around
+              every slow-down. No XY motion, no max_extrude_cross_section.
+Two ways to choose the PA values (PA_MODE):
+  grid        PA_START..PA_END in PA_STEP steps
+  search      OznLab's adaptive search: 0, then PA_MAX (doubling until the
+              force dips after a slow-down), then narrowing to 10 %."""
 import math
 from dataclasses import dataclass, fields
 from .errors import PAError
@@ -13,7 +22,10 @@ from .errors import PAError
 AXES = ('X', 'Y')
 OBSOLETE = ('sweeps', 'extrude_len', 'slow_speed', 'fast_speed', 'settle',
             'warmup')
-MODELS = ('rise_fast', 'fall_slow', 'fall_undershoot')
+MODELS = ('rise_fast', 'fall_slow', 'fall_undershoot', 'oznlab')
+METHODS = ('wobble', 'artificial')
+PA_MODES = ('grid', 'search')
+SEARCH_MAX_TRAINS = 14      # worst case of the adaptive search (estimates)
 
 
 @dataclass
@@ -21,6 +33,9 @@ class Settings:
     pa_start: float = 0.0
     pa_end: float = 0.08
     pa_step: float = 0.005
+    method: str = 'wobble'        # wobble (KAPAT) | artificial (OznLab)
+    pa_mode: str = 'grid'         # grid | search (OznLab adaptive search)
+    pa_max: float = 0.08          # search: first high PA tried
     cycles: int = 4               # fast+slow pulses per PA value
     fast_flow: float = 19.24      # mm^3/s during the fast leg
     fast_time: float = 0.25       # s per fast leg
@@ -28,6 +43,8 @@ class Settings:
     slow_time: float = 1.0        # s per slow leg
     prime_length: float = 40.0    # mm of filament pushed before the first PA
     prime_flow: float = 5.0       # mm^3/s during the prime
+    prime_rest: float = 0.0       # s pause after the prime
+    rest_time: float = 0.0        # s pause before every PA value
     wobble: float = 0.05          # mm XY nudge per leg (0 = off, PA inactive)
     wobble_axis: str = 'Y'
     accel: float = 1000.0         # mm/s^2, toolhead (XY) only, during test
@@ -51,6 +68,9 @@ class Settings:
             pa_start=g('pa_start', 0., minval=0.),
             pa_end=g('pa_end', 0.08, minval=0.),
             pa_step=g('pa_step', 0.005, above=0.),
+            method=config.get('method', 'wobble').strip().lower(),
+            pa_mode=config.get('pa_mode', 'grid').strip().lower(),
+            pa_max=g('pa_max', 0.08, above=0.),
             cycles=config.getint('cycles', 4, minval=1),
             fast_flow=g('fast_flow', 19.24, above=0.),
             fast_time=g('fast_time', 0.25, above=0.),
@@ -58,6 +78,8 @@ class Settings:
             slow_time=g('slow_time', 1.0, above=0.),
             prime_length=g('prime_length', 40., minval=0.),
             prime_flow=g('prime_flow', 5., above=0.),
+            prime_rest=g('prime_rest', 0., minval=0.),
+            rest_time=g('rest_time', 0., minval=0.),
             wobble=g('wobble', 0.05, minval=0.),
             wobble_axis=config.get('wobble_axis', 'Y').upper(),
             accel=g('accel', 1000., above=0.),
@@ -81,12 +103,21 @@ class Settings:
             else:
                 out[f.name] = gcmd.get(key, cur)
         out['wobble_axis'] = str(out['wobble_axis']).upper()
-        out['model'] = str(out['model']).strip().lower()
+        for k in ('model', 'method', 'pa_mode'):
+            out[k] = str(out[k]).strip().lower()
         s = Settings(**out)
         s.validate()
         return s
 
     def validate(self, max_values=500):
+        if self.method not in METHODS:
+            raise PAError("METHOD must be one of: %s" % ", ".join(METHODS))
+        if self.pa_mode not in PA_MODES:
+            raise PAError("PA_MODE must be one of: %s" % ", ".join(PA_MODES))
+        if not 0 < self.pa_max <= 2.0:
+            raise PAError("PA_MAX must be between 0 and 2")
+        if self.prime_rest < 0 or self.rest_time < 0:
+            raise PAError("PRIME_REST and REST_TIME must be >= 0")
         if self.pa_end < self.pa_start:
             raise PAError("PA_END must be >= PA_START")
         if self.pa_step <= 0:
@@ -109,6 +140,10 @@ class Settings:
             raise PAError("MODEL must be one of: %s" % ", ".join(MODELS))
         if self.skip_first not in (0, 1):
             raise PAError("SKIP_FIRST must be 0 or 1")
+        if self.method == 'artificial' and \
+                min(self.fast_time, self.slow_time) < 0.15:
+            raise PAError("with METHOD=artificial FAST_TIME and SLOW_TIME "
+                          "must be at least 0.15 s")
         if self.wobble < 0:
             raise PAError("WOBBLE must be >= 0")
         if self.wobble_axis not in AXES:
@@ -128,20 +163,38 @@ class Settings:
     def prime_time(self, area):
         return self.prime_length * area / self.prime_flow
 
-    def filament_mm(self, area):
+    def trains(self):
+        """(typical, worst) number of PA values a test will run."""
+        if self.pa_mode == 'search':
+            return 7, SEARCH_MAX_TRAINS
+        n = len(self.pa_values())
+        return n, n
+
+    def filament_mm(self, area, trains=None):
         fast, slow = self.leg_mm(area)
         per_pa = slow + self.cycles * (fast + slow)      # lead-in + pulses
-        return per_pa * len(self.pa_values()) + self.prime_length
+        n = self.trains()[1] if trains is None else trains
+        return per_pa * n + self.prime_length
 
-    def duration_s(self, area):
-        per_pa = self.slow_time + self.cycles * (self.fast_time
-                                                 + self.slow_time)
-        return per_pa * len(self.pa_values()) + self.prime_time(area)
+    def duration_s(self, area, trains=None):
+        per_pa = self.rest_time + self.slow_time + \
+            self.cycles * (self.fast_time + self.slow_time)
+        n = self.trains()[0] if trains is None else trains
+        return per_pa * n + self.prime_time(area) + self.prime_rest
+
+    def max_charge_speed(self, area, smooth, pa=None):
+        """Artificial PA: fastest extruder speed (mm/s of filament) of a
+        charge move at PA `pa` (default: the highest PA the test can try)."""
+        if pa is None:
+            pa = (self.pa_max * 8 if self.pa_mode == 'search'
+                  else max(self.pa_values() or [0.]))
+        vf, vs = self.fast_flow / area, self.slow_flow / area
+        return (pa * (vf - vs) + (vf + vs) * smooth / 2.) / smooth
 
     def cross_section_needed(self, area):
         """mm^2 that [extruder] max_extrude_cross_section must allow: each
         leg extrudes its filament over only WOBBLE mm of XY travel."""
-        if self.wobble <= 0:
+        if self.wobble <= 0 or self.method != 'wobble':
             return 0.0
         fast, slow = self.leg_mm(area)
         return max(fast, slow) / self.wobble * area

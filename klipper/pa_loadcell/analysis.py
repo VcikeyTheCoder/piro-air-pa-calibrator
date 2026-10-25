@@ -120,6 +120,7 @@ MODELS = {
     'rise_fast': 'Rise fast',
     'fall_slow': 'Fall slow',
     'fall_undershoot': 'Fall undershoot',
+    'oznlab': 'OznLab',
 }
 DIP_MIN = 0.02
 
@@ -198,6 +199,8 @@ def pick(segments, model, dip_min=DIP_MIN):
         return _fastest(segments, 'fall')
     if model == 'fall_undershoot':
         return _undershoot(segments, dip_min)
+    if model == 'oznlab':
+        return ozn_pick(segments)
     raise ValueError('unknown model %r' % model)
 
 
@@ -248,3 +251,190 @@ def command_fit(t, f, markers, flows):
     sxx = sum((x - mx) ** 2 for x in xs)
     gain = sum((x - mx) * (y - my) for x, y in zip(xs, ys)) / sxx
     return {'offset': round(my - gain * mx, 3), 'gain': round(gain, 4)}
+
+
+# ---------------------------------------------------------------------
+# OznLab model, ported from OznLab sensor's OZNLAB_PA_AUTO
+# (github.com/ozancs/oznlab-sensor, GPL-3.0, score() / judge()).
+# Their rule, which matched printed pattern tests on their printers:
+# raise PA until the force dips below its new level after a slow-down;
+# the last PA without that dip is the answer.
+#   * every slow-down is measured against a straight baseline from the slow
+#     level before that pulse to the slow level after it (cancels drift)
+#   * the pulses are averaged into one curve; the dip is its deepest 40 ms
+#     mean, as a fraction of the pressure step
+#   * a dip counts only beyond max(noise limit, the dip already seen at
+#     PA 0 x 1.3 + 0.01): PA 0 cannot undershoot, so that is the floor
+# Window times scale with the leg lengths so the same code also scores
+# runs made with other pulse shapes (OznLab uses 0.6 s fast, 1.0 s slow).
+OZN_WIN = 0.04
+
+
+def _mean(t, f, a, b):
+    lo, hi = bisect.bisect_left(t, a), bisect.bisect_right(t, b)
+    return (sum(f[lo:hi]) / (hi - lo)) if hi - lo >= 3 else None
+
+
+def _detrended_sigma(t, f, a, b):
+    lo, hi = bisect.bisect_left(t, a), bisect.bisect_right(t, b)
+    n = hi - lo
+    if n < 12:
+        return None
+    ts, fs = t[lo:hi], f[lo:hi]
+    mt, mf = sum(ts) / n, sum(fs) / n
+    sxx = sum((x - mt) ** 2 for x in ts)
+    if sxx <= 0:
+        return None
+    k = sum((x - mt) * (y - mf) for x, y in zip(ts, fs)) / sxx
+    return math.sqrt(sum((y - mf - k * (x - mt)) ** 2
+                         for x, y in zip(ts, fs)) / (n - 2))
+
+
+def ozn_score(t, f, markers, smooth=0.04, skip_first=True):
+    """One PA value -> {'dip', 'limit', 'mismatch', 'amp', 'sigma', 'n',
+    'spread', 'curve', 'dt'} or None. dip < 0 means the force fell below
+    its new level after the slow-downs (as a fraction of the step)."""
+    if len(t) < 50:
+        return None
+    h = min(max(smooth, 0.01), 0.1) / 2.
+    fasts = sorted((m for m in markers if m.get('name') == 'fast'),
+                   key=lambda m: m['t0'])
+    slows = sorted((m for m in markers if m.get('name') == 'slow'),
+                   key=lambda m: m['t0'])
+    if skip_first and len(fasts) > 1:
+        fasts = fasts[1:]
+    sps = (len(t) - 1) / (t[-1] - t[0]) if t[-1] > t[0] else 320.
+    n_win = max(4, int(round(OZN_WIN * sps)))
+    m_up, m_dn, amps, curves, sig = [], [], [], [], []
+    for m in fasts:
+        tu, td = m['t0'], m['t1']
+        nxt = [x for x in slows if x['t0'] >= td - 1e-6]
+        t_end = nxt[0]['t1'] if nxt else t[-1]
+        t_slow, t_fast = t_end - td, td - tu
+        if t_slow < 0.15 or t_fast < 0.1:
+            continue
+        pre_a, pre_b = tu - min(0.30, 0.3 * t_slow + 0.03), tu - 0.03
+        pre = _mean(t, f, pre_a, pre_b)
+        early_u = _mean(t, f, tu + h + 0.01, tu + h + min(0.10, 0.4 * t_fast))
+        late_u = _mean(t, f, tu + max(h + 0.1, 0.58 * t_fast), td - h - 0.02)
+        early_d = _mean(t, f, td + h + 0.01, td + h + 0.10)
+        ld_a, ld_b = td + 0.5 * t_slow, td + t_slow - h - 0.05
+        late_d = _mean(t, f, ld_a, ld_b)
+        if None in (pre, early_u, late_u, early_d, late_d):
+            continue
+        amp = late_u - late_d
+        sg = _detrended_sigma(t, f, ld_a, ld_b)
+        if sg is not None and abs(amp) < 5 * sg:
+            continue                     # no real pressure step here
+        if abs(amp) < 1e-9:
+            continue
+        m_up.append((early_u - late_u) / amp)
+        m_dn.append((early_d - late_d) / amp)
+        amps.append(amp)
+        tp, ta = 0.5 * (pre_a + pre_b), 0.5 * (ld_a + ld_b)
+
+        def base(x, pre=pre, late_d=late_d, tp=tp, ta=ta):
+            return pre + (late_d - pre) * (x - tp) / (ta - tp)
+        a, b = td + h + 0.005, td + h + min(0.30, t_slow - h - 0.06)
+        lo, hi = bisect.bisect_left(t, a), bisect.bisect_right(t, b)
+        curves.append([(f[i] - base(t[i])) / amp for i in range(lo, hi)])
+        if sg is not None:
+            sig.append(sg)
+    if not amps or not curves:
+        return None
+    L = min(len(c) for c in curves)
+    if L < n_win + 2:
+        return None
+    avg = [sum(c[k] for c in curves) / len(curves) for k in range(L)]
+    acc = [0.]
+    for x in avg:
+        acc.append(acc[-1] + x)
+    u = min((acc[k + n_win] - acc[k]) / n_win for k in range(L - n_win + 1))
+    amp_m = sum(amps) / len(amps)
+    sig_m = sorted(sig)[len(sig) // 2] if sig else 0.
+    thr = max(0.03, 4. * sig_m / math.sqrt(n_win * len(curves)) / abs(amp_m))
+    a_abs = [abs(x) for x in amps]
+    stp = max(1, int(round(0.005 * sps)))
+    return {'dip': round(u, 4), 'limit': round(thr, 4),
+            'mismatch': round(0.5 * (sum(m_dn) / len(m_dn)
+                                     - sum(m_up) / len(m_up)), 4),
+            'amp': round(amp_m, 3), 'sigma': round(sig_m, 3),
+            'n': len(curves),
+            'spread': round(max(a_abs) / max(min(a_abs), 1e-9), 3),
+            'curve': [round(avg[k], 4) for k in range(0, L, stp)],
+            'dt': round(stp / sps, 5), 'start': round(h + 0.005, 4)}
+
+
+def ozn_floor(dip0):
+    """No compensation cannot undershoot: the dip seen at PA 0 is noise."""
+    return 1.3 * max(0., -dip0) + 0.01 if dip0 is not None and dip0 < 0 \
+        else 0.
+
+
+def ozn_depth(sc, floor):
+    """How far the dip goes beyond its limit (0 = no dip, PA not too high)."""
+    lim = max(sc['limit'], floor)
+    return max(0., -sc['dip'] - lim), lim
+
+
+def ozn_zero(points):
+    """OznLab's square-wave crossing: PA where a line through the two
+    (PA, mismatch) points closest to zero crosses zero (slope must fall)."""
+    pts = sorted(points, key=lambda r: abs(r[1]))[:2]
+    if len(pts) < 2:
+        return None
+    (k1, m1), (k2, m2) = pts
+    if k1 == k2 or m1 == m2:
+        return None
+    b = (m2 - m1) / (k2 - k1)
+    if b >= 0:
+        return None
+    k = k1 - m1 / b
+    return round(k, 4) if 0 < k < 2 else None
+
+
+def ozn_pick(segments):
+    """Last PA without a dip below the line after the slow-downs. Repeats
+    of one PA (the search measures borderline values twice) are combined:
+    dips averaged, limit / sqrt(2)."""
+    by = {}
+    for s in segments:
+        sc = s.get('ozn')
+        if sc and not s.get('partial') and s.get('pa') is not None:
+            by.setdefault(round(s['pa'], 6), []).append((s['idx'], sc))
+    if len(by) < 2:
+        return {'pa': None, 'idx': None, 'why': 'not enough PA values'}
+    pts = []
+    for pa in sorted(by):
+        rows = by[pa]
+        dip = sum(r[1]['dip'] for r in rows) / len(rows)
+        lim = sum(r[1]['limit'] for r in rows) / len(rows)
+        if len(rows) > 1:
+            lim /= math.sqrt(2.)
+        mis = sum(r[1]['mismatch'] for r in rows) / len(rows)
+        pts.append((pa, rows[-1][0], dip, lim, mis))
+    zero = [p for p in pts if p[0] == 0.]
+    floor = ozn_floor(zero[0][2]) if zero else 0.
+    first_bad = None
+    for i, (pa, idx, dip, lim, _) in enumerate(pts):
+        if max(0., -dip - max(lim, floor)) > 0.:
+            first_bad = i
+            break
+    cross = ozn_zero([(p[0], p[4]) for p in pts])
+    extra = (', square-wave crossing %.4f' % cross) if cross else ''
+    if first_bad is None:
+        pa, idx = pts[-1][0], pts[-1][1]
+        return {'pa': pa, 'idx': idx, 'cross': cross,
+                'why': 'no dip up to %.3f: raise the PA range%s'
+                       % (pa, extra)}
+    if first_bad == 0:
+        return {'pa': None, 'idx': None, 'cross': cross,
+                'why': 'already dips at the lowest PA (%.3f)%s'
+                       % (pts[0][0], extra)}
+    pa, idx = pts[first_bad - 1][0], pts[first_bad - 1][1]
+    b = pts[first_bad]
+    return {'pa': pa, 'idx': idx, 'cross': cross,
+            'why': 'last value without a dip below the line (%.3f dips '
+                   '%.0f%% > %.0f%%, floor from PA 0 %.0f%%)%s'
+                   % (b[0], -b[2] * 100, max(b[3], floor) * 100,
+                      floor * 100, extra)}

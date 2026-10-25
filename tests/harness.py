@@ -126,6 +126,13 @@ def seed_history(p, plug):
             'PA_STEP': '0.01', 'CYCLES': '3', 'FILAMENT': fil}))
     rid = plug.store.list_runs()[0]['id']
     plug.store.set_tag(rid, pa_pick=0.04, notes='felt right on the 0.5 corner')
+    # an OznLab-style run: artificial PA, adaptive search, his pulse values
+    A = 3.14159265 * 0.875 ** 2
+    g.cmds['PA_LOADCELL_TEST'](Gcmd({'METHOD': 'artificial', 'PA_MODE': 'search',
+        'PA_MAX': '0.08', 'FAST_FLOW': '%.2f' % (3 * A), 'SLOW_FLOW': '%.2f' % (0.75 * A),
+        'FAST_TIME': '0.6', 'SLOW_TIME': '1.0', 'CYCLES': '6', 'PRIME_LENGTH': '20',
+        'PRIME_FLOW': '%.2f' % (5 * A), 'PRIME_REST': '1', 'REST_TIME': '0.3',
+        'MODEL': 'oznlab', 'FILAMENT': 'PETG black (OznLab)', 'MAX_FILAMENT': '600'}))
     # a 5 minute manual recording: pushes of varying size, a slow drift and
     # two marks, so long-trace scrolling and zooming can be tried
     rng = random.Random(7)

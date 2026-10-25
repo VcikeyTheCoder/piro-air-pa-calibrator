@@ -117,6 +117,14 @@ class RunStore:
             fit = analysis.command_fit(t, f, mk, self._flows(meta, seg))
             if fit:
                 entry['cmd'] = fit
+            sm = meta.get('smooth_time')
+            oz = analysis.ozn_score(t, f, mk, sm if sm else 0.04,
+                                    opts['skip_first'])
+            if oz:
+                entry['ozn'] = oz
+        for k in ('search_note', 'repeat'):
+            if seg.get(k) is not None:
+                entry[k] = seg[k]
         return entry
 
     def _summarize(self, meta):
@@ -124,6 +132,9 @@ class RunStore:
         a = dict(meta.get('analysis') or {}, **opts)
         a['picks'] = analysis.all_picks(meta['segments'], opts['dip_min'])
         a['offset'] = analysis.timing_offset(meta['segments'])
+        oz = a['picks'].get('oznlab') or {}
+        if oz.get('cross') is not None:
+            a['ozn_cross'] = oz['cross']
         a['models'] = analysis.MODELS
         meta['analysis'] = a
         if meta.get('kind') == 'test' and meta.get('settings'):
@@ -141,6 +152,11 @@ class RunStore:
         self._summarize(meta)
         _atomic(self._meta_path(rid), meta)
         return idx
+
+    def set_search(self, rid, search):
+        meta = _load(self._meta_path(rid))
+        meta['search'] = search
+        _atomic(self._meta_path(rid), meta)
 
     def finalize(self, rid, status, error=''):
         meta = _load(self._meta_path(rid))

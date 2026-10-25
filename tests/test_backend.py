@@ -58,7 +58,7 @@ class Gcode:
             w = dict((k, float(v)) for k, v in re.findall(r'([XYEF])([-\d.]+)', line)) if line.startswith('G1') else {}
             if 'E' in w and 'F' in w:
                 xy = [abs(w[a] - s.pos[a]) for a in 'XY' if a in w]
-                d = max(xy) if xy and max(xy) > 0 else w['E']
+                d = max(xy) if xy and max(xy) > 0 else abs(w['E'])
                 dur = d / (w['F'] / 60)
                 s.p.windows.append((s.p.pt, s.p.pt + dur, w['E'] / dur))
                 s.p.pt += dur
@@ -140,7 +140,7 @@ def test_full_run():
     m = store.get_run(rid)
     a = m['analysis']
     assert a['model'] == 'fall_undershoot' and a['skip_first'] is True
-    assert set(a['picks']) == {'rise_fast', 'fall_slow', 'fall_undershoot'}
+    assert set(a['picks']) == {'rise_fast', 'fall_slow', 'fall_undershoot', 'oznlab'}
     assert m['segments'][0]['edge']['rise']['n'] == 1    # 2 pulses, first skipped
     assert m['segments'][0]['cmd']['gain'] > 0           # force ~ flow fit
     assert any('SET_PRESSURE_ADVANCE ADVANCE=0.05000' in l for l in p.log)
@@ -431,6 +431,85 @@ def test_old_run_gets_picks():
     _j.dump(m, open(path, 'w'))                       # like a run from v1
     m = st.get_run(rid)
     assert m['analysis']['stale'] and 'fall_undershoot' in m['analysis']['picks']
+
+def test_artificial_train_amounts():
+    p, bus, store, r = make()
+    rid = r.run(Gcmd(), S(method='artificial', pa_start=0.04, pa_end=0.04,
+                          prime_length=0, cycles=2))
+    A = Extruder.filament_area
+    vs, vf, h = 1.92 / A, 19.24 / A, 0.02
+    i0 = next(i for i, l in enumerate(p.log)
+              if l.startswith('SET_PRESSURE_ADVANCE ADVANCE=0.00000'))
+    es = [float(l.split()[1][1:]) for l in p.log[i0:]
+          if re.match(r'G1 E-?[\d.]+ F', l)]
+    # lead, (charge, fast, pull-back, slow) x 2
+    assert len(es) == 9, es
+    charge, pull = 0.04 * (vf - vs) + (vs + vf) * h, -0.04 * (vf - vs) + (vs + vf) * h
+    assert abs(es[1] - charge) < 1e-4 and abs(es[3] - pull) < 1e-4, (es, charge, pull)
+    assert abs(es[2] - vf * (0.25 - 0.04)) < 1e-4
+    assert not any(l.startswith('G1 Y') for l in p.log)          # no wobble
+    assert not any('ADVANCE=0.04' in l for l in p.log)           # Klipper PA stays 0
+    m = store.get_run(rid)
+    assert m['method'] == 'artificial' and abs(m['smooth_time'] - 0.04) < 1e-9
+    mk = store.get_segment(rid, 0)['markers']
+    f = [x for x in mk if x['name'] == 'fast'][0]
+    assert abs(f['t1'] - f['t0'] - 0.25) < 0.002, f            # nominal step times
+
+def test_artificial_needs_no_cross_section():
+    p, bus, store, r = make(); p.objs['toolhead'].ext.max_extrude_ratio = 0.3
+    r.run(Gcmd(), S(method='artificial'))                      # no error
+    p, bus, store, r = make(); p.objs['toolhead'].ext.max_e_velocity = 10.
+    try: r.run(Gcmd(), S(method='artificial', pa_end=0.08)); assert False
+    except PAError as e: assert 'charge' in str(e) or 'FAST_FLOW' in str(e), e
+
+def test_search_order_without_dip():
+    # the fake extruder has no melt lag, so nothing ever dips: the search
+    # tries 0, PA_MAX and doubles three times, then stops with a note
+    p, bus, store, r = make()
+    rid = r.run(Gcmd(), S(pa_mode='search', method='artificial', pa_max=0.02,
+                          prime_length=0, max_filament=2000))
+    pas = [s['pa'] for s in store.get_run(rid)['segments']]
+    assert pas == [0.0, 0.02, 0.04, 0.08, 0.16], pas
+    srch = store.get_run(rid)['search']
+    assert srch['result'] == 0.16 and srch['k_bad'] is None, srch
+    assert 'oznlab' in store.get_run(rid)['analysis']['picks']
+
+def _synth_b2b(tau, ring=0.0, loops=6, fast=0.6, slow=1.0, rate=320.0):
+    """back-to-back legs like the real test: lead-in slow, then fast/slow."""
+    plan, tt = [('slow', -1, 0.0, slow)], slow
+    for k in range(loops):
+        plan.append(('fast', k, tt, tt + fast)); tt += fast
+        plan.append(('slow', k, tt, tt + slow)); tt += slow
+    t, f, y = [], [], 1.0
+    for n in range(int(tt * rate)):
+        now = n / rate
+        u = 4.0 if any(nm == 'fast' and a <= now < b for nm, k, a, b in plan) else 1.0
+        y += (u - y) / tau / rate
+        t.append(round(now, 4)); f.append((y + ring * (u - y)) * 25.0)
+    return t, f, [{'name': nm, 'sweep': k, 't0': a, 't1': b} for nm, k, a, b in plan]
+
+def test_ozn_score_on_synthetic():
+    from pa_loadcell import analysis
+    t, f, m = _synth_b2b(0.05)
+    sc = analysis.ozn_score(t, f, m, 0.04)
+    assert sc and sc['n'] == 5 and sc['dip'] > -0.03, sc       # lag: no dip
+    t, f, m = _synth_b2b(0.05, ring=1.6)
+    sc2 = analysis.ozn_score(t, f, m, 0.04)
+    assert sc2['dip'] < -0.1, sc2                                # overshoot: dips
+    assert sc['mismatch'] > 0 > sc2['mismatch']
+
+def test_ozn_pick_rule():
+    from pa_loadcell import analysis
+    def seg(i, pa, dip, mis):
+        return {'idx': i, 'pa': pa, 'partial': False,
+                'ozn': {'dip': dip, 'limit': 0.03, 'mismatch': mis}}
+    segs = [seg(0, 0.0, -0.01, 0.3), seg(1, 0.02, 0.0, 0.1), seg(2, 0.04, -0.02, 0.02),
+            seg(3, 0.06, -0.09, -0.05), seg(4, 0.08, -0.2, -0.1)]
+    p = analysis.pick(segs, 'oznlab')
+    # floor from PA 0 = 1.3*0.01+0.01 = 0.023; 0.04 dips 2% (< 3%), 0.06 dips 9%
+    assert p['pa'] == 0.04 and p['cross'] and 0.04 < p['cross'] < 0.06, p
+    segs.append(seg(5, 0.06, 0.05, -0.05))           # a repeat averages the dip
+    assert analysis.pick(segs, 'oznlab')['pa'] == 0.06
 
 if __name__ == '__main__':
     for n, fn in list(globals().items()):

@@ -110,6 +110,7 @@ table{border-collapse:collapse;width:100%;font-size:13px}th,td{text-align:left;p
 .ico{flex:none;color:var(--trace)}
 .fg3{grid-template-columns:repeat(3,1fr)}.fg4{grid-template-columns:repeat(4,1fr)}
 label.f .lb{display:inline-flex;align-items:center;gap:6px;color:var(--text)}
+.form legend .presets{display:inline-flex;gap:2px;margin-left:8px}.form legend .presets button{padding:1px 8px;font-size:12px;font-weight:400}
 label.f .lb .d{width:9px;height:9px;border-radius:2px;flex:none}.d.fast{background:var(--amber)}.d.slow{background:var(--trace)}.d.prime{background:var(--ok)}
 label.f .hint{font-size:11px;color:var(--dim);line-height:1.3}
 .inp{display:flex;align-items:center;background:var(--bg);border:1px solid var(--rule);border-radius:var(--r)}
@@ -176,14 +177,14 @@ label.f .hint{font-size:11px;color:var(--dim);line-height:1.3}
 </section>
 
 <section id="test">
- <p class="intro">Extrudes into the air at the test position: a slow lead-in, then fast and slow pulses, once for every pressure advance value. Each leg moves the nozzle a tiny wobble in X or Y, because Klipper only applies pressure advance to moves with X or Y motion. Preheat, home all axes and move Z to <b id="zNeed">the test height</b> first.</p>
+ <p class="intro">Extrudes into the air at the test position: a prime, then for every pressure advance value a slow lead-in and fast/slow pulses. Klipper only applies pressure advance to moves with X or Y motion, so either each leg wobbles the nozzle a little (KAPAT) or the PA push is added by hand to extrude-only moves (OznLab). Preheat, home all axes and move Z to <b id="zNeed">the test height</b> first.</p>
  <div class="tgrid">
   <div>
    <form id="form" class="form" autocomplete="off"></form>
    <div class="fixed" id="fixed" hidden></div>
   </div>
   <div class="tside">
-   <div class="card pcard"><h3><span id="icPulse"></span>One PA value</h3><svg id="pulse" viewBox="0 0 420 150" role="img" aria-label="Pulse shape for one pressure advance value"></svg></div>
+   <div class="card pcard"><h3><span id="icPulse"></span>One PA value</h3><svg id="pulse" viewBox="0 0 420 164" role="img" aria-label="Pulse shape for one pressure advance value"></svg></div>
    <div class="card pcard"><div class="facts num" id="sum"></div><div id="checks" style="margin-top:10px;display:flex;flex-direction:column;gap:8px"></div></div>
    <div class="card pcard">
     <div class="run-now"><button id="tstart" class="primary">Start test</button><button id="tcancel" class="danger" hidden>Cancel test</button><span class="sp"></span><button id="treset" class="quiet">Reset to defaults</button></div>
@@ -533,7 +534,7 @@ function status(){const s=$('#cSrc'),k=info.source;let cls='',txt='';
  $('#mark').hidden=$('#markText').hidden=!rec.active;
  $('#tstart').disabled=!!busy||rec.active;$('#tcancel').hidden=tst.state!=='running';
  const p=$('#tprog');p.hidden=!busy;p.firstElementChild.style.width=Math.round((tst.progress||0)*100)+'%';
- $('#tstat').textContent=busy?('PA '+(tst.pa??'-')+(tst.phase?', '+tst.phase+' leg':'')+', '+Math.round((tst.progress||0)*100)+' % done, '+Math.round(tst.elapsed||0)+' s'):''}
+ $('#tstat').textContent=busy?('PA '+(tst.pa??'-')+(tst.phase?', '+tst.phase+' leg':'')+', '+Math.round((tst.progress||0)*100)+' % done, '+Math.round(tst.elapsed||0)+' s'+(tst.note?'. '+tst.note:'')):''}
 
 /* ---- live drawing ---- */
 function liveStats(x0,x1){const a=lb(bt,x0,bn),b=lb(bt,x1+1e-9,bn),n=b-a;if(!n){['#sMin','#sMax','#sMean','#sStd'].forEach(s=>$(s).textContent='-');return}
@@ -564,39 +565,55 @@ const TI={range:'<path d="M3 12h18M6 8v8M12 9v6M18 8v8"/>',pulse:'<path d="M2 17
  pin:'<circle cx="12" cy="12" r="4"/><path d="M12 2v5M12 17v5M2 12h5M17 12h5"/>',spool:'<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3"/>',
  clock:'<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',list:'<path d="M8 6h13M8 12h13M8 18h13M3 6h1M3 12h1M3 18h1"/>',drop:'<path d="M12 3c4 5 6 8 6 11a6 6 0 0 1-12 0c0-3 2-6 6-11z"/>',
  gauge:'<path d="M4 18a8 8 0 1 1 16 0"/><path d="M12 18l4-6"/>'};
-const MODELS={rise_fast:'Rise fast',fall_slow:'Fall slow',fall_undershoot:'Fall undershoot'};
+const MODELS={rise_fast:'Rise fast',fall_slow:'Fall slow',fall_undershoot:'Fall undershoot',oznlab:'OznLab'};
 const MODEL_HELP={rise_fast:'Speed-up edges: fastest rise that stays under the overshoot limit',
  fall_slow:'Slow-down edges: fastest fall that stays under the undershoot limit',
- fall_undershoot:'Slow-down edges: the PA just before the force starts dipping below the settled line'};
-const MODEL_KIND={rise_fast:'rise',fall_slow:'fall',fall_undershoot:'fall'};
+ fall_undershoot:'Slow-down edges: the PA just before the force starts dipping below the settled line',
+ oznlab:'OznLab sensor method: dip after the slow-down against a drift-corrected baseline, noise floor from PA 0; last PA without a dip'};
+const MODEL_KIND={rise_fast:'rise',fall_slow:'fall',fall_undershoot:'fall',oznlab:'fall'};
 const MODEL_OPTS=Object.entries(MODELS);
 /* [name, label, unit, step | options, hint, colour key] */
 const FIELDS=[
- ['range','PA values','fg3',[['pa_start','Start','',.001,'First value tested'],['pa_end','End','',.001,'Last value tested'],['pa_step','Step','',.0005,'Gap between values']]],
+ ['move','Method','',[['method','Pulses','',[['wobble','Wobble (KAPAT)'],['artificial','Artificial PA (OznLab)']],'Wobble: tiny X/Y move so Klipper applies its own PA. Artificial: extrude-only, the PA push is added by hand'],
+   ['pa_mode','PA values','',[['grid','Fixed grid'],['search','Adaptive search (OznLab)']],'Grid tests every step; the search tries 0, then the max, then narrows down (about 7 values)']]],
+ ['range','PA values','fg3',[['pa_start','Start','',.001,'First value tested'],['pa_end','End','',.001,'Last value tested'],['pa_step','Step','',.0005,'Gap between values'],
+   ['pa_max','Search from','',.005,'First high PA tried; doubles until the force dips']]],
  ['pulse','Pulse','',[['fast_flow','Fast flow','mm³/s',.1,'Flow during each fast leg','fast'],['fast_time','Fast time','s',.05,'Length of each fast leg','fast'],
    ['slow_flow','Slow flow','mm³/s',.1,'Flow during the lead-in and each slow leg','slow'],['slow_time','Slow time','s',.1,'Length of each slow leg','slow'],
-   ['cycles','Pulses per PA','',1,'Fast and slow pairs for every PA value']]],
- ['drop','Prime','fg',[['prime_length','Prime length','mm',1,'Filament pushed before the first PA value so the melt is steady (0 = off)','prime'],['prime_flow','Prime flow','mm³/s',.5,'Flow during the prime; the test starts right after it','prime']]],
- ['move','Motion','fg3',[['wobble','Wobble','mm',.01,'X or Y travel during each leg. Without it Klipper ignores PA (0 = off)'],['wobble_axis','Wobble axis','',['Y','X'],'Axis that wobbles'],
+   ['cycles','Pulses per PA','',1,'Fast and slow pairs for every PA value'],['rest_time','Rest before each PA','s',.1,'Pause before every PA value (OznLab: 0.3 s)']]],
+ ['drop','Prime','fg',[['prime_length','Prime length','mm',1,'Filament pushed before the first PA value so the melt is steady (0 = off)','prime'],['prime_flow','Prime flow','mm³/s',.5,'Flow during the prime','prime'],['prime_rest','Rest after prime','s',.5,'Pause after the prime (OznLab: 1 s)','prime']]],
+ ['pin','Motion','fg3',[['wobble','Wobble','mm',.01,'X or Y travel during each leg. Without it Klipper ignores PA (0 = off)'],['wobble_axis','Wobble axis','',['Y','X'],'Axis that wobbles'],
    ['accel','XY accel','mm/s²',100,'Toolhead acceleration during the test. Extruder limits stay as configured']]],
  ['pin','Position','fg4',[['park_x','Park X','mm',1,''],['park_y','Park Y','mm',1,''],['test_x','Test X','mm',1,'Where the nozzle extrudes in the air'],['test_y','Test Y','mm',1,'']]],
  ['gauge','Analysis','',[['model','Model','',MODEL_OPTS,'How the best PA is picked; you can switch and re-analyse later in History'],['skip_first','First pulse','',[['1','Skip it'],['0','Use it']],'The first pulse after each PA change is often not representative']]],
  ['spool','Run','',[['filament','Filament name','','text','Saved with the run'],['max_filament','Filament cap','mm',10,'A test that would use more is refused']]]];
 let DEF=null;
+/* pulse presets. OznLab's are in filament mm/s in his code (fast 3, slow 0.75,
+   prime at 5 mm/s); converted to mm3/s with your filament area. */
+const PRESETS={oznlab:A=>({fast_flow:+(3*A).toFixed(2),slow_flow:+(.75*A).toFixed(2),fast_time:.6,slow_time:1,cycles:6,prime_length:20,prime_flow:+(5*A).toFixed(2),prime_rest:1,rest_time:.3}),
+ ours:A=>({fast_flow:19.24,slow_flow:1.92,fast_time:.25,slow_time:1,cycles:4,prime_length:40,prime_flow:5,prime_rest:0,rest_time:0})};
+function applyPreset(k){const v=PRESETS[k](area());for(const[n,x]of Object.entries(v)){const i=$(`#form [name="${n}"]`);if(i)i.value=x}store.set('form.v2',formVals());summary();toast(k==='oznlab'?'OznLab pulse values filled in':'Our pulse values filled in')}
+function showFields(v){const hide={pa_start:v.pa_mode==='search',pa_end:v.pa_mode==='search',pa_step:v.pa_mode==='search',pa_max:v.pa_mode!=='search',
+  wobble:v.method==='artificial',wobble_axis:v.method==='artificial'};
+ for(const[k,h]of Object.entries(hide)){const l=$(`#form .inp[data-k="${k}"]`);if(l)l.closest('label').hidden=h}}
 const area=()=>DEF&&DEF.extruder&&DEF.extruder.filament_area||Math.PI*.875*.875;
 function fieldHTML([k,l,u,st,hint,col],v){const ctl=Array.isArray(st)?`<select name="${k}">${st.map(o=>{const[val,lab]=Array.isArray(o)?o:[o,o];return`<option value="${esc(val)}"${String(val)===String(v)?' selected':''}>${esc(lab)}</option>`}).join('')}</select>`
   :`<input name="${k}" ${st==='text'?'type="text"':`type="number" step="${st}" inputmode="decimal"`} value="${esc(v)}">`;
  return`<label class="f" title="${esc(hint)}"><span class="lb">${col?`<i class="d ${col}"></i>`:''}${l}</span><div class="inp" data-k="${k}">${ctl}${u?`<em>${u}</em>`:''}</div>${hint?`<span class="hint">${esc(hint)}</span>`:''}</label>`}
 async function loadDefaults(){try{const d=await api('defaults');DEF=d;const saved=store.get('form.v2',{});
-  $('#form').innerHTML=FIELDS.map(([ic,g,cls,fs])=>`<fieldset><legend>${SI(TI[ic])}${g}<span class="ct" data-ct="${ic}"></span></legend><div class="fg ${cls}">${fs.map(f=>fieldHTML(f,saved[f[0]]??d[f[0]]??'')).join('')}</div></fieldset>`).join('');
+  $('#form').innerHTML=FIELDS.map(([ic,g,cls,fs])=>`<fieldset><legend>${SI(TI[ic])}${g}<span class="ct" data-ct="${ic}"></span>${g==='Pulse'?'<span class="presets"><button type="button" class="quiet" data-preset="oznlab" title="Fill in OznLab\'s pulse values">OznLab values</button><button type="button" class="quiet" data-preset="ours" title="Fill in this tool\'s default pulse values">Our values</button></span>':''}</legend><div class="fg ${cls}">${fs.map(f=>fieldHTML(f,saved[f[0]]??d[f[0]]??'')).join('')}</div></fieldset>`).join('');
+  $$('#form [data-preset]').forEach(b=>b.onclick=()=>applyPreset(b.dataset.preset));
   $$('#form input,#form select').forEach(i=>i.addEventListener('input',()=>{store.set('form.v2',formVals());summary()}));summary();
   const L=d.limits||{};if(L.required_z!=null){$('#zNeed').textContent=fmt(L.required_z,1)+' mm';const fx=$('#fixed');fx.hidden=false;
    fx.innerHTML=`Set in pa_loadcell.cfg, not here: test height <b>Z ${fmt(L.required_z,1)} mm</b> (within ${fmt(L.z_tol,1)} mm), minimum nozzle temperature <b>${fmt(L.min_temp,0)} &deg;C</b>.`}}
  catch(e){$('#form').innerHTML='<div class="empty">Could not read defaults: '+esc(e.message)+'</div>'}}
 const formVals=()=>Object.fromEntries($$('#form input,#form select').map(i=>[i.name,i.type==='number'?parseFloat(i.value):i.value]));
-function plan(v){const A=area(),n=Math.max(0,Math.floor((v.pa_end-v.pa_start)/v.pa_step+1e-6)+1),fast=v.fast_flow/A*v.fast_time,slow=v.slow_flow/A*v.slow_time,
-  per=slow+v.cycles*(fast+slow),need=v.wobble>0?Math.max(fast,slow)/v.wobble*A:0,primeT=v.prime_length>0&&v.prime_flow>0?v.prime_length*A/v.prime_flow:0;
- return{n,A,fast,slow,fil:per*n+(v.prime_length>0?v.prime_length:0),secs:(v.slow_time+v.cycles*(v.fast_time+v.slow_time))*n+primeT,primeT,need,vf:v.fast_flow/A,vs:v.slow_flow/A,vp:v.prime_flow/A}}
+function plan(v){const A=area(),search=v.pa_mode==='search',grid=Math.max(0,Math.floor((v.pa_end-v.pa_start)/v.pa_step+1e-6)+1),n=search?7:grid,nMax=search?14:grid,
+  fast=v.fast_flow/A*v.fast_time,slow=v.slow_flow/A*v.slow_time,per=slow+v.cycles*(fast+slow),need=v.method!=='artificial'&&v.wobble>0?Math.max(fast,slow)/v.wobble*A:0,
+  primeT=v.prime_length>0&&v.prime_flow>0?v.prime_length*A/v.prime_flow:0,prime=v.prime_length>0?v.prime_length:0,
+  sm=Math.min(Math.max((DEF&&DEF.extruder&&DEF.extruder.smooth_time)||.04,.01),.1),top=search?v.pa_max*8:v.pa_end,vf=v.fast_flow/A,vs=v.slow_flow/A;
+ return{n,nMax,grid,search,A,fast,slow,fil:per*nMax+prime,filTyp:per*n+prime,secs:(v.rest_time+v.slow_time+v.cycles*(v.fast_time+v.slow_time))*n+primeT+(v.prime_rest||0),primeT,need,vf,vs,vp:v.prime_flow/A,
+  sm,charge:(top*(vf-vs)+(vf+vs)*sm/2)/sm,top}}
 /* the pulse picture: lead-in, then fast/slow pairs, heights scaled by flow */
 function drawPulse(v){const sv=$('#pulse'),W=420,H=150,x0=12,x1=W-12,base=112,top=30;if(!(v.fast_flow>0&&v.slow_flow>=0)){sv.innerHTML='';return}
  const shown=Math.min(v.cycles||1,4),legs=[['lead',v.slow_time]];for(let k=0;k<shown;k++)legs.push(['fast',v.fast_time],['slow',v.slow_time]);
@@ -615,12 +632,18 @@ function drawPulse(v){const sv=$('#pulse'),W=420,H=150,x0=12,x1=W-12,base=112,to
 
   <path d="M${fastX[0]?fastX[0][0]:x0} ${base+10} v6 H${x1} v-6" fill="none" stroke="${css('--dim')}"/>
   <text x="${((fastX[0]?fastX[0][0]:x0)+x1)/2}" y="${base+30}" text-anchor="middle">${v.cycles>shown?'first '+shown+' of ':''}${v.cycles} pulse${v.cycles==1?'':'s'}, then the next PA value</text>
-  <text x="${x1}" y="14" text-anchor="end">${v.prime_length>0?'after a '+fmt(v.prime_length,0)+' mm prime at '+fmt(v.prime_flow,1)+' mm³/s':'no prime'}</text>`}
+  <text x="${x1}" y="14" text-anchor="end">${v.prime_length>0?'after a '+fmt(v.prime_length,0)+' mm prime at '+fmt(v.prime_flow,1)+' mm³/s':'no prime'}</text>
+  ${v.method==='artificial'?fastX.map(([fx,fw])=>`<path d="M${fx-3} ${yf} l3 -9 l3 9 Z M${fx+fw-3} ${ys} l3 9 l3 -9 Z" fill="${css('--ok')}"/>`).join('')+`<text x="${x0}" y="${base+46}" fill="${css('--ok')}">▲ artificial PA push, ▼ pull-back</text>`:`<text x="${x0}" y="${base+46}">${v.wobble>0?'wobble '+fmt(v.wobble,2)+' mm per leg':'no wobble'}</text>`}`}
 function summary(){if(!$('#form input'))return;const v=formVals(),p=plan(v),bad=[],warn=[],ex=DEF&&DEF.extruder||{};
  $$('#form .inp').forEach(e=>e.classList.remove('bad'));const mark=k=>{const e=$(`#form .inp[data-k="${k}"]`);if(e)e.classList.add('bad')};
- if(!(v.pa_step>0)){bad.push('PA step must be above 0');mark('pa_step')}
- if(!(v.pa_end>=v.pa_start)){bad.push('PA end must be at least PA start');mark('pa_end')}
- if(p.n>500){bad.push('Too many PA values (max 500): raise the step');mark('pa_step')}
+ showFields(v);
+ if(!p.search){if(!(v.pa_step>0)){bad.push('PA step must be above 0');mark('pa_step')}
+  if(!(v.pa_end>=v.pa_start)){bad.push('PA end must be at least PA start');mark('pa_end')}
+  if(p.n>500){bad.push('Too many PA values (max 500): raise the step');mark('pa_step')}}
+ else if(!(v.pa_max>0&&v.pa_max<=2)){bad.push('Search from must be between 0 and 2');mark('pa_max')}
+ if(v.method==='artificial'){if(Math.min(v.fast_time,v.slow_time)<.15){bad.push('With artificial PA, fast and slow times must be at least 0.15 s');mark('fast_time')}
+  const vm=ex.max_e_velocity;if(vm!=null){if(p.vf>vm){bad.push(`Fast flow needs ${p.vf.toFixed(1)} mm/s of filament, above your max_extrude_only_velocity (${fmt(vm,1)})`);mark('fast_flow')}
+   if(p.charge>vm){(p.search?warn:bad).push(`At PA ${fmt(p.top,3)} the artificial charge move needs ${p.charge.toFixed(0)} mm/s, above your max_extrude_only_velocity (${fmt(vm,1)})${p.search?': the search stops doubling before that':''}`);if(!p.search)mark('pa_end')}}}
  if(!(v.slow_flow<v.fast_flow)){bad.push('Slow flow must be below fast flow');mark('slow_flow')}
  for(const k of['fast_flow','fast_time','slow_flow','slow_time'])if(!(v[k]>0)){bad.push('Every flow and time must be above 0');mark(k)}
  if(!(v.cycles>=1)){bad.push('Use at least 1 pulse per PA value');mark('cycles')}
@@ -628,16 +651,17 @@ function summary(){if(!$('#form input'))return;const v=formVals(),p=plan(v),bad=
  if(!(v.prime_flow>0)){bad.push('Prime flow must be above 0');mark('prime_flow')}
  else if(v.prime_length>0&&ex.max_e_velocity!=null&&p.vp>ex.max_e_velocity){bad.push(`Prime flow needs ${p.vp.toFixed(1)} mm/s of filament, above your max_extrude_only_velocity (${fmt(ex.max_e_velocity,1)})`);mark('prime_flow')}
  if(v.cycles===1&&v.skip_first==='1')warn.push('With 1 pulse per PA value there is nothing left after skipping the first, so it will be used anyway.');
- if(p.fil>v.max_filament){bad.push(`This test needs ${p.fil.toFixed(0)} mm of filament, above the ${fmt(v.max_filament,0)} mm cap`);mark('max_filament')}
+ if(p.fil>v.max_filament){bad.push(`This test ${p.search?'could need':'needs'} ${p.fil.toFixed(0)} mm of filament, above the ${fmt(v.max_filament,0)} mm cap`);mark('max_filament')}
  if(v.fast_flow>30)warn.push(`${fmt(v.fast_flow,1)} mm³/s is a lot for most hotends. Make sure yours can melt that much.`);
- const ct=$('[data-ct="range"]');if(ct)ct.textContent=p.n?p.n+' values':'';
+ const ct=$('[data-ct="range"]');if(ct)ct.textContent=p.search?'about 7 values, chosen as it goes':(p.n?p.n+' values':'');
  const m=Math.floor(p.secs/60),sc=Math.round(p.secs%60),pct=Math.min(100,p.fil/v.max_filament*100);
- $('#sum').innerHTML=`${SI(TI.list)}<div><b>${p.n}</b> PA values <span class="sub">${fmt(v.pa_start,3)} to ${fmt(v.pa_end,3)}, step ${fmt(v.pa_step,4)}</span></div>
+ $('#sum').innerHTML=`${SI(TI.list)}<div>${p.search?`about <b>7</b> PA values <span class="sub">adaptive search from ${fmt(v.pa_max,3)}, up to 14</span>`:`<b>${p.n}</b> PA values <span class="sub">${fmt(v.pa_start,3)} to ${fmt(v.pa_end,3)}, step ${fmt(v.pa_step,4)}</span>`}</div>
   ${SI(TI.clock)}<div>about <b>${m?m+' min ':''}${sc} s</b> <span class="sub">${v.cycles} pulse${v.cycles==1?'':'s'} per value${v.skip_first==='1'&&v.cycles>1?', '+(v.cycles-1)+' analysed':''}${p.primeT?', prime '+Math.round(p.primeT)+' s':''}</span></div>
-  ${SI(TI.spool)}<div><b>${p.fil.toFixed(0)} mm</b> of filament <span class="sub">${v.prime_length>0?'incl. '+fmt(v.prime_length,0)+' mm prime, ':''}cap ${fmt(v.max_filament,0)} mm</span><div class="meter ${pct>=100?'bad':pct>80?'warn':''}"><i style="width:${pct}%"></i></div></div>
+  ${SI(TI.spool)}<div><b>${(p.search?p.filTyp:p.fil).toFixed(0)} mm</b> of filament <span class="sub">${p.search?'up to '+p.fil.toFixed(0)+' mm, ':''}${v.prime_length>0?'incl. '+fmt(v.prime_length,0)+' mm prime, ':''}cap ${fmt(v.max_filament,0)} mm</span><div class="meter ${pct>=100?'bad':pct>80?'warn':''}"><i style="width:${pct}%"></i></div></div>
   ${SI(TI.drop)}<div>Fast leg <b>${p.fast.toFixed(2)} mm</b> at ${p.vf.toFixed(1)} mm/s <span class="sub">slow leg ${p.slow.toFixed(2)} mm at ${p.vs.toFixed(2)} mm/s of filament</span></div>`;
  const chk=[];
- if(v.wobble>0){const have=ex.max_cross_section,line='max_extrude_cross_section: '+Math.ceil(p.need/10)*10;
+ if(v.method==='artificial')chk.push(`<div class="alert" style="border-left-color:var(--ok)">Artificial PA: extrude-only moves, Klipper's PA held at 0, a push of PA × ${(p.vf-p.vs).toFixed(2)} mm added over ${Math.round(p.sm*1000)} ms at every speed-up and pulled back at every slow-down. No wobble and no <code>max_extrude_cross_section</code> change needed.</div>`);
+ else if(v.wobble>0){const have=ex.max_cross_section,line='max_extrude_cross_section: '+Math.ceil(p.need/10)*10;
   if(have!=null&&p.need>have)chk.push(`<div class="alert bad">Your [extruder] allows ${fmt(have,2)} mm² but this test needs <b>${p.need.toFixed(0)} mm²</b>, because each leg extrudes while the nozzle moves only ${fmt(v.wobble,2)} mm. Add <code>${line}</code> to [extruder] and restart Klipper, or raise the wobble.</div>`);
   else if(have==null)chk.push(`<div class="alert">Needs <code>${line}</code> in [extruder] (could not read your current value).</div>`)}
  else chk.push('<div class="alert bad">Wobble is off. Klipper does not apply pressure advance to extrude-only moves, so every PA value will look the same.</div>');
@@ -675,10 +699,13 @@ function analysisHTML(m){const a=m.analysis||{},model=modelOf(m),P=a.picks||{};
  return`<div class="ana"><div class="row"><b>Analysis</b>${a.stale?'<span class="chip warn"><i></i>older run: press Re-analyse to apply the new options</span>':''}<span class="sp"></span>
    <span style="font-size:12px;color:var(--dim)">${a.offset!=null?'sensor delay '+Math.round(a.offset*1000)+' ms. ':''}${m.analysed?'analysed '+esc(m.analysed):''}</span></div>
   <table><thead><tr><th>Model</th><th>Pick</th><th>Why</th></tr></thead><tbody>${rows}</tbody></table>
+  ${m.search?searchHTML(m.search):''}
   <div class="row opts"><span>Click a model to use it.</span><span class="sp"></span>
    <label>First pulse <select class="o-skip"><option value="1"${a.skip_first?' selected':''}>Skip</option><option value="0"${a.skip_first?'':' selected'}>Use</option></select></label>
    <label>Dip at least <input class="o-dip num" type="number" step="0.5" min="0.5" max="40" style="width:64px" value="${+((a.dip_min??.02)*100).toFixed(1)}"> %</label>
    <button class="o-run">Re-analyse</button></div></div>`}
+function searchHTML(sr){const st=(sr.steps||[]).map(x=>`<span class="chip ${x.depth>0?'bad':'ok'}" title="dip ${Math.round(x.dip*100)}%, limit ${Math.round(x.limit*100)}%"><i></i>${x.pa} ${x.depth>0?'dips':'ok'}</span>`).join(' ');
+ return`<div style="font-size:12px;color:var(--dim);margin-bottom:6px">Live search (OznLab): <b style="color:var(--text)">${sr.result??'-'}</b>${sr.k_bad!=null?', next '+sr.k_bad+' dips':''}. Order: ${st}</div>`}
 async function reanalyse(id,box,params){try{toast('Re-analysing...');const m=await api('reanalyze',Object.assign({run:id},params),60000);meta[id]=m;
   for(const k of Object.keys(segCache))if(k.startsWith(id+':'))delete segCache[k];renderRun(id,box);loadRuns();toast('Re-analysed')}catch(e){toast(e.message)}}
 async function openRun(id,box){let m;try{m=await api('run',{run:id})}catch(e){box.textContent=e.message;return}meta[id]=m;renderRun(id,box)}
@@ -689,7 +716,7 @@ function renderRun(id,box){const m=meta[id],st=m.settings||{},pick=m.pa_pick,tes
   ${m.error?`<div style="color:var(--amber);margin-bottom:6px">${esc(m.error)}</div>`:''}
   ${test?analysisHTML(m):''}
   <div class="grid">${m.segments.map(s=>{const e=s.edge&&s.edge[kindE];return`<div class="pa card ${s.idx===cand?'cand':''} ${s.idx===near?'pick':''}" data-i="${s.idx}" role="button" tabindex="0" aria-pressed="false" title="${s.samples} samples${s.partial?', partial':''}">
-   <canvas></canvas><div class="t num"><b>${test?s.pa:fdur(s.duration||0)}</b><span class="m">${s.idx===cand&&s.idx===near?'both':s.idx===cand?'model pick':s.idx===near?'your pick':''}</span></div>
+   <canvas></canvas><div class="t num"><b>${test?(+s.pa).toFixed(s.pa*1000%5?4:3)+(s.repeat?' (again)':''):fdur(s.duration||0)}</b><span class="m">${s.idx===cand&&s.idx===near?'both':s.idx===cand?'model pick':s.idx===near?'your pick':''}</span></div>
    <div class="m num">${test?edgeText(e,kindE):'&nbsp;'}</div>
    ${test?`<button class="add quiet" data-add="${s.idx}" aria-pressed="${inCmp(id,s.idx)}" title="Add to Compare">+</button>`:''}</div>`}).join('')}</div>
   ${test?`<div style="color:var(--dim);font-size:12px">Thumbnails show the average ${kindE==='rise'?'speed-up (rising)':'slow-down (falling)'} edge used by <b>${MODELS[model]}</b>. Green is the model pick, amber is your pick, and a chip with both shows amber. Indicative only: force is not the same as nozzle pressure.</div>`:''}
@@ -758,7 +785,8 @@ function drawViewer(){if(!cur)return;const{seg,m,idx}=cur;$$('#vmode button').fo
    cmdS=idealStep(e,{offset:b,gain:e.amp},m.kind==='test'?seg.pa:0,m)}
   hv.d={static:true,series:series.concat(cmdS),legend:cmdLegend(cmdS.length>0),vlines:[{t:0,color:css('--dim'),label:vedge==='rise'?'speed up':'slow down'}],unit,dec:1,tfmt:t=>(t*1000).toFixed(0)+' ms'};hv.render();
   const ov=vedge==='rise'?'overshoot':'dip below the line';
-  $('#vinfo').innerHTML=e?`${e.n} edges averaged${e.skipped_first?' (first pulse skipped)':''}. 10-90% ${vedge==='rise'?'rise':'fall'} <b>${e.rise!=null?Math.round(e.rise*1000)+' ms':'not reached'}</b>, ${ov} <b>${Math.round(e.overshoot*100)}%</b>, signal to noise ${e.snr??'-'}.${cmdS.length?' Dashed: an ideal instant step.':''}`:'Not enough data for this edge.'}}
+  const oz=sm&&sm.ozn&&vedge==='fall'?` OznLab: dip ${Math.round(sm.ozn.dip*100)}% against a ${Math.round(sm.ozn.limit*100)}% noise limit.`:'';
+  $('#vinfo').innerHTML=e?`${e.n} edges averaged${e.skipped_first?' (first pulse skipped)':''}.${oz} 10-90% ${vedge==='rise'?'rise':'fall'} <b>${e.rise!=null?Math.round(e.rise*1000)+' ms':'not reached'}</b>, ${ov} <b>${Math.round(e.overshoot*100)}%</b>, signal to noise ${e.snr??'-'}.${cmdS.length?' Dashed: an ideal instant step.':''}`:'Not enough data for this edge.'}}
 /* dashed "what the extruder was told" for a recorded PA value */
 function delayOf(m){return DELAYMODE==='adj'?((m.analysis||{}).offset||0):0}
 function segCommand(m,seg,sm){const fl=m.flows||(m.settings&&m.settings.fast_flow!=null?{fast:m.settings.fast_flow,slow:m.settings.slow_flow}:null);

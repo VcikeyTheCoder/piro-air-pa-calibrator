@@ -89,7 +89,7 @@ class PALoadCell:
         out['test'] = {'state': r.state, 'progress': round(r.progress, 3),
                        'pa': r.current_pa, 'run': r.run_id,
                        'phase': r.phase, 'pa_t': r.pa_t,
-                       'leg_seq': r.leg_seq,
+                       'leg_seq': r.leg_seq, 'note': r.note,
                        'legs': r.legs_since(req.get_int('leg_seq', 0)),
                        'elapsed': round(self.reactor.monotonic() - r.started,
                                         1) if r.state != 'idle' else 0}
