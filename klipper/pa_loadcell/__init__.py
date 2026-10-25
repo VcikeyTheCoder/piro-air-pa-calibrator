@@ -1,6 +1,9 @@
 # Klipper extras package. Copy this folder to ~/klipper/klippy/extras/pa_loadcell/
 # Config: see pa_loadcell.cfg. Runtime data: see README.md.
+import json
 import logging
+import time
+import uuid
 from dataclasses import asdict
 from .errors import PAError
 from .feed import SampleBus
@@ -35,10 +38,12 @@ class PALoadCell:
         # Webhook endpoints do NOT wait on the G-code mutex, so cancel and
         # record work while a test is running. Moonraker exposes them as
         # printer.pa_loadcell.<name> (JSON-RPC) and /printer/pa_loadcell/<name>.
+        self.uploads = {}       # token -> {'parts': [...], 'size', 'at'}
         wh = printer.lookup_object('webhooks')
         for name in ('live', 'info', 'defaults', 'runs', 'run', 'segment',
                      'tag', 'delete', 'record_start', 'record_stop', 'mark',
-                     'cancel'):
+                     'cancel', 'export', 'import_begin', 'import_chunk',
+                     'import_end', 'reanalyze'):
             wh.register_endpoint('pa_loadcell/' + name,
                                  self._wrap(getattr(self, '_wh_' + name)))
 
@@ -84,6 +89,8 @@ class PALoadCell:
         out['test'] = {'state': r.state, 'progress': round(r.progress, 3),
                        'pa': r.current_pa, 'run': r.run_id,
                        'phase': r.phase, 'pa_t': r.pa_t,
+                       'leg_seq': r.leg_seq,
+                       'legs': r.legs_since(req.get_int('leg_seq', 0)),
                        'elapsed': round(self.reactor.monotonic() - r.started,
                                         1) if r.state != 'idle' else 0}
         out['rec'] = {'active': self.rec.active,
@@ -150,6 +157,56 @@ class PALoadCell:
 
     def _wh_cancel(self, req):
         self.runner.cancel()
+
+    # -- export / import / re-analyse ------------------------------------
+    def _wh_export(self, req):
+        return self.store.export_run(req.get_int('run'))
+
+    MAX_UPLOAD = 64 * 1024 * 1024
+
+    def _wh_import_begin(self, req):
+        now = time.time()
+        for k in [k for k, u in self.uploads.items() if now - u['at'] > 600]:
+            del self.uploads[k]                 # forget stale uploads
+        token = uuid.uuid4().hex
+        self.uploads[token] = {'parts': [], 'size': 0, 'at': now}
+        return {'token': token}
+
+    def _wh_import_chunk(self, req):
+        u = self.uploads.get(req.get_str('token'))
+        if u is None:
+            raise PAError("upload expired, try again")
+        part = req.get_str('data')
+        if req.get_int('seq') != len(u['parts']):
+            raise PAError("upload out of order, try again")
+        u['size'] += len(part)
+        if u['size'] > self.MAX_UPLOAD:
+            self.uploads.pop(req.get_str('token'), None)
+            raise PAError("file too large")
+        u['parts'].append(part)
+        u['at'] = time.time()
+        return {'received': len(u['parts'])}
+
+    def _wh_import_end(self, req):
+        u = self.uploads.pop(req.get_str('token'), None)
+        if u is None:
+            raise PAError("upload expired, try again")
+        try:
+            data = json.loads(''.join(u['parts']))
+        except ValueError:
+            raise PAError("file is not valid JSON")
+        return {'run': self.store.import_run(data)}
+
+    def _wh_reanalyze(self, req):
+        rid = req.get_int('run')
+        if self.runner.state != 'idle' and rid == self.runner.run_id:
+            raise PAError("this run is still being recorded")
+        model = req.get_str('model', '') or None
+        skip = req.get('skip_first', None)
+        dip = req.get('dip_min', None)
+        return self.store.reanalyze(
+            rid, model, None if skip is None else bool(skip),
+            None if dip is None else float(dip))
 
     def get_status(self, eventtime):
         return {'state': self.runner.state,

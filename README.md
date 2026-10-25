@@ -59,8 +59,8 @@ resumes without losing samples.
 | Tab | What it does |
 |---|---|
 | **Live** | Big current force, min / max / mean / noise of what is on screen, and the graph. The page keeps the last 10 minutes: drag the graph or the strip under it to go back, **Follow live** (or End) to return. **Tare**. **Record** starts and stops a recording any time (not during a test); **Mark** drops a labelled marker while recording, handy during manual PA tuning. |
-| **PA test** | Settings grouped as PA values, Pulse (flows in mm3/s and times), Motion, Position and Run, with a picture of the pulse for one PA value that redraws as you type. A summary shows PA values, time, filament against the cap and leg lengths, and checks your printer's extrusion limit. **Start test**, **Cancel test**, progress (PA value and leg), and a live load cell graph with a marker where each PA value starts. The test height and minimum temperature are shown but only set in the config. |
-| **History** | Tests and recordings with their settings. Each PA value shows a thumbnail of its average rising edge with rise time and overshoot. Click one for the full trace (slow / fast phases shaded, marks shown) in the same scrollable graph as Live (it starts from your Live time window and Y settings, and zooming in loads every sample of that part), or the **Edges** view (every pulse overlaid with the mean). Add your own PA pick and notes, rename, delete, export CSV. |
+| **PA test** | Settings grouped as PA values, Pulse (flows in mm3/s and times), Prime, Motion, Position, Analysis and Run, with a picture of the pulse for one PA value that redraws as you type. A summary shows PA values, time, filament against the cap and leg lengths, and checks your printer's extrusion limit. **Start test**, **Cancel test**, progress (PA value and leg), and a live load cell graph with a marker where each PA value starts. The test height and minimum temperature are shown but only set in the config. |
+| **History** | Tests and recordings with their settings. Each test has an **Analysis** panel with the pick of all three models (click a model to use it, change *first pulse* or the *dip* threshold and press **Re-analyse**; the raw samples are never changed). Each PA value shows a thumbnail of the edge the active model uses. **Export run** downloads the whole run as one `.palc.json` file; **Import run** loads such a file (from this or another printer) as a new run you can re-analyse. Click one for the full trace (slow / fast phases shaded, marks shown) in the same scrollable graph as Live (it starts from your Live time window and Y settings, and zooming in loads every sample of that part), or the **Edges** view (every pulse overlaid with the mean). Add your own PA pick and notes, rename, delete, export CSV. |
 | **Compare** | Press **+** on any PA value, from one run or several. **Edge response** overlays the average edge of each PA so you can see the shape change: slow and rounded at low PA, a spike above the plateau at high PA. A table lists rise time, overshoot and signal to noise. **Raw trace** overlays the recorded force. |
 
 **Graph controls** (Live and History):
@@ -78,9 +78,25 @@ resumes without losing samples.
 
 Settings are remembered in your browser. When scrolled back on Live, the time axis shows the clock time.
 
-Reading the curves: with PA too low the force rises slowly; too high it overshoots the plateau and then settles.
-The thumbnail marked **candidate** is the one with the fastest rise that does not overshoot (indicative only: force at
-the extruder is not the same as pressure at the nozzle, and it is only a hint). Your own pick is marked in amber.
+**Dashed lines** (every graph, toggles next to Invert):
+
+- **Command**: what the extruder was told (the slow / fast flow steps), drawn at the exact leg times and fitted to the
+  force (force = offset + gain x flow, from the settled half of every leg). Live during a test as well.
+- **PA push**: the extruder motion with pressure advance added (the push / pull spike at every speed change, using the
+  PA value and your `pressure_advance_smooth_time`). It is drawn off-scale on purpose: it shows *when* PA acts.
+- **Raw / Adjusted**: the measured sensor delay (how long after the command the force starts to move, from the
+  crispest PA values) is shown with each run; *Adjusted* shifts the dashed line by it. It does not change any pick.
+
+**Analysis models** (pick shown for all three, the active one is used for thumbnails and the run list):
+
+| Model | Looks at | Picks |
+|---|---|---|
+| **Rise fast** | speed-up edges | the fastest rise whose overshoot stays under the limit (5 % + 3 / signal-to-noise) |
+| **Fall slow** | slow-down edges | the fastest fall whose undershoot stays under the limit |
+| **Fall undershoot** (default) | slow-down edges | going up in PA, the first value where the force dips below the settled slow line by more than the noise (max(2 %, 3 / signal-to-noise)) and keeps dipping at the next value; the pick is the PA just before it |
+
+The first pulse of every PA value is skipped by default (it often is not representative). Indicative only: force at
+the extruder is not the same as pressure at the nozzle. Your own pick is marked in amber.
 
 Optional embedded view: the page also works inside an iframe with `?embed=1`. In Mainsail, a webcam with service
 **HTML Iframe** and URL `/loadcell/?embed=1` shows it on the dashboard (not tested here).
@@ -90,8 +106,9 @@ Optional embedded view: the page also works inside an iframe with `?embed=1`. In
 From the PA test tab, or the console. Preheat to 200 C or more, home all axes, move Z to 20 mm, then:
 
 ```
-PA_LOADCELL_TEST PA_START=0 PA_END=0.08 PA_STEP=0.005 CYCLES=3 FAST_FLOW=19.24 FAST_TIME=0.25 \
-  SLOW_FLOW=1.92 SLOW_TIME=1 WARMUP=4 WOBBLE=0.05 WOBBLE_AXIS=Y ACCEL=1000 MAX_FILAMENT=400 \
+PA_LOADCELL_TEST PA_START=0 PA_END=0.08 PA_STEP=0.005 CYCLES=4 FAST_FLOW=19.24 FAST_TIME=0.25 \
+  SLOW_FLOW=1.92 SLOW_TIME=1 PRIME_LENGTH=40 PRIME_FLOW=5 WOBBLE=0.05 WOBBLE_AXIS=Y ACCEL=1000 MAX_FILAMENT=400 \
+  MODEL=fall_undershoot SKIP_FIRST=1 \
   PARK_X=10 PARK_Y=10 TEST_X=150 TEST_Y=10 FILAMENT="PLA red"
 ```
 
@@ -99,8 +116,9 @@ First try something small: `PA_LOADCELL_TEST PA_START=0 PA_END=0.01 PA_STEP=0.00
 
 ### What the nozzle does
 
-For every PA value: set the PA, one slow lead-in leg, then `CYCLES` pairs of a fast leg and a slow leg, back to back
-with no pause. The very first PA value gets a lead-in `WARMUP` times longer so the melt is steady before measuring.
+First a prime: `PRIME_LENGTH` mm of filament at `PRIME_FLOW` mm3/s (extrude-only, split into pieces that respect
+`max_extrude_only_distance`), then straight into the first PA value with no pause. For every PA value: set the PA,
+one slow lead-in leg, then `CYCLES` pairs of a fast leg and a slow leg, back to back with no pause.
 
 Every leg is one move: `G1 Y<y> E<mm> F<feed>`. The nozzle moves `WOBBLE` mm (alternating forward and back) while it
 extrudes, and the feed is set so the leg lasts exactly `FAST_TIME` or `SLOW_TIME`. The wobble is what makes the test
@@ -123,10 +141,12 @@ the test does not use. Speed and flow overrides (M220 / M221) are set to 100 % d
 | Parameter | Default | Meaning |
 |---|---|---|
 | `PA_START` `PA_END` `PA_STEP` | 0 / 0.08 / 0.005 | PA range and resolution |
-| `CYCLES` | 3 | fast + slow pulses per PA value |
+| `CYCLES` | 4 | fast + slow pulses per PA value (the first is skipped in analysis by default) |
 | `FAST_FLOW` `FAST_TIME` | 19.24 mm3/s / 0.25 s | fast leg (2.0 mm of 1.75 mm filament) |
 | `SLOW_FLOW` `SLOW_TIME` | 1.92 mm3/s / 1.0 s | lead-in and slow legs (0.8 mm) |
-| `WARMUP` | 4 | lead-in multiplier for the first PA value |
+| `PRIME_LENGTH` `PRIME_FLOW` | 40 mm / 5 mm3/s | prime before the first PA value (0 = no prime) |
+| `MODEL` | fall_undershoot | analysis model: `rise_fast`, `fall_slow` or `fall_undershoot` |
+| `SKIP_FIRST` | 1 | 1 = ignore the first pulse of every PA value in the analysis |
 | `WOBBLE` `WOBBLE_AXIS` | 0.05 mm / Y | X or Y travel per leg; 0 turns it off (then PA has no effect) |
 | `ACCEL` | 1000 | toolhead (X/Y) acceleration during the test |
 | `MAX_FILAMENT` | 400 mm | a test that would use more is refused |
@@ -134,13 +154,14 @@ the test does not use. Speed and flow overrides (M220 / M221) are set to 100 % d
 | `TEST_X` `TEST_Y` | config | where the nozzle extrudes into air |
 | `FILAMENT` | empty | name stored in run metadata |
 
-With the defaults a test has 17 PA values, takes about 1.5 minutes and uses about 160 mm of filament.
+With the defaults a test has 17 PA values, takes about 2 minutes and uses about 245 mm of filament (40 mm of it prime).
 The filament cross-section comes from your `[extruder]` `filament_diameter`.
 
 ### Safety checks (the test aborts with a clear message)
 
 - not all axes homed, Z not at `required_z` (+/- `z_tolerance`), nozzle below `min_temp`
 - no load cell found, or no samples for `sample_timeout` seconds
+- `PRIME_FLOW` faster than `max_extrude_only_velocity` allows
 - more filament than `MAX_FILAMENT`, `max_extrude_cross_section` too low for the pulses (the message gives the line to add),
   park/test position (plus the wobble) outside the axes, or with `WOBBLE=0` a fast leg above `max_extrude_only_velocity`
 - **Cancel** stops after the current leg and keeps everything recorded so far (the cut segment is marked partial).
@@ -191,17 +212,18 @@ sequenceDiagram
   U->>T: PA_LOADCELL_TEST (via Moonraker)
   T->>T: safety checks, save state, move to test position
   T->>S: create run (settings, nozzle temp, filament)
+  T->>T: prime (PRIME_LENGTH at PRIME_FLOW, extrude-only)
   loop each PA value
     T->>T: SET_PRESSURE_ADVANCE (segment start)
-    T->>T: slow lead-in leg (longer on the first PA value)
+    T->>T: slow lead-in leg
     loop CYCLES
       T->>T: fast leg, slow leg: G1 Y(wobble) E F (phase markers)
     end
     B-->>T: samples in this PA window
-    T->>S: save segment + average edge (rise time, overshoot)
+    T->>S: save segment + edges (first pulse skipped) + command fit
   end
   T->>T: restore PA, accel, park, G-code state
-  T->>S: finalize (complete / cancelled / error)
+  T->>S: finalize: picks of all three models, sensor delay
 ```
 
 Key points:
@@ -221,18 +243,24 @@ Key points:
 ```
 ~/printer_data/pa_loadcell/
   run_0001/
-    meta.json      date, kind (test|manual), filament, nozzle_temp, settings, status, pa_pick, notes,
-                   segments: [{idx, pa, samples, duration, partial, unit, edge:{rise,fall}}]
-    seg_000.json   {pa, unit, rate, markers:[{name, sweep, t0, t1} | {name:"mark", label, t0}], t:[...], f:[...]}
+    meta.json      date, kind (test|manual), filament, nozzle_temp, settings, status, pa_pick, notes, flows,
+                   smooth_time, analysis:{model, skip_first, dip_min, picks:{model:{pa, idx, why}}, offset},
+                   segments: [{idx, pa, samples, duration, partial, unit, edge:{rise,fall}, cmd:{offset,gain}}]
+    seg_000.json   {pa, unit, rate, flows, markers:[{name, sweep, t0, t1} | {name:"mark", label, t0}], t:[...], f:[...]}
 ```
 
-`meta.json` is rewritten after every segment, so a crash or cancel never loses finished segments.
+`meta.json` is rewritten after every segment, so a crash or cancel never loses finished segments. Everything under
+`analysis`, `edge` and `cmd` is derived from the samples and is recomputed by Re-analyse. An exported run is
+`{"format": "pa_loadcell_run", "version": 1, "meta": ..., "segments": [...]}`.
 `edge` holds the averaged, normalised edge (80 points) plus `rise` (10 to 90 % seconds), `overshoot`, `snr` and the number of edges.
 
 ## Webhook API
 
 Exposed by Moonraker as `printer.pa_loadcell.<name>` (JSON-RPC) and `/printer/pa_loadcell/<name>` (HTTP):
-`live`, `info`, `defaults`, `runs`, `run`, `segment`, `tag`, `delete`, `record_start`, `record_stop`, `mark`, `cancel`.
+`live`, `info`, `defaults`, `runs`, `run`, `segment`, `tag`, `delete`, `record_start`, `record_stop`, `mark`, `cancel`,
+`export` (`run`), `reanalyze` (`run`, optional `model`, `skip_first`, `dip_min`), and `import_begin` / `import_chunk`
+(`token`, `seq`, `data`) / `import_end` (`token`) for uploading a run file in pieces. `live` also returns the leg
+schedule (`legs` since `leg_seq`) used for the live dashed line.
 
 `segment` takes `run`, `idx`, `max_points` (0 = every sample) and optional `t0` / `t1` (seconds from the segment start) to
 return only that stretch. It also returns `span` (first and last time) and `decimated`.

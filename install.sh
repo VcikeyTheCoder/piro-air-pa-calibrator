@@ -103,8 +103,8 @@ if [ -f "$CFG" ]; then
 import re, sys
 cfg, new = sys.argv[1], sys.argv[2]
 lines = open(cfg).read().split('\n')
-OBSOLETE = ('sweeps', 'extrude_len', 'slow_speed', 'fast_speed', 'settle')
-OLD_DEFAULTS = {'accel': '3000', 'pa_step': '0.002'}   # first-version defaults
+OBSOLETE = ('sweeps', 'extrude_len', 'slow_speed', 'fast_speed', 'settle', 'warmup')
+OLD_DEFAULTS = {'accel': '3000', 'pa_step': '0.002', 'cycles': '3'}   # earlier defaults
 key = lambda l: (re.match(r'^([a-z_]+)\s*:', l) or [None, None])[1]
 have = set()
 for i, l in enumerate(lines):

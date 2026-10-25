@@ -1,6 +1,7 @@
-"""PA_LOADCELL_TEST: safety checks, then for every PA value a lead-in slow
-leg followed by CYCLES fast/slow pulses, each PA value saved as its own
-segment.
+"""PA_LOADCELL_TEST: safety checks, a prime (PRIME_LENGTH mm at PRIME_FLOW,
+extrude-only, so the melt is steady), then straight into every PA value:
+one slow lead-in leg followed by CYCLES fast/slow pulses, each PA value
+saved as its own segment.
 
 Pulse shape (defaults from KAPAT, github.com/vzagranichnyy/KAPAT):
   every leg is ONE move "G1 <axis><target> E<mm> F<feed>" where the axis
@@ -13,6 +14,7 @@ Pulse shape (defaults from KAPAT, github.com/vzagranichnyy/KAPAT):
   ACCEL is applied with SET_VELOCITY_LIMIT, i.e. to the toolhead (XY).
   The extruder's own limits are left as configured: they only govern
   extrude-only moves, which the wobble mode does not use."""
+import collections
 import math
 from dataclasses import asdict
 from .errors import PAError
@@ -30,7 +32,18 @@ def extruder_info(ext):
     ratio = getattr(ext, 'max_extrude_ratio', None)
     return {'filament_area': round(area, 4),
             'max_cross_section': round(ratio * area, 3) if ratio else None,
-            'max_e_velocity': getattr(ext, 'max_e_velocity', None)}
+            'max_e_velocity': getattr(ext, 'max_e_velocity', None),
+            'max_e_dist': getattr(ext, 'max_e_dist', None),
+            'smooth_time': smooth_time(ext)}
+
+
+def smooth_time(ext):
+    """pressure_advance_smooth_time currently in use (Klipper extruder)."""
+    try:
+        st = ext.get_status(0).get('smooth_time')
+        return float(st) if st is not None else None
+    except Exception:
+        return None
 
 
 class SegmentCollector:
@@ -73,6 +86,10 @@ class PATestRunner:
         self.current_pa = None
         self.phase = ''             # lead-in | fast | slow (for the UI)
         self.pa_t = None            # print_time the current PA value started
+        # recent legs for the live "what the extruder was told" line:
+        # [print_time start, end, flow mm^3/s, name]
+        self.legs = collections.deque(maxlen=200)
+        self.leg_seq = 0
         self.run_id = None
         self.started = 0.0
 
@@ -130,6 +147,13 @@ class PATestRunner:
             if vmax is not None and v > vmax:
                 raise PAError("fast leg needs %.1f mm/s of filament, above "
                               "max_extrude_only_velocity %.1f" % (v, vmax))
+        if s.prime_length > 0:
+            vmax = getattr(ext, 'max_e_velocity', None)
+            v = s.prime_flow / area
+            if vmax is not None and v > vmax:
+                raise PAError("PRIME_FLOW %.1f mm3/s needs %.1f mm/s of "
+                              "filament, above max_extrude_only_velocity %.1f:"
+                              " lower PRIME_FLOW" % (s.prime_flow, v, vmax))
         lo, hi = st.get('axis_minimum'), st.get('axis_maximum')
         if lo is not None:
             for name, (x, y) in (("park", (s.park_x, s.park_y)),
@@ -165,7 +189,9 @@ class PATestRunner:
             'settings': asdict(s), 'pa_values': values,
             'filament_area': round(area, 4),
             'leg_mm': {'fast': round(fast_mm, 4), 'slow': round(slow_mm, 4)},
-            'filament_mm': round(s.filament_mm(area), 1)})
+            'filament_mm': round(s.filament_mm(area), 1),
+            'smooth_time': smooth_time(ext),
+            'analysis': {'model': s.model, 'skip_first': bool(s.skip_first)}})
         col = SegmentCollector()
         status, err, saved = 'complete', '', False
         try:
@@ -179,11 +205,12 @@ class PATestRunner:
             if s.wobble > 0:
                 base = s.test_x if s.wobble_axis == 'X' else s.test_y
                 wob = Wobble(s.wobble_axis, base, s.wobble)
+            self._prime(s, area, ext)
             for i, pa in enumerate(values):
                 if self.cancel_flag:
                     break
                 self.current_pa = pa
-                self._segment(col, pa, s, area, wob, first=(i == 0))
+                self._segment(col, pa, s, area, wob)
                 self.progress = (i + 1) / len(values)
             if self.cancel_flag:
                 status = 'cancelled'
@@ -202,7 +229,15 @@ class PATestRunner:
             raise PAError(err)
         return self.run_id
 
-    def _leg(self, e_mm, dur, wob):
+    def _log_leg(self, t0, t1, flow, name):
+        self.leg_seq += 1
+        self.legs.append((self.leg_seq, round(t0, 4), round(t1, 4),
+                          flow, name))
+
+    def legs_since(self, seq):
+        return [list(x) for x in self.legs if x[0] > seq]
+
+    def _leg(self, e_mm, dur, wob, flow, name):
         """One leg lasting `dur` seconds. Returns (t0, t1) in print_time."""
         th = self.toolhead
         t0 = th.get_last_move_time()
@@ -211,9 +246,30 @@ class PATestRunner:
                     % (wob.axis, wob.next(), e_mm, (wob.hi - wob.lo) / dur * 60.))
         else:
             self._g("G1 E%.5f F%.4f" % (e_mm, e_mm / dur * 60.))
-        return t0, th.get_last_move_time()
+        t1 = th.get_last_move_time()
+        self._log_leg(t0, t1, flow, name)
+        return t0, t1
 
-    def _segment(self, col, pa, s, area, wob, first):
+    def _prime(self, s, area, ext):
+        """Push PRIME_LENGTH mm at PRIME_FLOW, extrude-only (PA does not act
+        and does not matter here), split into pieces that respect
+        max_extrude_only_distance. The first PA value starts right after."""
+        if s.prime_length <= 0:
+            return
+        self.phase = 'prime'
+        v = s.prime_flow / area                       # mm/s of filament
+        limit = getattr(ext, 'max_e_dist', None) or 50.
+        piece = max(1., min(limit * 0.9, 25.))
+        left = s.prime_length
+        while left > 1e-6 and not self.cancel_flag:
+            e = min(piece, left)
+            th = self.toolhead
+            t0 = th.get_last_move_time()
+            self._g("G1 E%.5f F%.4f" % (e, v * 60.))
+            self._log_leg(t0, th.get_last_move_time(), s.prime_flow, 'prime')
+            left -= e
+
+    def _segment(self, col, pa, s, area, wob):
         th = self.toolhead
         fast_mm, slow_mm = s.leg_mm(area)
         self._g("SET_PRESSURE_ADVANCE ADVANCE=%.5f" % pa)
@@ -226,24 +282,20 @@ class PATestRunner:
             markers.append({'name': name, 'sweep': k,
                             't0': round(t[0] - t_base, 4),
                             't1': round(t[1] - t_base, 4)})
-        # lead-in: slow flow so the melt is at a steady state before the
-        # first fast pulse (longer before the very first PA value)
-        n_lead = s.warmup_legs() if first else 1
-        lead_t = s.slow_time * (s.warmup if first else 1.0) / n_lead
+        # lead-in: one slow leg so the melt settles at the new PA value
         self.phase = 'lead-in'
-        t_lead = None
-        for _ in range(n_lead):
-            t = self._leg(slow_mm * lead_t / s.slow_time, lead_t, wob)
-            t_lead = (t_lead[0] if t_lead else t[0], t[1])
-        mark('slow', -1, t_lead)
+        mark('slow', -1, self._leg(slow_mm, s.slow_time, wob, s.slow_flow,
+                                   'slow'))
         for k in range(s.cycles):
             if self.cancel_flag:
                 partial = True
                 break
             self.phase = 'fast'
-            mark('fast', k, self._leg(fast_mm, s.fast_time, wob))
+            mark('fast', k, self._leg(fast_mm, s.fast_time, wob, s.fast_flow,
+                                      'fast'))
             self.phase = 'slow'
-            mark('slow', k, self._leg(slow_mm, s.slow_time, wob))
+            mark('slow', k, self._leg(slow_mm, s.slow_time, wob, s.slow_flow,
+                                      'slow'))
         th.wait_moves()
         t_end = th.get_last_move_time()
         samples = self._collect(col, t_base, t_end)
@@ -252,6 +304,7 @@ class PATestRunner:
         self.store.add_segment(self.run_id, {
             'pa': pa, 'unit': self.bus.unit, 'rate': round(self.bus.rate, 1),
             'markers': markers, 'partial': partial,
+            'flows': {'fast': s.fast_flow, 'slow': s.slow_flow},
             't': [round(t - t_base, 4) for t, _ in samples],
             'f': [round(v, 3) for _, v in samples]})
 

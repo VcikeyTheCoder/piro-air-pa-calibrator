@@ -129,8 +129,20 @@ def test_full_run():
     assert legs and all(' E' in l for l in legs), legs[:3]   # wobble + E
     ys = sorted({l.split()[1] for l in legs})
     assert ys == ['Y100.0000', 'Y100.0500'], ys
-    first = store.get_segment(rid, 0)['markers'][0]           # warm-up lead-in
-    assert abs(first['t1'] - first['t0'] - 4.0) < 1e-3, first
+    first = store.get_segment(rid, 0)['markers'][0]           # 1-leg lead-in
+    assert abs(first['t1'] - first['t0'] - 1.0) < 1e-3, first
+    # prime: extrude-only moves totalling PRIME_LENGTH, before the first PA
+    i_pa = next(i for i, l in enumerate(p.log)
+                if l.startswith('SET_PRESSURE_ADVANCE ADVANCE=0.00000'))
+    prime = [l for l in p.log[:i_pa] if re.match(r'G1 E[\d.]+ F', l)]
+    assert prime and abs(sum(float(l.split()[1][1:]) for l in prime) - 40) < 1e-6
+    assert all(float(l.split()[1][1:]) <= 25 for l in prime)   # chunked
+    m = store.get_run(rid)
+    a = m['analysis']
+    assert a['model'] == 'fall_undershoot' and a['skip_first'] is True
+    assert set(a['picks']) == {'rise_fast', 'fall_slow', 'fall_undershoot'}
+    assert m['segments'][0]['edge']['rise']['n'] == 1    # 2 pulses, first skipped
+    assert m['segments'][0]['cmd']['gain'] > 0           # force ~ flow fit
     assert any('SET_PRESSURE_ADVANCE ADVANCE=0.05000' in l for l in p.log)
     assert 'G1 X10.00 Y10.00 F6000' in p.log                # parked at end
 
@@ -299,8 +311,9 @@ def test_settings_amounts_match_kapat():
     area = 3.14159265 * 0.875 ** 2
     fast, slow = s.leg_mm(area)
     assert abs(fast - 2.0) < 0.01 and abs(slow - 0.8) < 0.01, (fast, slow)
-    # KAPAT: per_k = slow + cycles*(fast+slow); total = per_k*n + (warmup-1)*slow
-    assert abs(s.filament_mm(area) - ((0.8 + 8 * 2.8) * 17 + 3 * 0.8)) < 0.5
+    # per PA: lead-in + cycles*(fast+slow); plus the 40 mm prime
+    assert abs(s.filament_mm(area) - ((0.8 + 8 * 2.8) * 17 + 40)) < 0.5
+    assert abs(s.duration_s(area) - ((1 + 8 * 1.25) * 17 + 40 * area / 5)) < 0.1
     assert abs(s.cross_section_needed(area) - 2.0 / 0.05 * area) < 0.5
 
 def test_back_to_back_windows():
@@ -311,6 +324,113 @@ def test_back_to_back_windows():
     assert te == 1.0 and abs(pre - 0.3) < 1e-9 and abs(post - 0.21) < 1e-9
     (te, pre, post), = analysis._windows(m, 'fall', 2.25)
     assert te == 1.25 and abs(pre - 0.21) < 1e-9 and abs(post - 0.96) < 1e-9
+
+def test_prime_limits():
+    p, bus, store, r = make()
+    p.objs['toolhead'].ext.max_e_velocity = 1.0       # 5 mm3/s needs 2.08 mm/s
+    try: r.run(Gcmd(), S()); assert False
+    except PAError as e: assert 'PRIME_FLOW' in str(e), e
+    p, bus, store, r = make()
+    rid = r.run(Gcmd(), S(prime_length=0))
+    assert not any(re.match(r'G1 E[\d.]+ F', l) for l in p.log[:5])
+
+def test_live_leg_schedule():
+    p, bus, store, r = make()
+    r.run(Gcmd(), S(pa_end=0.002))
+    legs = r.legs_since(0)
+    names = [x[4] for x in legs]
+    assert names[0] == 'prime' and 'fast' in names and 'slow' in names
+    assert all(b > a for _, a, b, _, _ in legs)
+    assert r.legs_since(legs[-1][0]) == []
+    fl = {x[4]: x[3] for x in legs}
+    assert fl['fast'] == 19.24 and fl['slow'] == 1.92 and fl['prime'] == 5.0
+
+def _seg_entries(dips, snr=100.0):
+    """Fake per-PA summaries: fall overshoot (= dip below the line)."""
+    out = []
+    for i, d in enumerate(dips):
+        e = {'rise': 0.02, 'overshoot': d, 'snr': snr, 't10': 0.003}
+        out.append({'idx': i, 'pa': round(i * 0.005, 3), 'partial': False,
+                    'edge': {'rise': dict(e, overshoot=0.01,
+                                          rise=0.08 - i * 0.005),
+                             'fall': e}})
+    return out
+
+def test_fall_undershoot_model():
+    from pa_loadcell import analysis
+    segs = _seg_entries([0.01, 0.01, 0.015, 0.01, 0.06, 0.09, 0.2])
+    p = analysis.pick(segs, 'fall_undershoot')
+    assert p['pa'] == 0.015 and '0.020' in p['why'], p
+    # a single blip is ignored: dip must persist at the next value
+    segs = _seg_entries([0.01, 0.05, 0.01, 0.01, 0.06, 0.09])
+    assert analysis.pick(segs, 'fall_undershoot')['pa'] == 0.015
+    # noisy data raises the threshold (3/snr = 7.5 %)
+    segs = _seg_entries([0.01, 0.06, 0.06, 0.06, 0.1, 0.2], snr=40)
+    assert analysis.pick(segs, 'fall_undershoot')['pa'] == 0.015
+    segs = _seg_entries([0.1, 0.1, 0.2])
+    assert analysis.pick(segs, 'fall_undershoot')['pa'] is None
+    segs = _seg_entries([0.0, 0.0, 0.01])
+    assert analysis.pick(segs, 'fall_undershoot')['pa'] == 0.01
+
+def test_rise_and_fall_models():
+    from pa_loadcell import analysis
+    segs = _seg_entries([0.01, 0.01, 0.01, 0.2])
+    assert analysis.pick(segs, 'rise_fast')['pa'] == 0.015
+    assert analysis.pick(segs, 'fall_slow')['pa'] == 0.0     # all 20 ms, first
+    assert analysis.timing_offset(segs) == 0.003
+
+def test_skip_first_pulse():
+    from pa_loadcell import analysis
+    t, f, m = _synth(0.05)
+    a = analysis.edge_summary(t, f, m, 'rise')
+    b = analysis.edge_summary(t, f, m, 'rise', skip_first=True)
+    assert a['n'] == 4 and b['n'] == 3 and b['skipped_first']
+
+def test_command_fit():
+    from pa_loadcell import analysis
+    t = [i / 320 for i in range(320 * 4)]
+    mk = [{'name': 'slow', 't0': 0, 't1': 1}, {'name': 'fast', 't0': 1, 't1': 2},
+          {'name': 'slow', 't0': 2, 't1': 4}]
+    f = [7 + 3 * (19.24 if 1 <= x < 2 else 1.92) for x in t]
+    fit = analysis.command_fit(t, f, mk, {'fast': 19.24, 'slow': 1.92})
+    assert abs(fit['gain'] - 3) < 0.01 and abs(fit['offset'] - 7) < 0.05, fit
+    assert analysis.command_fit(t, f, mk, None) is None
+
+def test_export_import_reanalyze():
+    p, bus, store, r = make()
+    rid = r.run(Gcmd(), S())
+    data = store.export_run(rid)
+    assert data['format'] == 'pa_loadcell_run' and len(data['segments']) == 3
+    import json as _j
+    data = _j.loads(_j.dumps(data))                     # through a file
+    new = store.import_run(data)
+    m = store.get_run(new)
+    assert new != rid and m['imported']['from_id'] == rid
+    assert len(m['segments']) == 3 and m['segments'][1]['edge']['rise']
+    m2 = store.reanalyze(new, model='rise_fast', skip_first=False)
+    assert m2['analysis']['model'] == 'rise_fast'
+    assert m2['segments'][0]['edge']['rise']['n'] == 2  # both pulses used
+    assert store.get_segment(new, 1)['t'] == store.get_segment(rid, 1)['t']
+    for bad in ({'format': 'x'}, {'format': 'pa_loadcell_run', 'meta': {},
+                'segments': [{'t': [1], 'f': []}]}):
+        try: store.import_run(bad); assert False
+        except PAError: pass
+    assert len(store.list_runs()) == 2                 # failed imports left nothing
+    try: store.reanalyze(new, model='nope'); assert False
+    except PAError: pass
+
+def test_old_run_gets_picks():
+    import tempfile
+    from pa_loadcell.storage import RunStore
+    st = RunStore(tempfile.mkdtemp())
+    t, f, mk = _synth(0.05)
+    rid = st.new_run('test', {'settings': {'fast_flow': 4.0, 'slow_flow': 1.0}})
+    st.add_segment(rid, {'pa': 0.0, 't': t, 'f': f, 'markers': mk})
+    import os, json as _j
+    path = st._meta_path(rid); m = _j.load(open(path)); m.pop('analysis')
+    _j.dump(m, open(path, 'w'))                       # like a run from v1
+    m = st.get_run(rid)
+    assert m['analysis']['stale'] and 'fall_undershoot' in m['analysis']['picks']
 
 if __name__ == '__main__':
     for n, fn in list(globals().items()):

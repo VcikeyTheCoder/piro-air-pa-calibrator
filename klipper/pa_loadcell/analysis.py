@@ -30,7 +30,7 @@ def _interp(t, f, x):
     return f[i - 1] + (f[i] - f[i - 1]) * (x - t0) / (t1 - t0)
 
 
-def _windows(markers, kind, tmax):
+def _windows(markers, kind, tmax, skip_first=False):
     """[(t_edge, pre_s, post_s)] for every usable edge.
     Works for back-to-back legs (slow, fast, slow, ...) and for legs with
     rests between them: the window before an edge reaches back no further
@@ -40,9 +40,12 @@ def _windows(markers, kind, tmax):
     cuts = sorted({round(m['t0'], 6) for m in legs} |
                   {round(m['t1'], 6) for m in legs} | {0.0})
     out = []
-    for m in legs:
-        if m.get('name') != 'fast':
-            continue
+    fasts = [m for m in legs if m.get('name') == 'fast']
+    if skip_first and len(fasts) > 1:
+        # the first pulse after the lead-in is often not representative
+        first = min(m.get('sweep', 0) for m in fasts)
+        fasts = [m for m in fasts if m.get('sweep', 0) != first]
+    for m in fasts:
         te = m['t0'] if kind == 'rise' else m['t1']
         before = [c for c in cuts if c < te - 1e-6]
         after = [c for c in cuts if c > te + 1e-6]
@@ -54,9 +57,9 @@ def _windows(markers, kind, tmax):
     return out
 
 
-def edge_summary(t, f, markers, kind='rise', npts=POINTS):
+def edge_summary(t, f, markers, kind='rise', npts=POINTS, skip_first=False):
     """Return dict or None when there is not enough data."""
-    wins = _windows(markers, kind, t[-1] if t else 0.0)
+    wins = _windows(markers, kind, t[-1] if t else 0.0, skip_first)
     if not wins or len(t) < 20:
         return None
     pre = min(w[1] for w in wins)
@@ -85,7 +88,8 @@ def edge_summary(t, f, markers, kind='rise', npts=POINTS):
     res = {'kind': kind, 'n': n, 'pre': round(pre, 3), 'post': round(post, 3), 'amp': round(amp, 3),
            'snr': round(abs(amp) / sd, 1) if sd > 1e-12 else None,
            't': [round(g, 4) for g in grid], 'y': [round(v, 4) for v in y],
-           'rise': None, 'overshoot': None}
+           'rise': None, 'overshoot': None, 't10': None,
+           'skipped_first': bool(skip_first)}
     t10 = t90 = None
     for i in range(1, npts):
         if grid[i] < -0.03:         # edge time is not exact; allow a little early
@@ -94,7 +98,153 @@ def edge_summary(t, f, markers, kind='rise', npts=POINTS):
             t10 = grid[i - 1] + (grid[i] - grid[i - 1]) * (0.1 - y[i - 1]) / (y[i] - y[i - 1])
         if t90 is None and y[i] >= 0.9 > y[i - 1]:
             t90 = grid[i - 1] + (grid[i] - grid[i - 1]) * (0.9 - y[i - 1]) / (y[i] - y[i - 1])
+    if t10 is not None:
+        res['t10'] = round(t10, 4)
     if t10 is not None and t90 is not None:
         res['rise'] = round(t90 - t10, 4)
     res['overshoot'] = round(max(0.0, max(v for g, v in zip(grid, y) if g >= 0) - 1.0), 4)
     return res
+
+
+# ---------------------------------------------------------------------
+# Models: turn the per-PA edge summaries of one run into a PA pick.
+#   rise_fast        speed-up edges: fastest rise whose overshoot stays
+#                    under the limit (0.05 + 3/snr)
+#   fall_slow        slow-down edges: fastest fall whose undershoot stays
+#                    under the limit
+#   fall_undershoot  slow-down edges only: going up in PA, find where the
+#                    force first dips below the settled slow line by more
+#                    than the noise (max(2 %, 3/snr)) and keeps dipping at
+#                    the next value; the pick is the PA just before it.
+MODELS = {
+    'rise_fast': 'Rise fast',
+    'fall_slow': 'Fall slow',
+    'fall_undershoot': 'Fall undershoot',
+}
+DIP_MIN = 0.02
+
+
+def _edges(segments, kind):
+    out = []
+    for s in segments:
+        e = (s.get('edge') or {}).get(kind)
+        if e and not s.get('partial') and s.get('pa') is not None:
+            out.append((s['pa'], s['idx'], e))
+    out.sort(key=lambda x: x[0])
+    return out
+
+
+def _limit(e):
+    snr = e.get('snr')
+    return 0.05 + (3.0 / snr if snr else 0.05)
+
+
+def _fastest(segments, kind):
+    best = None
+    for pa, idx, e in _edges(segments, kind):
+        if e.get('rise') is None or e.get('overshoot') is None:
+            continue
+        if e['overshoot'] <= _limit(e) and (best is None
+                                            or e['rise'] < best[2]['rise']):
+            best = (pa, idx, e)
+    if best is None:
+        return {'pa': None, 'idx': None,
+                'why': 'no PA value passed the %s limit'
+                       % ('overshoot' if kind == 'rise' else 'undershoot')}
+    word = 'rise' if kind == 'rise' else 'fall'
+    return {'pa': best[0], 'idx': best[1],
+            'why': 'fastest %s (%.0f ms) with %s %.0f%% under the %.0f%% '
+                   'limit' % (word, best[2]['rise'] * 1000,
+                              'overshoot' if kind == 'rise' else 'undershoot',
+                              best[2]['overshoot'] * 100,
+                              _limit(best[2]) * 100)}
+
+
+def dip_threshold(e, dip_min=DIP_MIN):
+    snr = e.get('snr')
+    return max(dip_min, 3.0 / snr if snr else 0.05)
+
+
+def _undershoot(segments, dip_min=DIP_MIN):
+    edges = [x for x in _edges(segments, 'fall')
+             if x[2].get('overshoot') is not None]
+    if len(edges) < 2:
+        return {'pa': None, 'idx': None, 'why': 'not enough PA values'}
+    over = [x[2]['overshoot'] > dip_threshold(x[2], dip_min) for x in edges]
+    for i, dips in enumerate(over):
+        if not dips:
+            continue
+        if i + 1 < len(over) and not over[i + 1]:
+            continue                      # a single blip: not a real start
+        if i == 0:
+            return {'pa': None, 'idx': None,
+                    'why': 'already dips at the lowest PA (%.3f): lower '
+                           'PA_START' % edges[0][0]}
+        pa, idx, e = edges[i - 1]
+        return {'pa': pa, 'idx': idx,
+                'why': 'last value before the fall dips below the line '
+                       '(dip starts at %.3f: %.0f%% > %.0f%%)'
+                       % (edges[i][0], edges[i][2]['overshoot'] * 100,
+                          dip_threshold(edges[i][2], dip_min) * 100)}
+    pa, idx, e = edges[-1]
+    return {'pa': pa, 'idx': idx,
+            'why': 'no dip found up to %.3f: raise PA_END to be sure' % pa}
+
+
+def pick(segments, model, dip_min=DIP_MIN):
+    if model == 'rise_fast':
+        return _fastest(segments, 'rise')
+    if model == 'fall_slow':
+        return _fastest(segments, 'fall')
+    if model == 'fall_undershoot':
+        return _undershoot(segments, dip_min)
+    raise ValueError('unknown model %r' % model)
+
+
+def all_picks(segments, dip_min=DIP_MIN):
+    return {m: pick(segments, m, dip_min) for m in MODELS}
+
+
+def timing_offset(segments):
+    """How long after the commanded speed change the force reaches 10 % of
+    its step, taken from the crispest third of PA values (where the melt
+    lag is mostly compensated). It is the sensor + processing delay, and
+    can be slightly negative because Klipper's PA smoothing starts the
+    extruder a little before the commanded change. Seconds or None."""
+    out = {}
+    for kind in ('rise', 'fall'):
+        rows = [e for _, _, e in _edges(segments, kind)
+                if e.get('t10') is not None and e.get('rise') is not None]
+        if not rows:
+            continue
+        rows.sort(key=lambda e: e['rise'])
+        best = rows[:max(1, len(rows) // 3)]
+        vals = sorted(e['t10'] for e in best)
+        out[kind] = round(vals[len(vals) // 2], 4)
+    if not out:
+        return None
+    return round(sum(out.values()) / len(out), 4)
+
+
+def command_fit(t, f, markers, flows):
+    """Fit force = offset + gain * flow using the settled second half of
+    every slow / fast leg. Returns {'offset', 'gain'} or None."""
+    xs, ys = [], []
+    for m in markers:
+        flow = (flows or {}).get(m.get('name'))
+        if flow is None:
+            continue
+        d = m['t1'] - m['t0']
+        a, b = m['t0'] + 0.5 * d, m['t1'] - 0.05 * d
+        lo, hi = bisect.bisect_left(t, a), bisect.bisect_left(t, b)
+        if hi - lo < 3:
+            continue
+        xs.append(flow)
+        ys.append(sum(f[lo:hi]) / (hi - lo))
+    if len(set(xs)) < 2:
+        return None
+    n = len(xs)
+    mx, my = sum(xs) / n, sum(ys) / n
+    sxx = sum((x - mx) ** 2 for x in xs)
+    gain = sum((x - mx) * (y - my) for x, y in zip(xs, ys)) / sxx
+    return {'offset': round(my - gain * mx, 3), 'gain': round(gain, 4)}

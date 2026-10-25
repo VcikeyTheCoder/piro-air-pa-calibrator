@@ -1,6 +1,8 @@
 """Per-run settings. Defaults come from [pa_loadcell] in the config file;
 every field can be overridden by the same-named (UPPERCASE) command parameter.
 
+Every test starts with a prime (PRIME_LENGTH mm at PRIME_FLOW mm^3/s,
+extrude-only) and then goes straight into the first PA value.
 Pulse defaults follow KAPAT (github.com/vzagranichnyy/KAPAT): a slow/fast
 volumetric square wave, each leg paired with a tiny XY wobble so Klipper
 applies pressure advance to it (Klipper skips PA on extrude-only moves)."""
@@ -9,7 +11,9 @@ from dataclasses import dataclass, fields
 from .errors import PAError
 
 AXES = ('X', 'Y')
-OBSOLETE = ('sweeps', 'extrude_len', 'slow_speed', 'fast_speed', 'settle')
+OBSOLETE = ('sweeps', 'extrude_len', 'slow_speed', 'fast_speed', 'settle',
+            'warmup')
+MODELS = ('rise_fast', 'fall_slow', 'fall_undershoot')
 
 
 @dataclass
@@ -17,16 +21,19 @@ class Settings:
     pa_start: float = 0.0
     pa_end: float = 0.08
     pa_step: float = 0.005
-    cycles: int = 3               # fast+slow pulses per PA value
+    cycles: int = 4               # fast+slow pulses per PA value
     fast_flow: float = 19.24      # mm^3/s during the fast leg
     fast_time: float = 0.25       # s per fast leg
     slow_flow: float = 1.92       # mm^3/s during the slow leg
     slow_time: float = 1.0        # s per slow leg
-    warmup: float = 4.0           # first PA value: lead-in slow leg x this
+    prime_length: float = 40.0    # mm of filament pushed before the first PA
+    prime_flow: float = 5.0       # mm^3/s during the prime
     wobble: float = 0.05          # mm XY nudge per leg (0 = off, PA inactive)
     wobble_axis: str = 'Y'
     accel: float = 1000.0         # mm/s^2, toolhead (XY) only, during test
     max_filament: float = 400.0   # mm, refuse a test that would use more
+    model: str = 'fall_undershoot'  # analysis model used for the pick
+    skip_first: int = 1           # 1 = ignore the first pulse of every PA
     park_x: float = 0.0           # nozzle rests here before/after the test
     park_y: float = 0.0
     test_x: float = 0.0           # nozzle extrudes (in air) here
@@ -44,16 +51,20 @@ class Settings:
             pa_start=g('pa_start', 0., minval=0.),
             pa_end=g('pa_end', 0.08, minval=0.),
             pa_step=g('pa_step', 0.005, above=0.),
-            cycles=config.getint('cycles', 3, minval=1),
+            cycles=config.getint('cycles', 4, minval=1),
             fast_flow=g('fast_flow', 19.24, above=0.),
             fast_time=g('fast_time', 0.25, above=0.),
             slow_flow=g('slow_flow', 1.92, above=0.),
             slow_time=g('slow_time', 1.0, above=0.),
-            warmup=g('warmup', 4.0, minval=1.),
+            prime_length=g('prime_length', 40., minval=0.),
+            prime_flow=g('prime_flow', 5., above=0.),
             wobble=g('wobble', 0.05, minval=0.),
             wobble_axis=config.get('wobble_axis', 'Y').upper(),
             accel=g('accel', 1000., above=0.),
             max_filament=g('max_filament', 400., above=0.),
+            model=config.get('model', 'fall_undershoot').strip().lower(),
+            skip_first=config.getint('skip_first_pulse', 1, minval=0,
+                                     maxval=1),
             park_x=g('park_x'), park_y=g('park_y'),
             test_x=g('test_x'), test_y=g('test_y'),
             filament=config.get('filament', '').strip().strip('"\''))
@@ -70,6 +81,7 @@ class Settings:
             else:
                 out[f.name] = gcmd.get(key, cur)
         out['wobble_axis'] = str(out['wobble_axis']).upper()
+        out['model'] = str(out['model']).strip().lower()
         s = Settings(**out)
         s.validate()
         return s
@@ -89,8 +101,14 @@ class Settings:
                 raise PAError("%s must be > 0" % name.upper())
         if self.slow_flow >= self.fast_flow:
             raise PAError("SLOW_FLOW must be below FAST_FLOW")
-        if self.warmup < 1:
-            raise PAError("WARMUP must be >= 1")
+        if self.prime_length < 0:
+            raise PAError("PRIME_LENGTH must be >= 0")
+        if self.prime_flow <= 0:
+            raise PAError("PRIME_FLOW must be > 0")
+        if self.model not in MODELS:
+            raise PAError("MODEL must be one of: %s" % ", ".join(MODELS))
+        if self.skip_first not in (0, 1):
+            raise PAError("SKIP_FIRST must be 0 or 1")
         if self.wobble < 0:
             raise PAError("WOBBLE must be >= 0")
         if self.wobble_axis not in AXES:
@@ -107,21 +125,18 @@ class Settings:
         return (self.fast_flow / area * self.fast_time,
                 self.slow_flow / area * self.slow_time)
 
-    def warmup_legs(self):
-        """The first PA value starts with this many slow legs (lead-in),
-        split so no single move is much longer than a normal slow leg."""
-        return max(1, int(math.ceil(self.warmup - 1e-9)))
+    def prime_time(self, area):
+        return self.prime_length * area / self.prime_flow
 
     def filament_mm(self, area):
         fast, slow = self.leg_mm(area)
         per_pa = slow + self.cycles * (fast + slow)      # lead-in + pulses
-        return per_pa * len(self.pa_values()) + (self.warmup - 1.0) * slow
+        return per_pa * len(self.pa_values()) + self.prime_length
 
-    def duration_s(self):
+    def duration_s(self, area):
         per_pa = self.slow_time + self.cycles * (self.fast_time
                                                  + self.slow_time)
-        return per_pa * len(self.pa_values()) + \
-            (self.warmup - 1.0) * self.slow_time
+        return per_pa * len(self.pa_values()) + self.prime_time(area)
 
     def cross_section_needed(self, area):
         """mm^2 that [extruder] max_extrude_cross_section must allow: each
@@ -129,5 +144,4 @@ class Settings:
         if self.wobble <= 0:
             return 0.0
         fast, slow = self.leg_mm(area)
-        lead = slow * self.warmup / self.warmup_legs()
-        return max(fast, slow, lead) / self.wobble * area
+        return max(fast, slow) / self.wobble * area
