@@ -2,13 +2,24 @@
   <data_dir>/run_0001/meta.json   settings, tags, per-PA summaries
   <data_dir>/run_0001/seg_000.json  one file per PA value (own samples)
 Meta is rewritten after every segment, so a cancelled or crashed test still
-keeps everything recorded so far."""
+keeps everything recorded so far.
+
+Analysis results (edge summaries, PIRO-EDGE scores and answer, command
+fit) are derived
+from the raw samples and can be recomputed at any time (reanalyze); the
+raw samples are never changed. A run can be exported as one JSON file and
+imported again (here or on another printer)."""
+import bisect
 import json
 import os
 import re
 import shutil
 import time
 from . import analysis
+from .errors import PAError
+
+EXPORT_FORMAT = 'pa_loadcell_run'
+EXPORT_VERSION = 1
 
 
 def _atomic(path, obj):
@@ -71,50 +82,204 @@ class RunStore:
         _atomic(self._meta_path(rid), meta)
         return rid
 
+    @staticmethod
+    def _opts(meta):
+        a = meta.get('analysis') or {}
+        return {'skip_first': bool(a.get('skip_first', True))}
+
+    @staticmethod
+    def _flows(meta, seg):
+        fl = seg.get('flows')
+        if fl:
+            return fl
+        st = meta.get('settings') or {}
+        if 'fast_flow' in st and 'slow_flow' in st:
+            return {'fast': st['fast_flow'], 'slow': st['slow_flow']}
+        return None
+
+    def _entry(self, meta, idx, seg):
+        """Per-PA summary stored in meta (recomputed by reanalyze)."""
+        opts = self._opts(meta)
+        t, f = seg['t'], seg['f']
+        entry = {
+            'idx': idx, 'pa': seg.get('pa'), 'samples': len(t),
+            'duration': t[-1] if t else 0.0,
+            'partial': bool(seg.get('partial')), 'unit': seg.get('unit')}
+        mk = seg.get('markers') or []
+        if any(m.get('name') == 'fast' for m in mk):
+            edge = {k: analysis.edge_summary(t, f, mk, k,
+                                             skip_first=opts['skip_first'])
+                    for k in ('rise', 'fall')}
+            if edge['rise'] or edge['fall']:
+                entry['edge'] = edge
+            fit = analysis.command_fit(t, f, mk, self._flows(meta, seg))
+            if fit:
+                entry['cmd'] = fit
+            sm = meta.get('smooth_time')
+            sc = analysis.edge_score(t, f, mk, sm if sm else 0.04,
+                                     opts['skip_first'])
+            if sc:
+                entry['piro'] = sc
+        if seg.get('search_note') and not seg.get('stage'):
+            entry['stage'] = seg['search_note']        # older search runs
+        for k in ('stage', 'repeat'):
+            if seg.get(k) is not None:
+                entry[k] = seg[k]
+        return entry
+
+    def _summarize(self, meta):
+        opts = self._opts(meta)
+        a = dict(meta.get('analysis') or {}, **opts)
+        for old in ('picks', 'models', 'model', 'ozn_cross', 'dip_min',
+                    'stale'):
+            a.pop(old, None)
+        if meta.get('kind') == 'test':
+            art = meta.get('method') in ('PIRO-EDGE', 'artificial') or \
+                (meta.get('settings') or {}).get('method') == 'artificial'
+            a['result'] = analysis.piro_pick(
+                meta['segments'],
+                (meta.get('smooth_time') or 0.04) if art else None)
+        a['offset'] = analysis.timing_offset(meta['segments'])
+        meta['analysis'] = a
+        if meta.get('kind') == 'test' and meta.get('settings'):
+            fl = self._flows(meta, {})
+            if fl:
+                meta['flows'] = fl
+        return meta
+
     def add_segment(self, rid, seg):
         meta = _load(self._meta_path(rid))
         idx = len(meta['segments'])
         seg = dict(seg, samples=len(seg['t']))
         _atomic(os.path.join(self._dir(rid), 'seg_%03d.json' % idx), seg)
-        entry = {
-            'idx': idx, 'pa': seg.get('pa'), 'samples': seg['samples'],
-            'duration': seg['t'][-1] if seg['t'] else 0.0,
-            'partial': bool(seg.get('partial')), 'unit': seg.get('unit')}
-        if seg.get('markers'):
-            rise = analysis.edge_summary(seg['t'], seg['f'], seg['markers'],
-                                         'rise')
-            fall = analysis.edge_summary(seg['t'], seg['f'], seg['markers'],
-                                         'fall')
-            if rise or fall:
-                entry['edge'] = {'rise': rise, 'fall': fall}
-        meta['segments'].append(entry)
+        meta['segments'].append(self._entry(meta, idx, seg))
+        self._summarize(meta)
         _atomic(self._meta_path(rid), meta)
         return idx
+
+    def set_search(self, rid, search):
+        meta = _load(self._meta_path(rid))
+        meta['search'] = search
+        _atomic(self._meta_path(rid), meta)
 
     def finalize(self, rid, status, error=''):
         meta = _load(self._meta_path(rid))
         meta['status'], meta['error'] = status, error
+        self._summarize(meta)
         _atomic(self._meta_path(rid), meta)
+
+    def reanalyze(self, rid, skip_first=None):
+        """Recompute every per-PA summary and the PIRO-EDGE answer from the
+        raw samples. Raw data is left untouched."""
+        meta = _load(self._meta_path(rid))
+        a = dict(meta.get('analysis') or {})
+        if skip_first is not None:
+            a['skip_first'] = bool(skip_first)
+        meta['analysis'] = a
+        segs = []
+        for e in meta.get('segments', []):
+            seg = _load(os.path.join(self._dir(rid), 'seg_%03d.json'
+                                     % e['idx']))
+            segs.append(self._entry(meta, e['idx'], seg))
+        meta['segments'] = segs
+        meta['analysed'] = time.strftime('%Y-%m-%d %H:%M:%S')
+        self._summarize(meta)
+        _atomic(self._meta_path(rid), meta)
+        return meta
+
+    # -- export / import --------------------------------------------------
+    def export_run(self, rid):
+        meta = _load(self._meta_path(rid))
+        segs = [_load(os.path.join(self._dir(rid), 'seg_%03d.json'
+                                   % e['idx']))
+                for e in meta.get('segments', [])]
+        return {'format': EXPORT_FORMAT, 'version': EXPORT_VERSION,
+                'exported': time.strftime('%Y-%m-%d %H:%M:%S'),
+                'meta': meta, 'segments': segs}
+
+    def import_run(self, data):
+        if not isinstance(data, dict) or data.get('format') != EXPORT_FORMAT:
+            raise PAError("not a PA load cell run file")
+        if int(data.get('version', 0)) > EXPORT_VERSION:
+            raise PAError("this file was made by a newer version; update "
+                          "the plugin first")
+        meta, segs = data.get('meta'), data.get('segments')
+        if not isinstance(meta, dict) or not isinstance(segs, list):
+            raise PAError("run file is incomplete")
+        for sg in segs:
+            if not (isinstance(sg, dict) and isinstance(sg.get('t'), list)
+                    and isinstance(sg.get('f'), list)
+                    and len(sg['t']) == len(sg['f'])):
+                raise PAError("run file has a damaged segment")
+        rid = max(self._ids(), default=0) + 1
+        os.makedirs(self._dir(rid))
+        try:
+            new = dict(meta)
+            new.update({'id': rid, 'segments': [],
+                        'imported': {'from_id': meta.get('id'),
+                                     'from_date': meta.get('date'),
+                                     'at': time.strftime('%Y-%m-%d %H:%M:%S')}})
+            nm = str(meta.get('name') or 'Run')
+            new['name'] = nm if nm.endswith('(imported)') else nm + ' (imported)'
+            if new.get('status') == 'running':
+                new['status'] = 'cancelled'
+            for i, sg in enumerate(segs):
+                _atomic(os.path.join(self._dir(rid), 'seg_%03d.json' % i),
+                        dict(sg, samples=len(sg['t'])))
+                new['segments'].append({'idx': i})
+            _atomic(self._meta_path(rid), new)
+            self.reanalyze(rid)
+        except Exception:
+            shutil.rmtree(self._dir(rid), ignore_errors=True)
+            raise
+        return rid
 
     def list_runs(self):
         out = []
         for rid in reversed(self._ids()):
             try:
                 m = _load(self._meta_path(rid))
+                if m.get('kind') == 'test' and 'result' not in \
+                        (m.get('analysis') or {}) and m.get('segments'):
+                    m = self.get_run(rid)        # older version: analyse once
             except (OSError, ValueError):
                 continue
             out.append({k: m.get(k) for k in (
                 'id', 'name', 'kind', 'date', 'status', 'filament',
-                'nozzle_temp', 'pa_pick', 'notes', 'settings')})
+                'nozzle_temp', 'pa_pick', 'notes', 'settings', 'imported')})
             out[-1]['segments'] = len(m.get('segments', []))
+            r = (m.get('analysis') or {}).get('result') or {}
+            out[-1]['result'] = {k: r.get(k) for k in ('pa', 'unc', 'grade')} \
+                if r.get('pa') is not None else None
         return out
 
     def get_run(self, rid):
-        return _load(self._meta_path(rid))
+        meta = _load(self._meta_path(rid))
+        if meta.get('kind') == 'test' and meta.get('status') != 'running' \
+                and any('piro' not in e for e in meta.get('segments', [])
+                        if not e.get('partial')):
+            # a run from an older version: re-analyse it once with
+            # PIRO-EDGE (raw samples are not changed)
+            try:
+                return self.reanalyze(rid)
+            except (OSError, ValueError, KeyError):
+                pass
+        return meta
 
-    def get_segment(self, rid, idx, max_points=0):
+    def get_segment(self, rid, idx, max_points=0, t0=None, t1=None):
+        """One segment. t0/t1 (seconds, segment time) return only that
+        stretch, so the History graph can load full detail for the part
+        on screen; max_points then thins it with min/max buckets."""
         seg = _load(os.path.join(self._dir(rid), 'seg_%03d.json' % idx))
-        seg['t'], seg['f'] = decimate(seg['t'], seg['f'], max_points)
+        t, f = seg['t'], seg['f']
+        seg['span'] = [t[0], t[-1]] if t else [0.0, 0.0]
+        if t0 is not None or t1 is not None:
+            lo = bisect.bisect_left(t, t0) if t0 is not None else 0
+            hi = bisect.bisect_right(t, t1) if t1 is not None else len(t)
+            t, f = t[lo:hi], f[lo:hi]
+            seg['range'] = [t0, t1]
+        seg['t'], seg['f'] = decimate(t, f, max_points)
+        seg['decimated'] = len(seg['t']) < len(t)
         return seg
 
     def set_tag(self, rid, pa_pick=None, notes=None, name=None):

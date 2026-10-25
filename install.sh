@@ -97,7 +97,43 @@ fi
 say "Installing config"
 CFG="$CONFIG_DIR/pa_loadcell.cfg"
 if [ -f "$CFG" ]; then
-  warn "$CFG exists: kept your settings (new defaults: $REPO/klipper/pa_loadcell.cfg)"
+  say "Updating $CFG (your positions and choices are kept)"
+  cp "$CFG" "$CFG.bak-pa_loadcell"
+  python3 - "$CFG" "$REPO/klipper/pa_loadcell.cfg" <<'PY'
+import re, sys
+cfg, new = sys.argv[1], sys.argv[2]
+lines = open(cfg).read().split('\n')
+OBSOLETE = ('sweeps', 'extrude_len', 'slow_speed', 'fast_speed', 'settle', 'warmup',
+            'method', 'pa_mode', 'pa_start', 'pa_end', 'pa_step', 'wobble',
+            'wobble_axis', 'accel', 'model')
+# earlier defaults: a value nobody changed moves to the PIRO-EDGE default
+OLD_DEFAULTS = {'cycles': ('3', '4'), 'fast_flow': ('19.24',), 'fast_time': ('0.25',),
+                'slow_flow': ('1.92',), 'prime_length': ('40',), 'prime_flow': ('5',),
+                'prime_rest': ('0',), 'rest_time': ('0',), 'pa_max': ('0.08',)}
+key = lambda l: (re.match(r'^([a-z_]+)\s*:', l) or [None, None])[1]
+have = set()
+for i, l in enumerate(lines):
+    k = key(l)
+    if k in OBSOLETE:
+        lines[i] = '# no longer used: ' + l
+    elif k:
+        have.add(k)
+newl = {key(l): l for l in open(new).read().split('\n') if key(l)}
+moved = []
+for k, olds in OLD_DEFAULTS.items():              # untouched old default -> new
+    for i, l in enumerate(lines):
+        m = re.match(r'^%s\s*:\s*([^\s#]+)' % k, l)
+        if key(l) == k and m and m.group(1) in olds and k in newl:
+            lines[i] = newl[k]; moved.append(k)
+add = [newl[k] for k in newl if k not in have]
+if add:
+    while lines and lines[-1] == '':
+        lines.pop()
+    lines += ['# added by install.sh'] + add + ['']
+open(cfg, 'w').write('\n'.join(lines))
+print('    obsolete options commented out, new options added: %s' % (', '.join(key(l) for l in add) or 'none'))
+print('    moved to the new defaults: %s' % (', '.join(moved) or 'none'))
+PY
 else
   cp "$REPO/klipper/pa_loadcell.cfg" "$CFG"
   LC_SEC="$(grep -rhE '^\[load_cell(_probe)?( [^]]+)?\]' "$CONFIG_DIR" --include='*.cfg' 2>/dev/null | head -n1 | tr -d '[]' || true)"

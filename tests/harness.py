@@ -4,8 +4,10 @@ and serves the page with a mock Moonraker websocket, so the UI can be tried
 
   pip install websockets
   python3 tests/harness.py   ->  open http://127.0.0.1:8080/?ws=127.0.0.1:8765
-Fake physics: force = K * lag(speed) with PA acting as a lead term, so the
-best PA is 0.045; lower PA responds slowly, higher PA overshoots."""
+Fake physics: nozzle flow follows the pushed filament with a melt lag of
+TAU (0.045 s, so the right PA is 0.045); force = K * flow. Lower PA responds
+slowly, higher PA overshoots. REAL_RUNS=<folder with run_000N> adds those
+recorded runs to History too."""
 import asyncio, json, math, os, random, re, shlex, sys, tempfile, threading
 import http.server, socketserver
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -15,8 +17,9 @@ import test_backend as tb
 import pa_loadcell
 from pa_loadcell.errors import PAError
 
-TAU0, K, NOISE = 0.045, 4.0, 1.2
+TAU0, K, NOISE = 0.045, 10.0, 1.2
 RATE = 320.0
+SPEED = int(os.environ.get('SPEED', '1'))
 
 
 class Gcode(tb.Gcode):
@@ -24,20 +27,19 @@ class Gcode(tb.Gcode):
     def register_command(s, n, cb, desc=None): s.cmds[n] = cb
     def run_script_from_command(s, script):
         for line in script.split('\n'):
-            m = re.match(r'G1 E([\d.]+) F([\d.]+)', line)
-            if m:
-                L, F = float(m.group(1)), float(m.group(2)) / 60
-                s.p.speeds.append((s.p.pt, s.p.pt + L / F, F))
+            n = len(s.p.windows)
+            super().run_script_from_command(line)
+            for a, b, v in s.p.windows[n:]:     # E speed in mm/s per leg
+                s.p.speeds.append((a, b, v))
             m = re.match(r'SET_PRESSURE_ADVANCE ADVANCE=([\d.]+)', line)
             if m:
                 s.p.pa_tl.append((s.p.pt, float(m.group(1))))
-        super().run_script_from_command(script)
 
 
 class LoadCell(tb.LoadCell):
     name = 'load_cell_probe'
     def __init__(s, p):
-        super().__init__(p); s.z = 0.0; s.t = 1000.0; s.tared = True
+        super().__init__(p); s.z = 0.0; s.t = 1000.0; s.tared = True; s.tau = TAU0
         s.rng = random.Random(3)
     def is_tared(s): return s.tared
     def pa_at(s, t):
@@ -45,10 +47,19 @@ class LoadCell(tb.LoadCell):
         for tt, v in s.p.pa_tl:
             if tt <= t: pa = v
         return pa
-    def u_at(s, t):
-        for a, b, v in s.p.speeds:
-            if a <= t < b: return v
-        return 0.0
+    def u_at(s, t0, t1):
+        """mean filament speed over [t0, t1): exact, so a 40 ms artificial
+        PA charge is not rounded to whole samples"""
+        e = 0.0
+        sp = s.p.speeds
+        i = s.wi = min(getattr(s, 'wi', 0), len(sp))
+        while i > 0 and sp[i - 1][1] > t0: i -= 1
+        while i < len(sp) and sp[i][0] < t1:
+            a, b = max(sp[i][0], t0), min(sp[i][1], t1)
+            if b > a: e += sp[i][2] * (b - a)
+            i += 1
+        s.wi = i
+        return e / (t1 - t0)
     def pump(s):
         p = s.p
         if not p.client: return
@@ -57,9 +68,9 @@ class LoadCell(tb.LoadCell):
         data = []
         for i in range(n0, n1):
             t = 1000 + i / RATE
-            u = s.u_at(t); pa = s.pa_at(t)
-            dz = (u - s.z) / TAU0
-            s.z += dz / RATE
+            u = s.u_at(t - 1 / RATE, t); pa = s.pa_at(t)
+            dz = (u - s.z) / s.tau
+            s.z = u + (s.z - u) * math.exp(-1 / RATE / s.tau)
             force = K * (s.z + pa * dz) + s.rng.gauss(0, NOISE)
             counts = force * 95.783 + 345400
             data.append((t, force if s.tared else None, counts, 345400))
@@ -98,6 +109,7 @@ class Req:
     def get_int(s, k, d=None): return s._g(k, d, int)
     def get_float(s, k, d=None): return s._g(k, d, float)
     def get_str(s, k, d=None): return s._g(k, d, str)
+    def get(s, k, d=None): return s.params.get(k, d)
     def send(s, x): s.out = x
 
 
@@ -118,13 +130,49 @@ def build(data=None):
 
 
 def seed_history(p, plug):
-    """Two finished tests (different filaments) so History/Compare have data."""
+    """Finished PIRO-EDGE tests (different filaments, one that fails) so
+    History has data; optionally real recorded runs (REAL_RUNS)."""
+    import shutil
+    real = os.environ.get('REAL_RUNS')
+    if real and os.path.isdir(real):
+        for n in sorted(os.listdir(real)):
+            if re.fullmatch(r'run_\d+', n):
+                shutil.copytree(os.path.join(real, n),
+                                os.path.join(plug.store.root, n))
     g = p.objs['gcode']
-    for fil in ('PLA grey', 'PETG black'):
-        g.cmds['PA_LOADCELL_TEST'](Gcmd({'PA_START': '0', 'PA_END': '0.08',
-            'PA_STEP': '0.01', 'SWEEPS': '3', 'FILAMENT': fil}))
+    lc = p.objs['load_cell_probe']
+    for fil, tau in (('PLA grey', 0.045), ('PETG black', 0.07)):
+        lc.tau = tau
+        g.cmds['PA_LOADCELL_TEST'](Gcmd({'FILAMENT': fil}))
+    lc.tau = TAU0
     rid = plug.store.list_runs()[0]['id']
-    plug.store.set_tag(rid, pa_pick=0.04, notes='felt right on the 0.5 corner')
+    plug.store.set_tag(rid, pa_pick=0.07, notes='felt right on the corner test')
+    lc.tau = 0.4                   # huge melt lag: no dip up to 0.2 -> fails
+    try:
+        g.cmds['PA_LOADCELL_TEST'](Gcmd({'FILAMENT': 'TPU 95A',
+                                         'PRIME_LENGTH': '0'}))
+    except Exception:
+        pass
+    lc.tau = TAU0
+    # a 5 minute manual recording: pushes of varying size, a slow drift and
+    # two marks, so long-trace scrolling and zooming can be tried
+    rng = random.Random(7)
+    t, f = [], []
+    for i in range(int(300 * RATE)):
+        x = i / RATE
+        push = 0.0
+        for k in range(0, 300, 11):
+            if k + 2 <= x < k + 5:
+                push = 30 + (k % 40) * 2
+        f.append(round(push + 3 * math.sin(x / 40) + rng.gauss(0, NOISE), 3))
+        t.append(round(x, 4))
+    st = plug.store
+    mid = st.new_run('manual', {'filament': 'PLA grey', 'nozzle_temp': 215.0,
+                                'pa_current': 0.04})
+    st.add_segment(mid, {'unit': 'g', 'rate': RATE, 't': t, 'f': f,
+                         'markers': [{'name': 'mark', 'label': 'nozzle wipe', 't0': 64.0, 't1': 64.0},
+                                     {'name': 'mark', 'label': 'retract test', 't0': 201.5, 't1': 201.5}]})
+    st.finalize(mid, 'complete')
 
 
 def main(seed=True, host='127.0.0.1', ws_port=8765, http_port=8080):
@@ -140,10 +188,11 @@ def main(seed=True, host='127.0.0.1', ws_port=8765, http_port=8080):
         while True:
             await asyncio.sleep(0.1)
             if p.busy: continue
-            p.now += 0.1; p.pt += 0.1; state['t'] += 0.1
-            if int(state['t'] * 10) % 90 == 0:       # a manual push every 9 s
-                p.speeds.append((p.pt, p.pt + 1.2, 3.0))
-            lc.pump()
+            for _ in range(SPEED):               # SPEED>1 fast-forwards time
+                p.now += 0.1; p.pt += 0.1; state['t'] += 0.1
+                if int(round(state['t'] * 10)) % 90 == 0:   # a push every 9 s
+                    p.speeds.append((p.pt, p.pt + 1.2, 3.0))
+                lc.pump()
 
     def call(method, params):
         if method == 'printer.gcode.script':
