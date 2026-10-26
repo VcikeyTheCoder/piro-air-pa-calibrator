@@ -67,7 +67,7 @@ class PALoadCell:
                 self.reactor.pause(self.reactor.monotonic() + 0.1)
             n = self.bus.total - n0
             if n == 0:
-                raise PAError("no samples in 3 s: load cell not streaming")
+                raise PAError("No samples in 3 s. Load cell not streaming")
             mcu = self.printer.lookup_object('mcu')
             est = mcu.estimated_print_time(self.reactor.monotonic())
             gcmd.respond_info(
@@ -151,12 +151,12 @@ class PALoadCell:
     def _wh_delete(self, req):
         if self.runner.state != 'idle' and \
                 req.get_int('run') == self.runner.run_id:
-            raise PAError("cannot delete the run that is being recorded")
+            raise PAError("Cannot delete a run while it is recording")
         self.store.delete(req.get_int('run'))
 
     def _wh_record_start(self, req):
         if self.runner.state != 'idle':
-            raise PAError("a PA test is running")
+            raise PAError("PA test running")
         self.rec.start(req.get_str('label', ''))
 
     def _wh_record_stop(self, req):
@@ -182,14 +182,14 @@ class PALoadCell:
     def _wh_import_chunk(self, req):
         u = self.uploads.get(req.get_str('token'))
         if u is None:
-            raise PAError("upload expired, try again")
+            raise PAError("Upload expired")
         part = req.get_str('data')
         if req.get_int('seq') != len(u['parts']):
-            raise PAError("upload out of order, try again")
+            raise PAError("Upload out of order")
         u['size'] += len(part)
         if u['size'] > self.MAX_UPLOAD:
             self.uploads.pop(req.get_str('token'), None)
-            raise PAError("file too large")
+            raise PAError("File too large")
         u['parts'].append(part)
         u['at'] = time.time()
         return {'received': len(u['parts'])}
@@ -197,17 +197,17 @@ class PALoadCell:
     def _wh_import_end(self, req):
         u = self.uploads.pop(req.get_str('token'), None)
         if u is None:
-            raise PAError("upload expired, try again")
+            raise PAError("Upload expired")
         try:
             data = json.loads(''.join(u['parts']))
         except ValueError:
-            raise PAError("file is not valid JSON")
+            raise PAError("Not a JSON file")
         return {'run': self.store.import_run(data)}
 
     def _wh_reanalyze(self, req):
         rid = req.get_int('run')
         if self.runner.state != 'idle' and rid == self.runner.run_id:
-            raise PAError("this run is still being recorded")
+            raise PAError("Run still recording")
         skip = req.get('skip_first', None)
         return self.store.reanalyze(rid, None if skip is None else bool(skip))
 
@@ -230,13 +230,13 @@ class PALoadCell:
     def _wh_config_save(self, req):
         vals = req.get('values', None)
         if not isinstance(vals, dict) or not vals:
-            raise PAError("nothing to save")
+            raise PAError("No changes")
         if self.runner.state != 'idle':
-            raise PAError("wait until the test has finished")
+            raise PAError("Test running")
         merged = asdict(self.defaults)
         for k, v in vals.items():
             if k not in cfgfile.EDITABLE:
-                raise PAError("'%s' cannot be changed from the page" % k)
+                raise PAError("'%s' is read only" % k)
             cur = merged[k]
             try:
                 merged[k] = (int(v) if isinstance(cur, int)

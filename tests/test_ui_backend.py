@@ -28,7 +28,7 @@ def test_config_save_writes_file_and_defaults():
     text = open(os.path.join(p.cfgdir, 'pa_loadcell.cfg')).read()
     assert 'fast_flow: 15 ' in text and 'cycles: 8 ' in text, text
     assert 'filament: ASA CF' in text and 'skip_first_pulse: 0' in text
-    assert '# mm3/s during the fast leg' in text            # comment kept
+    assert '# mm3/s, fast leg' in text            # comment kept
     assert 'min_temp: 200' in text                         # safety untouched
     assert plug.defaults.fast_flow == 15.0 and plug.defaults.cycles == 8
     assert out['defaults']['fast_flow'] == 15.0

@@ -94,7 +94,7 @@ class Settings:
         if not 0 < self.upper_step <= 0.5:
             raise PAError("UPPER_STEP must be between 0 and 0.5")
         if self.cycles < 2:
-            raise PAError("CYCLES must be at least 2 (the first is skipped)")
+            raise PAError("CYCLES must be at least 2")
         for name in ('fast_flow', 'fast_time', 'slow_flow', 'slow_time'):
             if getattr(self, name) <= 0:
                 raise PAError("%s must be > 0" % name.upper())

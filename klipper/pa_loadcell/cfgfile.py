@@ -28,7 +28,7 @@ def _fmt(v):
         return ('%.6f' % v).rstrip('0').rstrip('.') or '0'
     s = str(v)
     if '\n' in s or '#' in s or ';' in s:
-        raise PAError("text values cannot contain # ; or new lines")
+        raise PAError("Text values cannot contain # ; or line breaks")
     return s
 
 
@@ -46,7 +46,7 @@ def update_text(text, values):
             elif start is not None and end is None:
                 end = i
     if start is None:
-        raise PAError("no [pa_loadcell] section in the config file")
+        raise PAError("No [pa_loadcell] section in the config file")
     if end is None:
         end = len(lines)
     todo = dict(values)
@@ -76,7 +76,7 @@ def config_path(printer, override=None):
     except Exception:
         main = None
     if not main:
-        raise PAError("cannot find the printer config folder")
+        raise PAError("Printer config folder not found")
     return os.path.join(os.path.dirname(main), 'pa_loadcell.cfg')
 
 

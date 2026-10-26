@@ -383,7 +383,7 @@ def edge_estimate(pts, val, se_key, sign, floor=0.):
     with k (the answer for this edge), se, the bracket and the line used."""
     rows = [p for p in pts if p.get(val) is not None]
     if len(rows) < 2:
-        return {'k': None, 'status': 'few', 'why': 'not enough PA values'}
+        return {'k': None, 'status': 'few', 'why': 'Not enough PA values'}
     ex = [sign * p[val] for p in rows]
     lim = [max(p['limit'], floor) for p in rows]
     bad = [e > l for e, l in zip(ex, lim)]
@@ -394,10 +394,10 @@ def edge_estimate(pts, val, se_key, sign, floor=0.):
             break
     if first is None:
         return {'k': None, 'status': 'no_dip', 'k_ok': rows[-1]['pa'],
-                'why': 'no value is too high up to %.3f' % rows[-1]['pa']}
+                'why': 'No dip up to PA %.3f' % rows[-1]['pa']}
     if first == 0:
         return {'k': None, 'status': 'low', 'k_bad': rows[0]['pa'],
-                'why': 'already too high at %.3f' % rows[0]['pa']}
+                'why': 'Dip at the lowest PA %.3f' % rows[0]['pa']}
     k_ok, k_bad = rows[first - 1]['pa'], rows[first]['pa']
     gap = k_bad - k_ok
     clean = [e for e, b, p in zip(ex, bad, rows) if not b and p['pa'] > 0]
@@ -492,7 +492,7 @@ def piro_pick(segments, smooth=None):
                       for p in pts],
            'warnings': []}
     if len(pts) < 2:
-        out['why'] = 'not enough PA values'
+        out['why'] = 'Not enough PA values'
         return out
     zero = [p for p in pts if p['pa'] == 0.]
     floor = floor_from_zero(zero[0]['dip']) if zero else 0.
@@ -503,10 +503,9 @@ def piro_pick(segments, smooth=None):
     out['prediction'] = predict(pts, floor)
     W = out['warnings']
     if fe.get('k') is None:
-        out['why'] = {'no_dip': 'the force never dips below the line up to '
-                                'PA %.3f: the answer is higher'
+        out['why'] = {'no_dip': 'No dip up to PA %.3f'
                                 % fe.get('k_ok', 0),
-                      'low': 'the force already dips at the lowest PA',
+                      'low': 'Dip at the lowest PA',
                       }.get(fe.get('status'), fe.get('why', ''))
         return out
     k, se = fe['k'], fe['se']
@@ -520,28 +519,26 @@ def piro_pick(segments, smooth=None):
             'higher' if d > 0 else 'lower'
         if out['check'] == 'lower':
             se = max(se, -d / 2.)
-            W.append('the speed-up edge already overshoots at %.4f, below the '
-                     'slow-down answer: check the pulse settings' % re_['k'])
+            W.append('Rise edge %.4f below the fall edge. Check pulse settings'
+                     % re_['k'])
     else:
         out['check'] = 'none'
     near = [p for p in pts if fe['k_ok'] <= p['pa'] <= fe['k_bad'] + 0.02]
     snr = [p['snr'] for p in near if p.get('snr')]
     if snr and min(snr) < 15:
-        W.append('weak signal (signal to noise %.0f): raise the fast flow or '
-                 'add pulses' % min(snr))
+        W.append('Weak signal (SNR %.0f). Raise fast_flow or cycles'
+                 % min(snr))
     dr = [abs(p['drift']) for p in near]
     if dr and max(dr) > 0.15:
-        W.append('the slow level drifts %.0f%% of the step within a pulse: '
-                 'let the hotend settle, check the load cell mounting'
+        W.append('Baseline drift %.0f%% of step. Check load cell mounting'
                  % (100 * max(dr)))
     sp = [p for p in pts if p.get('spread', 1) > 1.35 and p['pa'] > 0] \
         if False else []
     if len(fe.get('used', [])) < 2:
-        W.append('only one value above the answer: the line could not be '
-                 'checked')
+        W.append('One value above the edge; fit not verified')
     if fe['k_bad'] - fe['k_ok'] > max(0.02, 0.5 * k):
-        W.append('big gap between the last clean value (%.3f) and the first '
-                 'dip (%.3f)' % (fe['k_ok'], fe['k_bad']))
+        W.append('Gap between clean %.3f and dip %.3f'
+                 % (fe['k_ok'], fe['k_bad']))
     lvl = 0 if se <= max(0.0015, 0.04 * k) else \
         1 if se <= max(0.003, 0.08 * k) else 2
     lvl = min(2, lvl + len(W))
@@ -553,9 +550,8 @@ def piro_pick(segments, smooth=None):
         k = kk
     out.update(pa=round(k, 4), unc=round(se, 4),
                grade=('good', 'fair', 'poor')[lvl])
-    out['why'] = ('force starts dipping below the line after the slow-down '
-                  'between %.4f and %.4f; %s gives %.4f%s'
+    out['why'] = ('Edge between %.4f and %.4f; %s gives %.4f%s'
                   % (fe['k_ok'], fe['k_bad'], fe['method'], fe['k'],
-                     (', speed-up edge %.4f' % re_['k'])
+                     (', rise edge %.4f' % re_['k'])
                      if re_.get('k') is not None else ''))
     return out

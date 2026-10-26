@@ -283,14 +283,14 @@ html[data-theme=cat] #tabs .lbl{display:none}}
 </style></head>
 <body>
 <header>
- <h1 id="brand">PIRO-EDGE<span>pressure advance from the load cell</span></h1>
+ <h1 id="brand">PIRO-EDGE<span>Load cell pressure advance</span></h1>
  <span id="cSrc" class="chip"><i></i><span>connecting</span></span>
  <span id="cRate" class="chip num" hidden></span>
- <span id="cTemp" class="chip num status-chip" hidden title="Nozzle: current / set"><i class="heat"></i><span></span></span>
+ <span id="cTemp" class="chip num status-chip" hidden title="Extruder: actual / target"><i class="heat"></i><span></span></span>
  <span id="cZ" class="chip num status-chip" hidden></span>
  <span id="cState" class="chip" hidden></span>
  <span class="sp"></span>
- <a class="mainsail" href="/" style="color:var(--dim);text-decoration:none">Back to Mainsail</a>
+ <a class="mainsail" href="/" style="color:var(--dim);text-decoration:none">Mainsail</a>
  <button id="setBtn" class="quiet" title="Settings and themes" style="display:inline-flex;gap:6px;align-items:center"><svg class="ic" style="display:block;width:16px;height:16px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/></svg>Settings</button>
 </header>
 <div id="bar"><i></i></div>
@@ -308,22 +308,22 @@ html[data-theme=cat] #tabs .lbl{display:none}}
 <section id="live" class="on">
  <div class="read">
   <div class="big num" id="now">--<small id="unit"></small></div>
-  <div class="stat"><span>min in view</span><b class="num" id="sMin">-</b></div>
-  <div class="stat"><span>max in view</span><b class="num" id="sMax">-</b></div>
-  <div class="stat"><span>mean in view</span><b class="num" id="sMean">-</b></div>
-  <div class="stat"><span>noise (std dev)</span><b class="num" id="sStd">-</b></div>
+  <div class="stat"><span>Min</span><b class="num" id="sMin">-</b></div>
+  <div class="stat"><span>Max</span><b class="num" id="sMax">-</b></div>
+  <div class="stat"><span>Mean</span><b class="num" id="sMean">-</b></div>
+  <div class="stat"><span>Noise σ</span><b class="num" id="sStd">-</b></div>
  </div>
  <div id="lvw"></div>
  <div class="row ctl card" style="padding:10px 12px">
   <div class="grp">
-   <input id="label" placeholder="Label, e.g. PLA grey" size="18" aria-label="Recording label">
+   <input id="label" placeholder="Name" size="18" aria-label="Recording label">
    <button id="rec" class="primary">Record</button>
    <button id="mark" hidden>Mark</button>
-   <input id="markText" placeholder="Mark note" size="10" hidden aria-label="Mark note">
+   <input id="markText" placeholder="Note" size="10" hidden aria-label="Mark note">
   </div>
-  <div class="grp"><button id="tare" title="Set the current force as zero">Tare</button></div>
+  <div class="grp"><button id="tare" title="Zero the load cell">Tare</button></div>
   <span class="sp"></span>
-  <span style="font-size:12px;color:var(--dim)">The page keeps the last 10 minutes. Press Record to keep longer.</span>
+  <span style="font-size:12px;color:var(--dim)">Last 10 min kept. Record to save longer.</span>
  </div>
 </section>
 
@@ -332,22 +332,22 @@ html[data-theme=cat] #tabs .lbl{display:none}}
   <div class="tmain">
    <div class="card runhead">
     <div class="rh-top">
-     <div><h2>Find pressure advance</h2>
-      <p class="lede">The nozzle extrudes into the air in short fast and slow pulses while the load cell measures the push. PIRO-EDGE raises PA until the force dips below its new level after each slow-down, then pins down the exact point where that dip starts.</p></div>
+     <div><h2>PA test</h2>
+      <p class="lede">Extrudes fast and slow pulses into the air. PA is raised until the force dips after the slow-down; the result is where the dip begins.</p></div>
      <div class="row"><button id="tstart" class="primary go">Start test</button><button id="tcancel" class="danger" hidden>Cancel test</button></div>
     </div>
     <ol class="track" id="track">
-     <li data-s="0"><b>PA 0</b>reference</li>
-     <li data-s="1"><b>Upper limit</b>must dip</li>
-     <li data-s="2"><b>Prediction</b>test around it</li>
-     <li data-s="3"><b>Refine</b>close the gap</li>
-     <li data-s="4"><b>Answer</b>PA &plusmn; uncertainty</li>
+     <li data-s="0"><b>Reference</b>PA 0</li>
+     <li data-s="1"><b>Upper limit</b>first dip</li>
+     <li data-s="2"><b>Estimate</b>from dip depth</li>
+     <li data-s="3"><b>Refine</b>narrow the edge</li>
+     <li data-s="4"><b>Result</b>PA &plusmn; error</li>
     </ol>
     <div class="prog" id="tprog" hidden><i></i></div>
     <div id="tstat" class="num"></div>
    </div>
    <div><div class="panelh"><b>Live load cell</b><span class="sp"></span><span class="chip num" id="tNow">-</span></div><div id="tvw"></div></div>
-   <div class="card pcard"><div class="panelh"><b>Search so far</b><span class="small dim">each dot is one PA value, in the order it was tested</span></div><canvas id="tpath" class="fig" style="height:170px"></canvas><div id="tres" class="small dim" style="margin-top:6px"></div></div>
+   <div class="card pcard"><div class="panelh"><b>Search</b></div><canvas id="tpath" class="fig" style="height:170px"></canvas><div id="tres" class="small dim" style="margin-top:6px"></div></div>
   </div>
   <div class="tside">
    <form id="form" class="form" autocomplete="off"></form>
@@ -361,7 +361,7 @@ html[data-theme=cat] #tabs .lbl{display:none}}
 
 <section id="hist">
  <div class="row"><div class="seg" id="kind"><button data-k="all" aria-pressed="true">All</button><button data-k="test" aria-pressed="false">Tests</button><button data-k="manual" aria-pressed="false">Recordings</button></div>
-  <input id="search" type="search" placeholder="Search name, filament, notes" size="26" aria-label="Search runs"><span class="sp"></span><button id="importBtn" title="Load a run file exported from this page (here or on another printer)">Import run</button><input id="importFile" type="file" accept=".json,.palc.json,application/json" hidden><button id="refresh" class="quiet">Refresh</button></div>
+  <input id="search" type="search" placeholder="Search name, filament, notes" size="26" aria-label="Search runs"><span class="sp"></span><button id="importBtn" title="Load a .palc.json run">Import run</button><input id="importFile" type="file" accept=".json,.palc.json,application/json" hidden><button id="refresh" class="quiet">Refresh</button></div>
  <div class="runs" id="runs"></div>
  <div id="viewer" style="margin-top:14px" hidden>
   <div class="row" style="margin-bottom:8px"><b id="vtitle"></b><span class="sp"></span>
@@ -386,20 +386,20 @@ html[data-theme=cat] #tabs .lbl{display:none}}
  <div class="setgrid">
   <div class="card setnav" id="setnav"><button class="on" data-to="setApp">Appearance</button><button data-to="setDef">Test defaults</button><button data-to="setPos">Positions</button><button data-to="setGraph">Graphs</button><button data-to="setSafe">Safety</button></div>
   <div class="setcol">
-   <div class="card" id="setApp"><div class="row"><h3>Theme</h3><span class="sp"></span><span class="small dim">Colours and layout only; every feature works the same in each theme. Saved in this browser.</span></div>
+   <div class="card" id="setApp"><div class="row"><h3>Theme</h3><span class="sp"></span><span class="small dim">Stored per browser</span></div>
     <div class="thcards" id="thBuilt"></div>
-    <div class="row" style="margin-top:16px"><b style="font-size:13px">Your themes</b><span class="small dim">stored on the printer, so every browser sees them</span><span class="sp"></span>
-     <button id="thImport">Import theme</button><input id="thFile" type="file" accept=".json,application/json" hidden><button id="thExport" title="Download the current theme as a file you can edit and import">Export current theme</button></div>
+    <div class="row" style="margin-top:16px"><b style="font-size:13px">Custom themes</b><span class="small dim">Stored on the printer</span><span class="sp"></span>
+     <button id="thImport">Import theme</button><input id="thFile" type="file" accept=".json,application/json" hidden><button id="thExport" title="Download as .json">Export current theme</button></div>
     <div class="thcards" id="thCustom"></div></div>
-   <div class="card" id="setDef"><div class="row"><h3>Test defaults</h3><span class="sp"></span><span class="small dim" id="defWhere">saved to pa_loadcell.cfg on the printer</span></div>
+   <div class="card" id="setDef"><div class="row"><h3>Test defaults</h3><span class="sp"></span><span class="small dim" id="defWhere">pa_loadcell.cfg</span></div>
     <svg id="pulse" viewBox="0 0 420 150" role="img" aria-label="Pulse shape for one PA value" style="max-width:560px;margin:8px 0"></svg>
     <div id="defForm"></div>
-    <div class="row" style="margin-top:14px"><button class="primary" id="defSave">Save to printer</button><button id="defReset">Undo changes</button><span class="small dim" id="defMsg"></span></div></div>
-   <div class="card" id="setPos"><h3>Positions</h3><div class="small dim">Where the nozzle extrudes in the air, and where it waits after the test.</div><div id="posForm" style="margin-top:10px"></div>
-    <div class="row" style="margin-top:14px"><button class="primary" id="posSave">Save to printer</button></div></div>
-   <div class="card" id="setGraph"><h3>Graphs</h3><div class="small dim">Saved in this browser.</div>
+    <div class="row" style="margin-top:14px"><button class="primary" id="defSave">Save</button><button id="defReset">Reset</button><span class="small dim" id="defMsg"></span></div></div>
+   <div class="card" id="setPos"><h3>Positions</h3><div id="posForm" style="margin-top:10px"></div>
+    <div class="row" style="margin-top:14px"><button class="primary" id="posSave">Save</button></div></div>
+   <div class="card" id="setGraph"><h3>Graphs</h3>
     <div class="row" style="margin-top:12px;gap:12px"><span class="row" style="gap:6px" id="setCmd"></span><button class="inv tog" aria-pressed="false" title="Flip the graph: negative up"></button></div></div>
-   <div class="card" id="setSafe"><h3>Safety</h3><div class="small dim">Set in pa_loadcell.cfg only, on purpose.</div><div class="setform" id="safeForm" style="margin-top:10px"></div></div>
+   <div class="card" id="setSafe"><h3>Safety</h3><div class="small dim">Read only. Edit in pa_loadcell.cfg.</div><div class="setform" id="safeForm" style="margin-top:10px"></div></div>
   </div></div>
 </section>
 </main>
@@ -429,10 +429,10 @@ function hms(v,frac){const d=new Date(v*1000),p=n=>(n<10?'0':'')+n;return p(d.ge
    Custom: a JSON file from Settings, stored on the printer; it picks a
    built-in layout ("base") and overrides colour tokens inline. */
 const BUILTIN=[{id:'piro',name:'PIRO',desc:'Graphite and amber',modes:['dark','light'],pv:['#1d1f22','#25282c','#d6a24a']},
- {id:'mainsail',name:'Mainsail',desc:'Looks like Mainsail',modes:['dark'],pv:['#121212','#1e1e1e','#2196f3']},
- {id:'fluidd',name:'Fluidd',desc:'Looks like Fluidd',modes:['dark'],pv:['#121212','#28282b','#2196f3']},
- {id:'ratos',name:'RatOS',desc:'Zinc and lime',modes:['dark'],pv:['#09090b','#18181b','#7bff33']},
- {id:'cat',name:'Cat',desc:'Catppuccin with a cat',modes:['dark','light'],pv:['#1e1e2e','#181825','#f5c2e7']}];
+ {id:'mainsail',name:'Mainsail',desc:'Mainsail layout',modes:['dark'],pv:['#121212','#1e1e1e','#2196f3']},
+ {id:'fluidd',name:'Fluidd',desc:'Fluidd layout',modes:['dark'],pv:['#121212','#28282b','#2196f3']},
+ {id:'ratos',name:'RatOS',desc:'RatOS layout',modes:['dark'],pv:['#09090b','#18181b','#7bff33']},
+ {id:'cat',name:'Cat',desc:'Catppuccin',modes:['dark','light'],pv:['#1e1e2e','#181825','#f5c2e7']}];
 const TOKMAP={bg:'--bg',panel:'--panel',panel2:'--panel2',head:'--head',ph:'--ph',rule:'--rule',text:'--text',dim:'--dim',trace:'--trace',accent:'--amber',
  onaccent:'--onacc',bad:'--rec',good:'--ok',fair:'--fair',grid:'--grid',fast:'--fast',slow:'--slow',radius:'--r',font:'--font',cmd:'--cmd'};
 let CUSTOM=[],THEME={id:'piro',mode:'dark'},WANT=null;
@@ -443,7 +443,7 @@ function applyTheme(sel,save=true){if(save)WANT=null;const h=document.documentEl
  h.dataset.theme=base;h.dataset.mode=mode;
  if(c)for(const[k,v]of Object.entries(c.tokens||{}))if(TOKMAP[k])h.style.setProperty(TOKMAP[k],v);
  THEME={id:sel.id,mode};if(save)store.set('theme2',THEME);placeNav();
- $('#brand').innerHTML=base==='cat'?'PIRO-EDGE<span>pressure advance, measured by a curious cat</span>':'PIRO-EDGE<span>pressure advance from the load cell</span>';
+ $('#brand').innerHTML=base==='cat'?'PIRO-EDGE<span>pressure advance, measured by a curious cat</span>':'PIRO-EDGE<span>Load cell pressure advance</span>';
  if(window.ready){redrawAll();renderThemeCards()}}
 /* RatOS and Cat keep the tabs in the header row; the others below it / in the side column */
 function placeNav(){const nav=$('#tabs'),hd=$('header');if(!nav)return;const inHead=['ratos','cat'].includes(document.documentElement.dataset.theme);
@@ -550,9 +550,9 @@ function paintCmd(){$$('button.cmdt').forEach(b=>b.setAttribute('aria-pressed',S
 document.addEventListener('click',e=>{const b=e.target.closest('button.cmdt,button.pusht,.dly button');if(!b)return;
  if(b.classList.contains('cmdt')){SHOWCMD=!SHOWCMD;store.set('cmd',SHOWCMD)}else if(b.classList.contains('pusht')){SHOWPUSH=!SHOWPUSH;store.set('push',SHOWPUSH)}
  else{DELAYMODE=b.dataset.d;store.set('delay',DELAYMODE)}paintCmd();redrawAll()});
-const CMDHTML=`<button class="cmdt tog" aria-pressed="true" title="Dashed line: what the extruder was told (flow steps, fitted to the force)"><i class="dot"></i>Command</button>
- <button class="pusht tog" aria-pressed="false" title="Dashed line: the extruder motion with pressure advance added (push / pull spikes)">PA push</button>
- <span class="seg dly" title="Sensor delay: draw the command at the recorded times (Raw) or shifted by the measured delay (Adjusted)"><button data-d="raw" aria-pressed="false">Raw</button><button data-d="adj" aria-pressed="true">Adjusted</button></span>`;
+const CMDHTML=`<button class="cmdt tog" aria-pressed="true" title="Commanded flow, scaled to force"><i class="dot"></i>Command</button>
+ <button class="pusht tog" aria-pressed="false" title="Commanded flow with PA push and pull-back">PA push</button>
+ <span class="seg dly" title="Raw: recorded time. Adjusted: shifted by the measured sensor delay."><button data-d="raw" aria-pressed="false">Raw</button><button data-d="adj" aria-pressed="true">Adjusted</button></span>`;
 /* Triangle smoothing, like Klipper's pressure_advance_smooth_time (total window st):
    cdf = how far a smoothed step has gone, pdf = the PA push shape (area 1). */
 function triCdf(x,h){if(h<=1e-6)return x>=0?1:0;if(x<=-h)return 0;if(x>=h)return 1;const u=x/h;return u<0?(1+u)*(1+u)/2:1-(1-u)*(1-u)/2}
@@ -570,7 +570,7 @@ function commandSeries(legs,fit,o){if(!fit||!legs.length)return[];const sh=o.shi
   const g=legs[legs.length-1];t.push(g.t1+sh);f.push(Y(g.flow));
   out.push({t,f,color:o.pushColor||css('--rec'),dash:[2,3],w:1.2,noScale:true,alpha:.85,name:'with PA'})}
  return out}
-function cmdLegend(has){const L=[];if(has&&SHOWCMD){L.push({label:'what the extruder was told',color:css('--cmd'),dash:[6,4]});if(SHOWPUSH)L.push({label:'with PA push',color:css('--rec'),dash:[2,3]})}return L}
+function cmdLegend(has){const L=[];if(has&&SHOWCMD){L.push({label:'Command',color:css('--cmd'),dash:[6,4]});if(SHOWPUSH)L.push({label:'Command + PA',color:css('--rec'),dash:[2,3]})}return L}
 const WINS=[1,2,5,10,30,60,120,300,600];
 const wname=s=>s<60?s+' s':(s/60)+' min';
 
@@ -589,8 +589,8 @@ class Viewer{
      <button data-go="back" title="Back half a window (Left arrow)" aria-label="Back">${svg(ICON.back)}</button>
      <button data-go="fwd" title="Forward half a window (Right arrow)" aria-label="Forward">${svg(ICON.fwd)}</button>
      <button data-go="end" title="${this.live?'Back to live (End)':'Go to end (End)'}" aria-label="${this.live?'Back to live':'Go to end'}">${svg(ICON.end)}</button></div>
-     <span class="pos num"></span><span class="sp"></span><span class="hint">Drag to move, scroll to zoom</span>
-     ${this.live?'<button class="tog follow" aria-pressed="true"><i class="dot"></i>Follow live</button>':''}</div></div>
+     <span class="pos num"></span><span class="sp"></span>
+     ${this.live?'<button class="tog follow" aria-pressed="true"><i class="dot"></i>Live</button>':''}</div></div>
    <div class="row bar vset">
     <label class="in xg">Time window <select class="xwin">${WINS.map(s=>`<option value="${s}">${wname(s)}</option>`).join('')}<option value="0">${this.live?'Whole buffer':'Whole run'}</option><option value="c">Custom</option></select>
      <input class="xcus num" type="number" min="0.05" step="any" hidden aria-label="Custom time window in seconds"></label>
@@ -685,7 +685,7 @@ class Viewer{
   const ox0=Math.min(d.tmin,x0),ox1=Math.max(d.tmax,x1);
   this.ov.set({series:(d.ovSeries||d.series).map(s=>Object.assign({},s,{w:1,alpha:.9})),bands:d.bands,vlines:d.vlines,x0:ox0,x1:ox1,hl:[x0,x1],invert:INVERT,y0:yy.y0,y1:yy.y1});
   const tot=this.total();
-  this.q('.pos').innerHTML=this.live?(this.follow?'Following live':'<b>'+fdur(d.tmax-x1)+'</b> behind live')+`<span style="margin-left:12px">Buffer ${fdur(Math.min(tot,this.o.keep||600))} of ${fdur(this.o.keep||600)}</span>`
+  this.q('.pos').innerHTML=this.live?(this.follow?'Live':'<b>'+fdur(d.tmax-x1)+'</b> behind live')+`<span style="margin-left:12px">Buffer ${fdur(Math.min(tot,this.o.keep||600))} / ${fdur(this.o.keep||600)}</span>`
    :`${fdur(x0-d.tmin)} to ${fdur(x1-d.tmin)} <span>of ${fdur(tot)}</span>`;
   if(this.o.onView)this.o.onView(x0,x1)}
 }
@@ -735,10 +735,10 @@ function status(){const s=$('#cSrc'),k=info.source;let cls='',txt='';
  cs.className='chip '+(rec.active?'bad':'warn');cs.innerHTML='<i></i><span>'+(rec.active?'Recording '+rec.elapsed+' s':'Test '+tst.state+', PA '+(tst.pa??'-'))+'</span>';
  $('#bar i').style.width=busy?Math.round((tst.progress||0)*100)+'%':'0';
  const b=$('#banner');let m='',bad=false;
- if(!rpc.up)m='Connection to Moonraker lost. Reconnecting automatically.';
+ if(!rpc.up)m='Moonraker disconnected. Reconnecting.';
  else if(liveErr){m=liveErr;bad=true}
- else if(info.unit==='counts'&&info.source)m='The load cell is not calibrated and tared, so values are raw ADC counts. Press Tare, or run LOAD_CELL_CALIBRATE once.';
- else if(info.stale)m='No samples from the load cell for more than 2 s. Check the sensor wiring and that Klipper is ready.';
+ else if(info.unit==='counts'&&info.source)m='Load cell not calibrated: raw counts. Run LOAD_CELL_CALIBRATE, then Tare.';
+ else if(info.stale)m='No load cell samples for 2 s. Check wiring and Klipper state.';
  b.style.display=m?'block':'none';b.className=bad?'bad':'';b.textContent=m;
  $('#unit').textContent=info.unit==='g'?'g':(info.unit||'');
  const R=$('#rec');R.textContent=rec.active?'Stop':'Record';R.className=rec.active?'rec':'primary';R.disabled=!!busy;
@@ -775,7 +775,7 @@ function frame(){const onL=$('#live').classList.contains('on'),onT=$('#test').cl
 $('#rec').onclick=async()=>{try{if(rec.active){const r=await api('record_stop');toast('Saved as Run '+r.run);loadRuns()}else await api('record_start',{label:$('#label').value})}catch(e){toast(e.message)}};
 $('#mark').onclick=async()=>{try{await api('mark',{label:$('#markText').value});$('#markText').value='';toast('Marked')}catch(e){toast(e.message)}};
 $('#markText').addEventListener('keydown',e=>{if(e.key==='Enter')$('#mark').click()});
-$('#tare').onclick=async()=>{if(!info.tare_name){toast('No load cell yet');return}if(!confirm('Tare sets the current force as zero. Make sure nothing is pushing on the nozzle.'))return;
+$('#tare').onclick=async()=>{if(!info.tare_name){toast('Load cell not ready');return}if(!confirm('Zero the load cell? Nothing should touch the nozzle.'))return;
  try{await gcode('LOAD_CELL_TARE LOAD_CELL='+info.tare_name,15000);toast('Tared')}catch(e){toast(e.message)}};
 
 /* ---- PA test (PIRO-EDGE) ---- */
@@ -783,15 +783,15 @@ const SI=(d,w=16)=>`<svg class="ico" viewBox="0 0 24 24" width="${w}" height="${
 const TI={list:'<path d="M8 6h13M8 12h13M8 18h13M3 6h1M3 12h1M3 18h1"/>',clock:'<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
  spool:'<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3"/>',drop:'<path d="M12 3c4 5 6 8 6 11a6 6 0 0 1-12 0c0-3 2-6 6-11z"/>'};
 /* [name, label, unit, step | options, hint, colour key] */
-const MAINF=[['filament','Filament','','text','Saved with the run, e.g. ASA CF 275 °C'],
- ['pa_max','Check up to','',.005,'First high PA tried. It must make the force dip; if it does not, the test adds the upper step until it does']];
+const MAINF=[['filament','Filament','','text','Stored with the run'],
+ ['pa_max','PA max','',.005,'First upper value. Raised by upper step until the force dips.']];
 const ADV=[
  ['Pulses','fg',[['fast_flow','Fast flow','mm³/s',.1,'','fast'],['fast_time','Fast time','s',.05,'','fast'],['slow_flow','Slow flow','mm³/s',.1,'','slow'],
-   ['slow_time','Slow time','s',.1,'','slow'],['cycles','Pulses per PA','',1,'The first one is skipped'],['rest_time','Rest before each PA','s',.1,'']]],
- ['Prime','fg3',[['prime_length','Length','mm',1,'0 = off','prime'],['prime_flow','Flow','mm³/s',.5,'','prime'],['prime_rest','Rest after','s',.5,'']]],
- ['Search','fg3',[['upper_step','Upper step','',.005,'Added while there is no dip'],['pa_limit','PA limit','',.01,'No dip here: test fails'],['skip_first','First pulse','',[['1','Skip'],['0','Use']],'']]],
- ['Position and safety','fg',[['test_x','Test X','mm',1,'Where the nozzle extrudes'],['test_y','Test Y','mm',1,''],['park_x','Park X','mm',1,'Where it waits after'],['park_y','Park Y','mm',1,''],
-   ['max_filament','Filament cap','mm',10,'A test that could use more is refused']]]];
+   ['slow_time','Slow time','s',.1,'','slow'],['cycles','Cycles','',1,''],['rest_time','Rest time','s',.1,'']]],
+ ['Prime','fg3',[['prime_length','Prime length','mm',1,'0 disables','prime'],['prime_flow','Prime flow','mm³/s',.5,'','prime'],['prime_rest','Prime rest','s',.5,'']]],
+ ['Search','fg3',[['upper_step','Upper step','',.005,'Added until the force dips'],['pa_limit','PA limit','',.01,'Fails if no dip'],['skip_first','First pulse','',[['1','Skip'],['0','Use']],'']]],
+ ['Position and safety','fg',[['test_x','Test X','mm',1,''],['test_y','Test Y','mm',1,''],['park_x','Park X','mm',1,''],['park_y','Park Y','mm',1,''],
+   ['max_filament','Max filament','mm',10,'Limit per test']]]];
 const FKEY='form.v4';
 let DEF=null;
 const area=()=>DEF&&DEF.extruder&&DEF.extruder.filament_area||Math.PI*.875*.875;
@@ -806,8 +806,8 @@ async function loadDefaults(){try{const d=await api('defaults');DEF=d;const save
   $$('#form input,#form select').forEach(i=>i.addEventListener('input',()=>{store.set(FKEY,mainVals());summary()}));
   renderSettings();summary();
   const L=d.limits||{};if(L.required_z!=null){const fx=$('#fixed');fx.hidden=false;
-   fx.innerHTML=`Before you start: heat the nozzle (at least <b>${fmt(L.min_temp,0)} &deg;C</b>), home all axes and move to <b>Z ${fmt(L.required_z,1)} mm</b>. These two limits are set in pa_loadcell.cfg. Klipper's own PA is held at 0 during the test and put back after.`}}
- catch(e){$('#form').innerHTML='<div class="card empty">Could not read defaults: '+esc(e.message)+'</div>'}}
+   fx.innerHTML=`Requires: extruder &ge; <b>${fmt(L.min_temp,0)} &deg;C</b>, all axes homed, <b>Z ${fmt(L.required_z,1)} mm</b>. Pressure advance is set to 0 during the test and restored after.`}}
+ catch(e){$('#form').innerHTML='<div class="card empty">Defaults unavailable: '+esc(e.message)+'</div>'}}
 const numv=i=>i.type==='number'?parseFloat(i.value):i.value;
 const mainVals=()=>Object.fromEntries($$('#form input,#form select').map(i=>[i.name,numv(i)]));
 /* everything a test needs: the two main fields + the saved defaults */
@@ -815,16 +815,16 @@ const formVals=()=>{const v={};for(const k of ADVKEYS)if(DEF&&DEF[k]!=null)v[k]=
 /* ---- Settings: test defaults + positions, saved to pa_loadcell.cfg ---- */
 function renderSettings(only){if(!DEF)return;
  if(!only||only==='#defForm')$('#defForm').innerHTML=ADV.filter(g=>g[0]!=='Position and safety').map(([g,cls,fs])=>`<div style="margin-bottom:12px"><h4>${g}</h4><div class="setform">${fs.map(f=>fieldHTML(f,DEF[f[0]]??'')).join('')}</div></div>`).join('')+
-  `<div><h4>Run</h4><div class="setform">${fieldHTML(['max_filament','Filament cap','mm',10,'A test that could use more is refused'],DEF.max_filament)}${fieldHTML(['pa_max','Check up to','',.005,'Default for the PA test tab'],DEF.pa_max)}</div></div>`;
- if(!only||only==='#posForm')$('#posForm').innerHTML=`<div class="setform">${[['test_x','Test X','mm',1,'Where the nozzle extrudes'],['test_y','Test Y','mm',1,''],['park_x','Park X','mm',1,'Where it waits after'],['park_y','Park Y','mm',1,'']].map(f=>fieldHTML(f,DEF[f[0]]??'')).join('')}</div>`;
- const L=DEF.limits||{};$('#safeForm').innerHTML=[['Min nozzle temperature',L.min_temp,'°C'],['Test height Z',L.required_z,'mm'],['Z tolerance',L.z_tol,'mm'],['No-data timeout',L.timeout,'s']].map(([l,v,u])=>`<label class="f">${l}<div class="inp"><input value="${esc(v??'')}" disabled><em>${u}</em></div></label>`).join('');
- if(!only||only==='#defForm'){$$('#defForm input,#defForm select').forEach(i=>i.addEventListener('input',()=>{drawPulse(Object.assign({},DEF,setVals('#defForm')));$('#defMsg').textContent='not saved yet'}));
+  `<div><h4>Run</h4><div class="setform">${fieldHTML(['max_filament','Max filament','mm',10,'Limit per test'],DEF.max_filament)}${fieldHTML(['pa_max','PA max','',.005,''],DEF.pa_max)}</div></div>`;
+ if(!only||only==='#posForm')$('#posForm').innerHTML=[['Test position',[['test_x','Test X','mm',1,''],['test_y','Test Y','mm',1,'']]],['Park position',[['park_x','Park X','mm',1,''],['park_y','Park Y','mm',1,'']]]].map(([g,fs])=>`<div style="margin-bottom:12px"><h4>${g}</h4><div class="setform">${fs.map(f=>fieldHTML(f,DEF[f[0]]??'')).join('')}</div></div>`).join('');
+ const L=DEF.limits||{};$('#safeForm').innerHTML=[['Min temp',L.min_temp,'°C'],['Required Z',L.required_z,'mm'],['Z tolerance',L.z_tol,'mm'],['Sample timeout',L.timeout,'s']].map(([l,v,u])=>`<label class="f">${l}<div class="inp"><input value="${esc(v??'')}" disabled><em>${u}</em></div></label>`).join('');
+ if(!only||only==='#defForm'){$$('#defForm input,#defForm select').forEach(i=>i.addEventListener('input',()=>{drawPulse(Object.assign({},DEF,setVals('#defForm')));$('#defMsg').textContent='Unsaved changes'}));
  drawPulse(DEF);$('#defMsg').textContent=''}
- $('#advLine').innerHTML=`Fast ${fmt(DEF.fast_flow,1)} mm³/s for ${fmt(DEF.fast_time,2)} s, slow ${fmt(DEF.slow_flow,1)} mm³/s, ${DEF.cycles} pulses per PA, test at X${fmt(DEF.test_x,0)} Y${fmt(DEF.test_y,0)}. <a href="#" id="advEdit" style="color:var(--amber)">Change in Settings</a>`;
+ $('#advLine').innerHTML=`Fast ${fmt(DEF.fast_flow,1)} mm³/s, ${fmt(DEF.fast_time,2)} s. Slow ${fmt(DEF.slow_flow,1)} mm³/s. ${DEF.cycles} cycles at X${fmt(DEF.test_x,0)} Y${fmt(DEF.test_y,0)}. <a href="#" id="advEdit" style="color:var(--amber)">Edit in Settings</a>`;
  $('#advEdit').onclick=e=>{e.preventDefault();setTab('set');$('#setDef').scrollIntoView({block:'start',behavior:'smooth'})}}
 const setVals=sel=>Object.fromEntries($$(sel+' input,'+sel+' select').map(i=>[i.name,i.name==='skip_first'?parseInt(i.value):numv(i)]));
 async function saveDefaults(sel){if(!DEF)return;const v=setVals(sel),ch={};for(const[k,x]of Object.entries(v))if(String(x)!==String(DEF[k]))ch[k]=x;
- if(!Object.keys(ch).length){toast('Nothing changed');return}
+ if(!Object.keys(ch).length){toast('No changes');return}
  try{const r=await api('config_save',{values:ch},15000);Object.assign(DEF,r.defaults);renderSettings(sel);summary();toast('Saved to '+(r.saved||'pa_loadcell.cfg').split('/').pop())}
  catch(e){toast('Not saved: '+e.message,8000)}}
 $('#defSave').onclick=()=>saveDefaults('#defForm');$('#posSave').onclick=()=>saveDefaults('#posForm');$('#defReset').onclick=()=>renderSettings('#defForm');
@@ -848,42 +848,42 @@ function drawPulse(v){const sv=$('#pulse');if(!sv)return;const W=420,x0=10,x1=W-
   <text x="${f1[0]+f1[1]/2}" y="${yf-14}" text-anchor="middle"><tspan class="v">${fmt(v.fast_flow,1)} mm³/s</tspan> ${fmt(v.fast_time,2)} s</text>
   <text x="${s1+v.slow_time*sx/2}" y="${ys-16}" text-anchor="middle"><tspan class="v">${fmt(v.slow_flow,1)}</tspan> ${fmt(v.slow_time,1)} s</text>
   <text x="${x0+v.slow_time*sx/2}" y="${base+14}" text-anchor="middle">lead-in</text>
-  <text x="${x1}" y="${base+14}" text-anchor="end">${v.cycles} pulses per PA value${v.cycles>shown?' (first '+shown+' shown)':''}</text>
-  <text x="${x0}" y="${base+32}">&#9650; PA push at each speed-up, &#9660; pull-back at each slow-down</text>`}
+  <text x="${x1}" y="${base+14}" text-anchor="end">${v.cycles} cycles per PA value${v.cycles>shown?' (first '+shown+' shown)':''}</text>
+  <text x="${x0}" y="${base+32}">&#9650; PA push, &#9660; PA pull-back</text>`}
 function summary(){if(!$('#form input')||!DEF)return;const v=formVals(),p=plan(v),bad=[],warn=[],ex=DEF&&DEF.extruder||{};
  $$('#form .inp').forEach(e=>e.classList.remove('bad'));const mark=k=>{const e=$(`#form .inp[data-k="${k}"]`);if(e)e.classList.add('bad')};
  if(!(v.pa_limit>0&&v.pa_limit<=2)){bad.push('PA limit must be between 0 and 2');mark('pa_limit')}
- if(!(v.pa_max>0&&v.pa_max<=v.pa_limit)){bad.push('Check up to must be above 0 and at most the PA limit');mark('pa_max')}
+ if(!(v.pa_max>0&&v.pa_max<=v.pa_limit)){bad.push('PA max must be above 0 and at most PA limit');mark('pa_max')}
  if(!(v.upper_step>0&&v.upper_step<=.5)){bad.push('Upper step must be between 0 and 0.5');mark('upper_step')}
- if(!(v.cycles>=2)){bad.push('Use at least 2 pulses per PA value (the first is skipped)');mark('cycles')}
- for(const k of['fast_flow','fast_time','slow_flow','slow_time'])if(!(v[k]>0)){bad.push('Every flow and time must be above 0');mark(k)}
+ if(!(v.cycles>=2)){bad.push('Cycles must be at least 2');mark('cycles')}
+ for(const k of['fast_flow','fast_time','slow_flow','slow_time'])if(!(v[k]>0)){bad.push('Flows and times must be above 0');mark(k)}
  if(Math.min(v.fast_time,v.slow_time)<.15){bad.push('Fast and slow times must be at least 0.15 s');mark(v.fast_time<.15?'fast_time':'slow_time')}
  if(!(v.slow_flow<v.fast_flow)){bad.push('Slow flow must be below fast flow');mark('slow_flow')}
  if(!(v.prime_length>=0)){bad.push('Prime length must be 0 or more');mark('prime_length')}
  if(!(v.prime_flow>0)){bad.push('Prime flow must be above 0');mark('prime_flow')}
  const vm=ex.max_e_velocity;
- if(vm!=null){if(p.vf>vm){bad.push(`Fast flow needs ${p.vf.toFixed(1)} mm/s of filament, above your max_extrude_only_velocity (${fmt(vm,1)})`);mark('fast_flow')}
-  if(v.prime_length>0&&v.prime_flow/p.A>vm){bad.push(`Prime flow needs ${(v.prime_flow/p.A).toFixed(1)} mm/s of filament, above max_extrude_only_velocity (${fmt(vm,1)})`);mark('prime_flow')}
-  if(p.charge(v.pa_max)>vm){bad.push(`At PA ${fmt(v.pa_max,3)} the push move needs ${p.charge(v.pa_max).toFixed(0)} mm/s, above max_extrude_only_velocity (${fmt(vm,1)}): lower the fast flow`);mark('pa_max')}
+ if(vm!=null){if(p.vf>vm){bad.push(`Fast flow needs ${p.vf.toFixed(1)} mm/s, above max_extrude_only_velocity ${fmt(vm,1)}`);mark('fast_flow')}
+  if(v.prime_length>0&&v.prime_flow/p.A>vm){bad.push(`Prime flow needs ${(v.prime_flow/p.A).toFixed(1)} mm/s, above max_extrude_only_velocity ${fmt(vm,1)}`);mark('prime_flow')}
+  if(p.charge(v.pa_max)>vm){bad.push(`PA max ${fmt(v.pa_max,3)} needs a ${p.charge(v.pa_max).toFixed(0)} mm/s push, above max_extrude_only_velocity ${fmt(vm,1)}. Lower fast flow.`);mark('pa_max')}
   else if(p.charge(v.pa_limit)>vm){let k=v.pa_max;while(k+v.upper_step<=v.pa_limit&&p.charge(k+v.upper_step)<=vm)k+=v.upper_step;
-   warn.push(`The push move at PA ${fmt(v.pa_limit,2)} would need ${p.charge(v.pa_limit).toFixed(0)} mm/s; the upper check can only go to about ${fmt(k,2)}.`)}}
- if(p.filMax>v.max_filament){bad.push(`A long search could need ${p.filMax.toFixed(0)} mm of filament, above the ${fmt(v.max_filament,0)} mm cap`);mark('max_filament')}
- if(v.fast_flow>30)warn.push(`${fmt(v.fast_flow,1)} mm³/s is a lot for most hotends. Make sure yours can melt that much.`);
- if(v.fast_time<.4)warn.push('Fast legs under 0.4 s leave little time to settle; the speed-up check gets less reliable.');
+   warn.push(`Upper search limited to PA ~${fmt(k,2)} by max_extrude_only_velocity`)}}
+ if(p.filMax>v.max_filament){bad.push(`Search may need ${p.filMax.toFixed(0)} mm, above max filament ${fmt(v.max_filament,0)} mm`);mark('max_filament')}
+ if(v.fast_flow>30)warn.push(`Fast flow ${fmt(v.fast_flow,1)} mm³/s exceeds most hotends`);
+ if(v.fast_time<.4)warn.push('Fast time under 0.4 s weakens the rise check');
  const m=Math.floor(p.secs/60),sc=Math.round(p.secs%60),pct=Math.min(100,p.filMax/v.max_filament*100);
- $('#sum').innerHTML=`${SI(TI.list)}<div>about <b>${TYP}</b> PA values <span class="sub">chosen as it goes, at most ${MAXN}</span></div>
-  ${SI(TI.clock)}<div>about <b>${m?m+' min ':''}${sc} s</b> <span class="sub">${fmt(p.perS,1)} s per PA value${p.primeT?', prime '+Math.round(p.primeT)+' s':''}</span></div>
-  ${SI(TI.spool)}<div><b>${p.filTyp.toFixed(0)} mm</b> of filament <span class="sub">at most ${p.filMax.toFixed(0)} of the ${fmt(v.max_filament,0)} mm cap</span><div class="meter ${pct>=100?'bad':pct>80?'warn':''}"><i style="width:${pct}%"></i></div></div>
-  ${SI(TI.drop)}<div>Fast leg <b>${p.fast.toFixed(2)} mm</b> at ${p.vf.toFixed(1)} mm/s <span class="sub">PA push window ${Math.round(p.sm*1000)} ms (your smooth time)</span></div>`;
+ $('#sum').innerHTML=`${SI(TI.list)}<div>PA values <b>~${TYP}</b> <span class="sub">max ${MAXN}</span></div>
+  ${SI(TI.clock)}<div>Duration <b>~${m}:${String(sc).padStart(2,'0')}</b> <span class="sub">${fmt(p.perS,1)} s per PA value</span></div>
+  ${SI(TI.spool)}<div>Filament <b>~${p.filTyp.toFixed(0)} mm</b> <span class="sub">max ${p.filMax.toFixed(0)} / ${fmt(v.max_filament,0)}</span><div class="meter ${pct>=100?'bad':pct>80?'warn':''}"><i style="width:${pct}%"></i></div></div>
+  ${SI(TI.drop)}<div>Fast pulse <b>${p.fast.toFixed(2)} mm</b> at ${p.vf.toFixed(1)} mm/s <span class="sub">Smooth time ${Math.round(p.sm*1000)} ms</span></div>`;
  $('#checks').innerHTML=bad.length||warn.length?`<div class="alert ${bad.length?'bad':''}">${bad.concat(warn).map(esc).join('<br>')}</div>`:'';
  $('#tstart').dataset.ok=bad.length?'0':'1'}
-$('#tstart').onclick=async()=>{if($('#tstart').dataset.ok==='0'){toast('Fix the settings marked in red first');return}
+$('#tstart').onclick=async()=>{if($('#tstart').dataset.ok==='0'){toast('Invalid values');return}
  const v=formVals();const q=s=>/\s/.test(s)?'"'+s.replace(/"/g,'')+'"':s;
  const script='PA_LOADCELL_TEST '+Object.entries(v).filter(([k,x])=>x!==''&&!Number.isNaN(x)).map(([k,x])=>k.toUpperCase()+'='+(typeof x==='string'?q(x):x)).join(' ');
  tv.follow=true;lastSearch=null;toast('Test started');
  const after=async()=>{try{const r=(await api('runs',{},60000)).runs.find(x=>x.kind==='test');if(r)rememberOffset(r.id)}catch{}loadRuns()};
- try{await gcode(script,0);toast('Test finished. History has the full explanation.',7000)}catch(e){toast('Test stopped: '+e.message,9000)}after()};
-$('#tcancel').onclick=()=>api('cancel').then(()=>toast('Cancelling after the current leg')).catch(e=>toast(e.message));
+ try{await gcode(script,0);toast('Test complete',7000)}catch(e){toast('Test stopped: '+e.message,9000)}after()};
+$('#tcancel').onclick=()=>api('cancel').then(()=>toast('Stopping after this pulse')).catch(e=>toast(e.message));
 /* tracker + live search chart */
 const STAGE_I={reference:0,upper:1,bracket:2,refine:3,confirm:3,repeat:3};
 let lastSearch=null;
@@ -893,7 +893,7 @@ function paintTrack(sr,running,failed){const steps=(sr&&sr.steps)||[],cur=failed
 function liveSearch(T){const running=T.state&&T.state!=='idle';if(running&&T.search)lastSearch=T.search;const sr=lastSearch;
  paintTrack(sr,running,false);
  if($('#test').classList.contains('on'))figPath($('#tpath'),sr,null,{live:true});
- $('#tres').innerHTML=sr?(sr.result!=null?`Answer for Klipper <b style="color:var(--text)">${sr.result}</b> &plusmn; ${sr.unc} (${sr.grade}). History shows how it was chosen.`:sr.error?`<span style="color:var(--rec)">${esc(sr.error)}</span>`:sr.prediction!=null?`Prediction so far: ${sr.prediction}`:''):'No test yet in this session.';
+ $('#tres').innerHTML=sr?(sr.result!=null?`Result <b style="color:var(--text)">${sr.result}</b> &plusmn; ${sr.unc} (${sr.grade}).`:sr.error?`<span style="color:var(--rec)">${esc(sr.error)}</span>`:sr.prediction!=null?`Estimate: ${sr.prediction}`:''):'No test run yet';
  if(!running&&sr&&(sr.result!=null||sr.error))paintTrack(sr,false,sr.result==null)}
 
 /* ---- history ---- */
@@ -909,8 +909,8 @@ function themeCard(t,on,extra=''){const[bg,p,a]=t.pv;return`<div class="thc" rol
   <div class="nm"><b>${esc(t.name)}${on?' ✓':''}</b><span>${esc(t.desc)}</span>${extra}</div></div>`}
 function renderThemeCards(){if(!$('#thBuilt'))return;
  $('#thBuilt').innerHTML=BUILTIN.map(t=>themeCard(t,THEME.id===t.id,t.modes.length>1?`<div class="seg" style="margin-top:6px">${t.modes.map(m=>`<button data-mode="${m}" data-for="${t.id}" aria-pressed="${THEME.id===t.id&&THEME.mode===m}">${m==='dark'?(t.id==='cat'?'Mocha':'Dark'):(t.id==='cat'?'Latte':'Light')}</button>`).join('')}</div>`:'')).join('');
- $('#thCustom').innerHTML=CUSTOM.length?CUSTOM.map(t=>{const tk=t.tokens||{};return themeCard({id:t.id,name:t.name,base:t.base,desc:`based on ${t.base}${t.author?', by '+t.author:''}`,pv:[tk.bg||'#222',tk.panel||'#333',tk.accent||'#888']},THEME.id===t.id,
-   `<div class="row" style="margin-top:6px;gap:4px"><button class="quiet" data-exp="${esc(t.id)}" style="padding:2px 8px">Export</button><button class="quiet danger" data-del="${esc(t.id)}" style="padding:2px 8px">Delete</button></div>`)}).join(''):'<div class="small dim">None yet. Export a theme, edit the colours in the file, and import it here.</div>';
+ $('#thCustom').innerHTML=CUSTOM.length?CUSTOM.map(t=>{const tk=t.tokens||{};return themeCard({id:t.id,name:t.name,base:t.base,desc:`${(BUILTIN.find(b=>b.id===t.base)||{name:t.base}).name} base${t.author?', '+t.author:''}`,pv:[tk.bg||'#222',tk.panel||'#333',tk.accent||'#888']},THEME.id===t.id,
+   `<div class="row" style="margin-top:6px;gap:4px"><button class="quiet" data-exp="${esc(t.id)}" style="padding:2px 8px">Export</button><button class="quiet danger" data-del="${esc(t.id)}" style="padding:2px 8px">Delete</button></div>`)}).join(''):'<div class="small dim">No custom themes. Export one, edit it, import it.</div>';
  $$('.thc').forEach(c=>{c.onclick=e=>{if(e.target.closest('button'))return;applyTheme({id:c.dataset.th,mode:THEME.mode})};c.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();c.click()}}});
  $$('#thBuilt [data-mode]').forEach(b=>b.onclick=()=>applyTheme({id:b.dataset.for,mode:b.dataset.mode}));
  $$('#thCustom [data-exp]').forEach(b=>b.onclick=()=>downloadJSON(CUSTOM.find(t=>t.id===b.dataset.exp),b.dataset.exp+'.theme.json'));
@@ -921,7 +921,7 @@ function downloadJSON(o,name){const a=document.createElement('a');a.href=URL.cre
 $('#thExport').onclick=()=>{const c=CUSTOM.find(t=>t.id===THEME.id),b=BUILTIN.find(t=>t.id===THEME.id),tokens={};for(const[k,v]of Object.entries(TOKMAP)){const x=css(v);if(x)tokens[k]=x}
  downloadJSON({format:'piro_edge_theme',version:1,name:(c?c.name:b.name)+' copy',base:document.documentElement.dataset.theme,mode:document.documentElement.dataset.mode,author:'',tokens},'my-theme.theme.json')};
 $('#thImport').onclick=()=>$('#thFile').click();
-$('#thFile').onchange=async e=>{const f=e.target.files[0];e.target.value='';if(!f)return;try{const o=JSON.parse(await f.text());const r=await api('theme_save',{theme:o});await loadThemes();applyTheme({id:r.theme.id});toast('Theme "'+r.theme.name+'" added')}
+$('#thFile').onchange=async e=>{const f=e.target.files[0];e.target.value='';if(!f)return;try{const o=JSON.parse(await f.text());const r=await api('theme_save',{theme:o});await loadThemes();applyTheme({id:r.theme.id});toast('Imported "'+r.theme.name+'"')}
  catch(err){toast('Import failed: '+(err instanceof SyntaxError?'not a JSON file':err.message),8000)}};
 /* last finished test on the PA test tab */
 function renderLastRes(){const box=$('#lastres');if(!box)return;const r=(runs||[]).find(x=>x.kind==='test'&&x.result&&x.result.pa!=null);box.hidden=!r;if(!r)return;
@@ -931,9 +931,9 @@ function renderLastRes(){const box=$('#lastres');if(!box)return;const r=(runs||[
   <div class="row" style="margin-top:10px"><code style="background:var(--bg);border:1px solid var(--rule);border-radius:4px;padding:4px 8px;font-size:12px">${cmd}</code><button class="quiet" data-cp="${cmd}" onclick="navigator.clipboard&&navigator.clipboard.writeText(this.dataset.cp).then(()=>toast('Copied'),()=>toast(this.dataset.cp))">Copy</button></div>`}
 function renderRuns(){const q=$('#search').value.toLowerCase();const list=runs.filter(r=>(kind==='all'||r.kind===kind)&&(!q||(r.name+' '+(r.filament||'')+' '+(r.notes||'')).toLowerCase().includes(q)));
  $('#runs').innerHTML=list.map(r=>`<details class="run card" data-id="${r.id}"><summary class="runline"><b>${esc(r.name)}</b><span style="color:var(--dim)">${[esc(r.filament||''),r.nozzle_temp!=null?fmt(r.nozzle_temp,0)+' °C':''].filter(Boolean).join(' · ')}</span>
-  ${r.kind==='test'?(r.result?`<span class="res">PA ${r.result.pa}</span><span class="num dim">&plusmn; ${r.result.unc}</span>${gradeHTML(r.result.grade)}`:`<span class="chip ${r.status==='error'?'bad':'warn'}"><i></i>${r.status==='error'?'no answer':esc(r.status)}</span>`):'<span class="chip">Recording</span>'}
-  <span class="sp"></span>${r.imported?'<span class="chip">imported</span>':''}<span class="num dim">${r.segments} ${r.kind==='test'?'PA values':'segment'}${r.pa_pick!=null?', your pick '+r.pa_pick:''}</span><span class="num dim">${esc(r.date)}</span></summary><div class="body" style="color:var(--dim)">Loading</div></details>`).join('')||
-  '<div class="empty">'+(runs.length?'No runs match.':'No runs yet. Start a PA test or press Record on the Live tab.')+'</div>';
+  ${r.kind==='test'?(r.result?`<span class="res">PA ${r.result.pa}</span><span class="num dim">&plusmn; ${r.result.unc}</span>${gradeHTML(r.result.grade)}`:`<span class="chip ${r.status==='error'?'bad':'warn'}"><i></i>${r.status==='error'?'Failed':esc(r.status)}</span>`):'<span class="chip">Recording</span>'}
+  <span class="sp"></span>${r.imported?'<span class="chip">imported</span>':''}<span class="num dim">${r.segments} ${r.kind==='test'?'PA values':'segment'}${r.pa_pick!=null?', pick '+r.pa_pick:''}</span><span class="num dim">${esc(r.date)}</span></summary><div class="body" style="color:var(--dim)">Loading</div></details>`).join('')||
+  '<div class="empty">'+(runs.length?'No runs match.':'No runs. Start a PA test or Record on Live.')+'</div>';
  $$('#runs details').forEach(d=>{d.addEventListener('toggle',()=>{if(d.open)openRun(+d.dataset.id,d.querySelector('.body'))});if(cur&&cur.id===+d.dataset.id)d.open=true})}
 $('#search').oninput=renderRuns;$('#refresh').onclick=loadRuns;
 $$('#kind button').forEach(b=>b.onclick=()=>{kind=b.dataset.k;$$('#kind button').forEach(x=>x.setAttribute('aria-pressed',x===b));renderRuns()});
@@ -958,13 +958,13 @@ function vline(c,F,v,col,dash){const x=Math.round(F.X(v))+.5;c.strokeStyle=col;c
 const pct=v=>(v>0?'+':'')+Math.round(v*100)+'%';
 /* 0.05 -> 0.050, 0.0555 -> 0.0555 */
 const fpa=v=>{let t=(+v).toFixed(4);while(t.endsWith('0')&&t.split('.')[1].length>3)t=t.slice(0,-1);return t};
-const SHORT={reference:'PA 0',upper:'upper',bracket:'predict',refine:'refine',confirm:'check',repeat:'again'};
+const SHORT={reference:'PA 0',upper:'upper',bracket:'estimate',refine:'refine',confirm:'check',repeat:'repeat'};
 
 /* A: the search path. x = order tested, y = PA. Grey band = where the answer can still be. */
 function emptyFig(cv,msg){const w=cv.clientWidth,h=cv.clientHeight;if(!w||!h)return;const dpr=devicePixelRatio||1;cv.width=Math.round(w*dpr);cv.height=Math.round(h*dpr);
  const c=cv.getContext('2d');c.setTransform(dpr,0,0,dpr,0,0);c.clearRect(0,0,w,h);c.font='12px '+css('--font');c.fillStyle=css('--dim');c.textAlign='center';c.fillText(msg,w/2,h/2)}
 function figPath(cv,sr,res,o={}){const steps=(sr&&sr.steps)||[];
- if(!steps.length){emptyFig(cv,o.live?'The search path appears here while a test runs':'This run tested a fixed list of PA values (made before PIRO-EDGE)');return}
+ if(!steps.length){emptyFig(cv,o.live?'Search path appears during a test':'Fixed list (pre PIRO-EDGE run)');return}
  const n=steps.length,top=Math.max(...steps.map(s=>s.pa))*1.08;
  const F=fig(cv,{x0:.4,x1:n+.6,y0:0,y1:top,T:16,xticks:steps.map((s,i)=>({v:i+1,label:SHORT[s.stage]||s.stage})),yt:v=>v.toFixed(2),L:40,B:20});if(!F)return;const c=F.c;
  /* band: last clean below the lowest dip, after each step */
@@ -972,7 +972,7 @@ function figPath(cv,sr,res,o={}){const steps=(sr&&sr.steps)||[];
   if(bad!=null&&ok>=bad)ok=Math.max(0,...steps.filter(x=>x.verdict!=='dips'&&x.pa<bad).map(x=>x.pa));band.push([ok,bad])}
  c.fillStyle=css('--text');c.globalAlpha=.07;band.forEach(([a,b],i)=>{if(b==null)return;const x0=F.X(i+.5),x1=F.X(i+1.5);c.fillRect(x0,F.Y(b),x1-x0,F.Y(a)-F.Y(b))});c.globalAlpha=1;
  const ans=res&&res.pa!=null?(res.measured??res.pa):(sr.result!=null&&!res?null:null);
- if(ans!=null){hline(c,F,ans,css('--amber'),[5,4]);label(c,'answer',F.L+4,F.Y(ans)-5,css('--amber'),'left')}
+ if(ans!=null){hline(c,F,ans,css('--amber'),[5,4]);label(c,'result',F.L+4,F.Y(ans)-5,css('--amber'),'left')}
  steps.forEach((s,i)=>{if(s.prediction!=null){const y=F.Y(s.prediction),x=F.X(i+1);c.strokeStyle=css('--amber');c.lineWidth=1.5;c.beginPath();c.moveTo(x-9,y);c.lineTo(x+9,y);c.stroke()}});
  c.strokeStyle=F.dim;c.globalAlpha=.5;c.lineWidth=1;c.beginPath();steps.forEach((s,i)=>{const x=F.X(i+1),y=F.Y(s.pa);i?c.lineTo(x,y):c.moveTo(x,y)});c.stroke();c.globalAlpha=1;
  steps.forEach((s,i)=>{const col=s.verdict==='dips'?css('--rec'):css('--trace'),x=F.X(i+1),y=F.Y(s.pa);
@@ -995,11 +995,11 @@ function figDips(cv,res,full){const P0=(res&&res.points)||[];
  if(fe.line&&fe.used&&fe.used.length){const a=fe.line.a,b=fe.line.b,xa=Math.max(x0,Math.min(fe.k??1,...fe.used)-.003),xb=Math.min(x1,Math.max(...fe.used)+.003);
   c.save();c.beginPath();c.rect(F.L,F.T,F.pw,F.ph);c.clip();c.strokeStyle=css('--amber');c.lineWidth=1.8;c.beginPath();c.moveTo(F.X(xa),F.Y(a+b*xa));c.lineTo(F.X(xb),F.Y(a+b*xb));c.stroke();c.restore()}
  const k=fe.k;if(k!=null){const u=res.unc&&res.measured?res.unc*res.measured/res.pa:res.unc||0;c.fillStyle=css('--amber');c.globalAlpha=.13;c.fillRect(F.X(k-u),F.T,Math.max(2,F.X(k+u)-F.X(k-u)),F.ph);c.globalAlpha=1;
-  vline(c,F,k,css('--amber'));const lt=(res.measured?'crosses 0 at ':'answer ')+k.toFixed(4),right=F.X(k)>F.L+F.pw*.6;label(c,lt,F.X(k)+(right?-6:6),F.T+12,css('--amber'),right?'right':'left',css('--panel2'))}
+  vline(c,F,k,css('--amber'));const lt='edge '+k.toFixed(4),right=F.X(k)>F.L+F.pw*.6;label(c,lt,F.X(k)+(right?-6:6),F.T+12,css('--amber'),right?'right':'left',css('--panel2'))}
  P.forEach(p=>{const bad=-p.dip>Math.max(p.limit,floor),col=bad?css('--rec'):css('--trace'),x=F.X(p.pa);
   if(p.dip_se){c.strokeStyle=col;c.lineWidth=1;c.beginPath();c.moveTo(x,F.Y(p.dip-2*p.dip_se));c.lineTo(x,F.Y(p.dip+2*p.dip_se));c.stroke()}
   dot(c,x,F.Y(p.dip),p.times>1?5:4,col);if(p.times>1)dot(c,x,F.Y(p.dip),7.5,null,col)});
- if(out)label(c,out+' more value'+(out>1?'s':'')+' outside this view',F.L+6,F.T+F.ph-6,F.dim,'left')}
+ if(out)label(c,out+' out of view',F.L+6,F.T+F.ph-6,F.dim,'left')}
 
 /* C: the averaged force after the slow-down for the values around the answer */
 function curveSet(m,res){const fe=(res&&res.fall)||{},segs=m.segments.filter(s=>s.piro&&s.piro.fall_curve&&!s.partial);if(!segs.length)return[];
@@ -1020,7 +1020,7 @@ function figCurves(cv,m,res){const set=curveSet(m,res);if(!set.length){emptyFig(
  set.forEach((s,i)=>{const t=set.length>1?i/(set.length-1):0,col=tc.startsWith('#')&&rc.startsWith('#')?mix(tc,rc,t):tc,p=s.piro;
   c.save();c.beginPath();c.rect(F.L,F.T,F.pw,F.ph);c.clip();c.strokeStyle=col;c.lineWidth=1.8;c.beginPath();C[i].forEach((v,j)=>{const x=F.X((p.start+j*p.dt)*1000),y=F.Y(v);j?c.lineTo(x,y):c.moveTo(x,y)});c.stroke();c.restore();
   const tx=fpa(s.pa);c.fillStyle=col;c.fillRect(lx,8,12,3);label(c,tx,lx+16,13,F.dim);lx+=24+c.measureText(tx).width});
- label(c,'the line',F.L+F.pw-4,F.Y(0)-5,F.dim,'right')}
+ label(c,'baseline',F.L+F.pw-4,F.Y(0)-5,F.dim,'right')}
 
 /* B: one pulse of the first value that dips: levels, baseline, the dip */
 async function figPulse(cv,m,res,cap){const fe=(res&&res.fall)||{};let e=null;
@@ -1043,35 +1043,35 @@ async function figPulse(cv,m,res,cap){const fe=(res&&res.fall)||{};let e=null;
  for(let t=w0;t+win<=w1;t+=.005){let s=0,n=0;for(let i=lb(T,t);i<T.length&&T[i]<=t+win;i++){s+=(Fv[i]-base(T[i]))/amp;n++}if(n&&(best==null||s/n<best.v))best={t,v:s/n}}
  if(best){const x0=XT(best.t),x1=XT(best.t+win),yb=F.Y(base(best.t+win/2)),yd=F.Y(base(best.t+win/2)+best.v*amp);
   c.strokeStyle=css('--rec');c.lineWidth=2;c.beginPath();c.moveTo(x0,yd);c.lineTo(x1,yd);c.stroke();c.lineWidth=1;c.beginPath();c.moveTo((x0+x1)/2,yb);c.lineTo((x0+x1)/2,yd);c.stroke();
-  label(c,best.v<0?'dip '+Math.round(-best.v*100)+'% of the step':'lowest point '+pct(best.v),x1+6,yd+4,best.v<0?css('--rec'):F.dim,'left',css('--panel2'))}
+  label(c,best.v<0?'dip '+Math.round(-best.v*100)+'%':'min '+pct(best.v),x1+6,yd+4,best.v<0?css('--rec'):F.dim,'left',css('--panel2'))}
  const xm=XT((tu+td)/2);c.strokeStyle=F.dim;c.lineWidth=1;c.beginPath();c.moveTo(xm,F.Y(ld));c.lineTo(xm,F.Y(lu));c.stroke();label(c,'step',xm+4,(F.Y(ld)+F.Y(lu))/2,F.dim);
  label(c,'baseline',XT(a0)+4,F.Y(base(a0))-6,css('--amber'));
  const bv=best?best.v:0;
- if(cap)cap.innerHTML=`PA <b>${fpa(seg.pa)}</b>, second pulse (the first is skipped). Shaded: the slow level before, the fast level, the slow level after. The dashed baseline joins the two slow levels so slow drift cancels out. `+(bv<0?`After the slow-down the force falls <b>${Math.round(-bv*100)}%</b> of the step below it at its deepest 40 ms.`:`After the slow-down the force never gets below it: even its lowest 40 ms stays <b>${Math.round(bv*100)}%</b> of the step above (still lagging).`)}
+ if(cap)cap.innerHTML=`PA <b>${fpa(seg.pa)}</b>, pulse 2. Baseline joins the slow levels. `+(bv<0?`Dip <b>${Math.round(-bv*100)}%</b> of step.`:`No dip, <b>${Math.round(bv*100)}%</b> above baseline.`)}
 
 function stepsHTML(m,res){const sr=m.search,P=res.points||[],fe=res.fall||{},L=[];const lim0=P.length?Math.round(Math.max(P[0].limit,res.floor||0)*100):3;
  if(sr&&sr.steps&&sr.steps.length){const S=sr.steps,ref=S.filter(s=>s.stage==='reference'),up=S.filter(s=>s.stage==='upper');
-  if(ref.length){const d0=ref[ref.length-1].dip;L.push(`<b>PA 0 reference.</b> No compensation, so the force cannot dip: ${d0<-.005?'it still showed a '+Math.round(-d0*100)+'% dip, which is this printer\'s noise':'its lowest point stayed '+Math.round(Math.max(0,d0)*100)+'% above the line'}. The noise limit is ${lim0}%${res.floor?' and the floor from PA 0 is '+Math.round(res.floor*100)+'%':''}.`)}
-  if(up.length)L.push(`<b>Upper limit.</b> ${up.map(s=>`${s.pa} ${s.verdict==='dips'?'dips '+pct(s.dip):'no dip'}`).join(', ')}${up[up.length-1].verdict==='dips'?': the answer is below '+up[up.length-1].pa:': no dip up to the limit'}.`);
-  const pr=S.find(s=>s.prediction!=null);if(pr)L.push(`<b>Prediction.</b> From how deep the dip is, the answer should be near ${pr.prediction}; values just above and below it were tested next (the higher one first, so slow drift does not push every value the same way).`);
-  const rest=S.filter(s=>['bracket','refine','confirm','repeat'].includes(s.stage));if(rest.length)L.push(`<b>Narrowing.</b> ${rest.map(s=>`${s.pa}${s.stage==='repeat'?' again':''} ${s.verdict==='dips'?'dips':'clean'}`).join(', ')}.`)}
- else L.push(`<b>Fixed list.</b> This run tested ${m.segments.length} values from ${Math.min(...m.segments.map(s=>s.pa))} to ${Math.max(...m.segments.map(s=>s.pa))} (before PIRO-EDGE). It is analysed the same way.`);
- if(fe.k!=null)L.push(`<b>The corner.</b> The last clean value is ${fe.k_ok} and the first that dips is ${fe.k_bad}. A ${fe.line?'straight line through '+fe.used.length+' values near the corner':'straight line between those two'} reaches 0 at <b>${fe.k.toFixed(4)}</b>.`);
- if(res.measured!=null&&res.pa!=null)L.push(`<b>Klipper value.</b> The test adds the PA push by hand, spread over your ${Math.round((res.smooth||.04)*1000)} ms smoothing window, which needs a slightly larger value than Klipper's own smoothed PA. Converted: ${res.measured} becomes <b>${res.pa}</b>.`);
- const re=res.rise||{};if(re.k!=null)L.push(`<b>Speed-up check.</b> The overshoot after the speed-up starts at ${re.k.toFixed(4)}: ${res.check==='lower'?'<span style="color:var(--amber)">below the slow-down corner, see the warning</span>':`${res.check==='agrees'?'right at':'above'} the slow-down corner (${fe.k.toFixed(4)}), as expected`}.`);
- else if(fe.k!=null)L.push('<b>Speed-up check.</b> No overshoot after the speed-up in the tested range, consistent with the answer.');
+  if(ref.length){const d0=ref[ref.length-1].dip;L.push(`<b>Reference (PA 0).</b> ${d0<-.005?'Dip '+Math.round(-d0*100)+'% (noise)':'Min '+Math.round(Math.max(0,d0)*100)+'% above baseline'}. Noise limit ${lim0}%${res.floor?', floor '+Math.round(res.floor*100)+'%':''}.`)}
+  if(up.length)L.push(`<b>Upper limit.</b> ${up.map(s=>`PA ${s.pa} ${s.verdict==='dips'?'dips '+pct(s.dip).replace('-',''):'no dip'}`).join(', ')}.`);
+  const pr=S.find(s=>s.prediction!=null);if(pr)L.push(`<b>Estimate.</b> ${(+pr.prediction).toFixed(4)} from dip depth.`);
+  const rest=S.filter(s=>['bracket','refine','confirm','repeat'].includes(s.stage));if(rest.length)L.push(`<b>Refine.</b> ${rest.map(s=>`${s.pa}${s.stage==='repeat'?' (repeat)':''} ${s.verdict==='dips'?'dip':'clean'}`).join(', ')}.`)}
+ else L.push(`<b>Fixed list.</b> ${m.segments.length} values, ${Math.min(...m.segments.map(s=>s.pa))} to ${Math.max(...m.segments.map(s=>s.pa))}.`);
+ if(fe.k!=null)L.push(`<b>Edge.</b> Clean ${fe.k_ok}, dip ${fe.k_bad}. Line fit (${fe.line?fe.used.length:2} values): <b>${fe.k.toFixed(4)}</b>.`);
+ if(res.measured!=null&&res.pa!=null)L.push(`<b>Smooth time correction (${Math.round((res.smooth||.04)*1000)} ms).</b> ${res.measured} &rarr; <b>${res.pa}</b>.`);
+ const re=res.rise||{};if(re.k!=null)L.push(`<b>Rise check.</b> Overshoot from ${re.k.toFixed(4)}, ${res.check==='lower'?'<span style="color:var(--amber)">below the edge</span>':res.check==='agrees'?'agrees':'above the edge'}.`);
+ else if(fe.k!=null)L.push('<b>Rise check.</b> No overshoot in range.');
  return`<ol class="steps">${L.map(x=>'<li>'+x+'</li>').join('')}</ol>`}
 
-function answerHTML(m,res){if(!res||res.pa==null){const st=m.status;return`<div class="answer none"><div class="side"><div class="k">PIRO-EDGE</div><div class="pav">${st==='cancelled'?'Cancelled before an answer':'No answer'}</div>
-  <div>${esc(m.error||res&&res.why||'not enough data')}</div>${res&&res.fall&&res.fall.status==='no_dip'?'<div class="small dim">The force kept lagging at every value, so the right PA is above the limit, or the pulses are not reaching the nozzle (filament slipping, a partial clog, a very soft filament). Check the filament path, then raise the PA limit in Pulses, prime and position.</div>':''}</div></div>`}
+function answerHTML(m,res){if(!res||res.pa==null){const st=m.status;return`<div class="answer none"><div class="side"><div class="k">PIRO-EDGE</div><div class="pav">${st==='cancelled'?'Cancelled':'No result'}</div>
+  <div>${esc(m.error||res&&res.why||'not enough data')}</div>${res&&res.fall&&res.fall.status==='no_dip'?'<div class="small dim">No dip at any value. Check for filament slip or a partial clog, then raise PA limit in Settings.</div>':''}</div></div>`}
  const cmd='SET_PRESSURE_ADVANCE ADVANCE='+res.pa;
- return`<div class="answer"><div><div class="k">Pressure advance for Klipper</div><div class="pav">${res.pa}<small>&plusmn; ${res.unc}</small></div></div>
-  <div class="side"><div class="row">${gradeHTML(res.grade)}<span class="small dim">${res.grade==='good'?'Ready to use. A quick print test is still a good idea.':res.grade==='fair'?'Usable. Confirm with a print test.':'Treat as a rough value and run again.'}</span></div>
-   <div class="cmdline"><code>${cmd}</code><button class="quiet cp" data-cp="${cmd}">Copy</button><button class="quiet usepick" data-pa="${res.pa}">Save as my pick</button></div>
+ return`<div class="answer"><div><div class="k">Pressure advance</div><div class="pav">${res.pa}<small>&plusmn; ${res.unc}</small></div></div>
+  <div class="side"><div class="row">${gradeHTML(res.grade)}<span class="small dim">${res.grade==='good'?'Ready to use':res.grade==='fair'?'Verify with a print':'Low confidence, repeat the test'}</span></div>
+   <div class="cmdline"><code>${cmd}</code><button class="quiet cp" data-cp="${cmd}">Copy</button><button class="quiet usepick" data-pa="${res.pa}">Set as pick</button></div>
    ${res.warnings&&res.warnings.length?`<ul class="warns">${res.warnings.map(w=>'<li>'+esc(w)+'</li>').join('')}</ul>`:''}</div></div>`}
 
-async function reanalyse(id,box,params){try{toast('Re-analysing...',30000);const m=await api('reanalyze',Object.assign({run:id},params),120000);meta[id]=m;
-  for(const k of Object.keys(segCache))if(k.startsWith(id+':'))delete segCache[k];renderRun(id,box);loadRuns();toast('Re-analysed')}catch(e){toast(e.message)}}
+async function reanalyse(id,box,params){try{toast('Analysing',30000);const m=await api('reanalyze',Object.assign({run:id},params),120000);meta[id]=m;
+  for(const k of Object.keys(segCache))if(k.startsWith(id+':'))delete segCache[k];renderRun(id,box);loadRuns();toast('Analysed')}catch(e){toast(e.message)}}
 async function openRun(id,box){let m;try{m=await api('run',{run:id},120000)}catch(e){box.textContent=e.message;return}meta[id]=m;renderRun(id,box)}
 const thumbs=[];
 function drawThumb(cv,s,res){const p=s.piro,F=p&&fig(cv,{x0:0,x1:1,y0:-.35,y1:.35,L:1,R:1,T:2,B:2,ystep:10,xticks:[]});if(!F)return;const c=F.c;
@@ -1084,9 +1084,9 @@ const resOf=m=>(m.analysis||{}).result||null;
 function runInfoHTML(m){const s=m.settings||{},n=(m.segments||[]).length,secs=(m.segments||[]).reduce((a,x)=>a+(x.duration||0),0),lm=m.leg_mm||{};
  const used=lm.fast!=null&&s.cycles?n*(lm.slow+s.cycles*(lm.fast+lm.slow))+(s.prime_length||0):null,f=(v,d)=>v==null?'-':fmt(+v,d);
  const prime=s.prime_length!=null?(s.prime_length>0?`${f(s.prime_length,0)} mm at ${f(s.prime_flow,1)} mm³/s`:'off'):(s.warmup!=null?f(s.warmup,0)+' s warm-up':'-');
- const cells=[['Nozzle temperature',m.nozzle_temp!=null?f(m.nozzle_temp,0)+' °C':'-',''],['Fast flow',`${f(s.fast_flow,1)} mm³/s · ${f(s.fast_time,2)} s`,'fst'],['Slow flow',`${f(s.slow_flow,2)} mm³/s · ${f(s.slow_time,1)} s`,'slw'],
-  ['Pulses per PA',s.cycles!=null?s.cycles+((m.analysis||{}).skip_first!==false?' (first skipped)':''):'-',''],['Prime',prime,''],['Smoothing',m.smooth_time!=null?Math.round(m.smooth_time*1000)+' ms':'-',''],
-  ['PA values tested',n+(m.search?'':' (fixed list)'),''],['Time · filament',`${fdur(secs)}${used!=null?' · '+Math.round(used)+' mm':''}`,'']];
+ const cells=[['Nozzle',m.nozzle_temp!=null?f(m.nozzle_temp,0)+' °C':'-',''],['Fast flow',`${f(s.fast_flow,1)} mm³/s · ${f(s.fast_time,2)} s`,'fst'],['Slow flow',`${f(s.slow_flow,2)} mm³/s · ${f(s.slow_time,1)} s`,'slw'],
+  ['Cycles',s.cycles!=null?s.cycles+((m.analysis||{}).skip_first!==false?' (1 skipped)':''):'-',''],['Prime',prime,''],['Smooth time',m.smooth_time!=null?Math.round(m.smooth_time*1000)+' ms':'-',''],
+  ['Duration',fdur(secs),''],['Filament',used!=null?Math.round(used)+' mm':'-','']];
  return`<div class="rinfo">${cells.map(([k,v,c])=>`<div class="${c}">${k}<b class="num">${esc(v)}</b></div>`).join('')}</div>`}
 function renderRun(id,box){const m=meta[id],st=m.settings||{},test=m.kind==='test',res=test?resOf(m):null;
  const near=m.pa_pick!=null&&test&&m.segments.length?m.segments.reduce((a,b)=>Math.abs(b.pa-m.pa_pick)<Math.abs(a.pa-m.pa_pick)?b:a).idx:null;
@@ -1095,23 +1095,23 @@ function renderRun(id,box){const m=meta[id],st=m.settings||{},test=m.kind==='tes
   ${test?answerHTML(m,res):''}
   ${test?runInfoHTML(m):''}
   ${m.error&&test&&res&&res.pa!=null?`<div style="color:var(--amber);margin-bottom:8px">${esc(m.error)}</div>`:''}
-  ${test?`<div class="how"><h3>${res&&res.pa!=null?'How the value was chosen':'What the test saw'}</h3>${res?stepsHTML(m,res):''}
+  ${test?`<div class="how"><h3>${res&&res.pa!=null?'Analysis':'Analysis'}</h3>${res?stepsHTML(m,res):''}
    <div class="figs">
-    ${m.search&&m.search.steps&&m.search.steps.length?`<figure><div class="ft">1. Search path</div><canvas class="fig f-path" style="height:200px"></canvas><figcaption>Each dot is one PA value in the order it was tested: teal = clean, red = the force dipped below the line. The grey band is where the answer could still be; it shrinks with every value. Amber ticks are the predictions.</figcaption></figure>`
-     :`<figure><div class="ft">1. Every value tested</div><canvas class="fig f-path" style="height:200px"></canvas><figcaption>This run tested a fixed list (made before PIRO-EDGE), so there is no search path. Dip after the slow-down at every value: teal = clean, red = below the noise limit.</figcaption></figure>`}
-    <figure><div class="ft">2. One pulse, measured</div><canvas class="fig f-pulse" style="height:200px"></canvas><figcaption class="cap-pulse">Loading the raw data</figcaption></figure>
-    <figure><div class="ft">3. After the slow-down</div><canvas class="fig f-curves" style="height:200px"></canvas><figcaption>Force after the slow-down as a share of the step, the median of every pulse at each PA value. Too much PA pulls the force below the line; the red dashed line is the noise limit.</figcaption></figure>
-    <figure><div class="ft">4. Dip against PA</div><canvas class="fig f-dips" style="height:200px"></canvas><figcaption>The deepest dip at every PA value (bars: &plusmn;2 standard errors, ringed: measured twice). The amber line through the values near the corner reaches 0 at the answer${res&&res.measured!=null?', before the conversion to Klipper\'s smoothing':''}.</figcaption></figure>
+    ${m.search&&m.search.steps&&m.search.steps.length?`<figure><div class="ft">Search path</div><canvas class="fig f-path" style="height:200px"></canvas><figcaption>Teal: clean. Red: dip. Grey band: remaining range. Amber: estimates.</figcaption></figure>`
+     :`<figure><div class="ft">Tested values</div><canvas class="fig f-path" style="height:200px"></canvas><figcaption>Fixed list (pre PIRO-EDGE run). Teal: clean. Red: below the noise limit.</figcaption></figure>`}
+    <figure><div class="ft">Pulse trace</div><canvas class="fig f-pulse" style="height:200px"></canvas><figcaption class="cap-pulse">Loading</figcaption></figure>
+    <figure><div class="ft">Slow-down response</div><canvas class="fig f-curves" style="height:200px"></canvas><figcaption>Median per PA value, as a fraction of the step. Red dashed: noise limit.</figcaption></figure>
+    <figure><div class="ft">Dip vs PA</div><canvas class="fig f-dips" style="height:200px"></canvas><figcaption>&plusmn;2 SE, ringed: tested twice. Amber: line fit${res&&res.measured!=null?' before smooth time correction':''}.</figcaption></figure>
    </div></div>
-   <h3 style="font-size:14px;margin:18px 0 4px">Every PA value</h3><div class="small dim">Force after the slow-down at each value; click one to see its full trace below.</div>`:''}
+   <h3 style="font-size:14px;margin:18px 0 4px">All PA values</h3><div class="small dim">Click to open the trace.</div>`:''}
   <div class="grid">${m.segments.map(s=>{const p=s.piro,bad=p&&-p.dip>limOf(s);return`<div class="pa card ${test&&p?(bad?'dip':'ok'):''} ${s.idx===near?'pick':''}" data-i="${s.idx}" role="button" tabindex="0" aria-pressed="false" title="${s.samples} samples${s.partial?', partial':''}">
-   <canvas></canvas><div class="t num"><b>${test?fpa(s.pa):fdur(s.duration||0)}</b><span class="m">${s.idx===near?'your pick':s.stage?(SHORT[s.stage]||esc(s.stage)):''}</span></div>
+   <canvas></canvas><div class="t num"><b>${test?fpa(s.pa):fdur(s.duration||0)}</b><span class="m">${s.idx===near?'pick':s.stage?(SHORT[s.stage]||esc(s.stage)):''}</span></div>
    <div class="m num">${test&&p?'dip '+pct(p.dip):'&nbsp;'}</div>
    ${test?`<button class="add quiet" data-add="${s.idx}" aria-pressed="${inCmp(id,s.idx)}" title="Add to Compare">+</button>`:''}</div>`}).join('')}</div>
-  <div class="tagrow"><label class="f" style="width:130px">Your PA pick<input class="pick" value="${esc(m.pa_pick??'')}" placeholder="e.g. 0.045"></label>
+  <div class="tagrow"><label class="f" style="width:130px">Pick<input class="pick" value="${esc(m.pa_pick??'')}" placeholder="e.g. 0.045"></label>
    <label class="f" style="width:180px">Name<input class="nm" value="${esc(m.name)}"></label>
-   ${test?`<label class="f" style="width:120px">First pulse<select class="o-skip"><option value="1"${(m.analysis||{}).skip_first!==false?' selected':''}>Skip</option><option value="0"${(m.analysis||{}).skip_first===false?' selected':''}>Use</option></select></label><button class="o-run" title="Run the analysis again on the raw data">Re-analyse</button>`:''}
-   <span class="sp"></span><button class="save">Save</button><button class="exp" title="Download this run as one file (all samples, settings and notes)">Export run</button><button class="del danger quiet">Delete run</button></div>
+   ${test?`<label class="f" style="width:120px">First pulse<select class="o-skip"><option value="1"${(m.analysis||{}).skip_first!==false?' selected':''}>Skip</option><option value="0"${(m.analysis||{}).skip_first===false?' selected':''}>Use</option></select></label><button class="o-run" title="Analyse again">Re-analyse</button>`:''}
+   <span class="sp"></span><button class="save">Save</button><button class="exp" title="Download run (.palc.json)">Export run</button><button class="del danger quiet">Delete run</button></div>
   <label class="f" style="margin-top:8px">Notes<textarea class="notes">${esc(m.notes)}</textarea></label>
   <details class="raw"><summary>Run settings</summary><div class="kv">${[['Nozzle',m.nozzle_temp!=null?m.nozzle_temp+' °C':'-'],['Smooth time',m.smooth_time!=null?Math.round(m.smooth_time*1000)+' ms':'-'],...Object.entries(st)].map(([k,v])=>`<span>${esc(k)} <b>${esc(v)}</b></span>`).join('')}</div></details>`;
  $$('.pa',box).forEach((el,i)=>{const s=m.segments[i],cv=el.querySelector('canvas');if(s.piro){thumbs.push([cv,s,res])}else cv.style.visibility='hidden';
@@ -1122,7 +1122,7 @@ function renderRun(id,box){const m=meta[id],st=m.settings||{},test=m.kind==='tes
  if(test){drawFigs(box,m,res);
   box.querySelector('.o-run').onclick=()=>reanalyse(id,box,{skip_first:box.querySelector('.o-skip').value==='1'?1:0});
   $$('.cp',box).forEach(b=>b.onclick=async()=>{try{await navigator.clipboard.writeText(b.dataset.cp);toast('Copied')}catch{toast(b.dataset.cp)}});
-  $$('.usepick',box).forEach(b=>b.onclick=async()=>{box.querySelector('.pick').value=b.dataset.pa;try{await api('tag',{run:id,pa_pick:b.dataset.pa});toast('Saved as your pick');loadRuns()}catch(e){toast(e.message)}})}
+  $$('.usepick',box).forEach(b=>b.onclick=async()=>{box.querySelector('.pick').value=b.dataset.pa;try{await api('tag',{run:id,pa_pick:b.dataset.pa});toast('Pick saved');loadRuns()}catch(e){toast(e.message)}})}
  box.querySelector('.save').onclick=async()=>{try{await api('tag',{run:id,pa_pick:box.querySelector('.pick').value.trim(),notes:box.querySelector('.notes').value,name:box.querySelector('.nm').value});toast('Saved');loadRuns()}catch(e){toast(e.message)}};
  box.querySelector('.exp').onclick=()=>exportRun(id);
  box.querySelector('.del').onclick=async()=>{if(confirm('Delete '+m.name+'? This cannot be undone. Export it first if you may need it.'))try{await api('delete',{run:id});if(cur&&cur.id===id){cur=null;$('#viewer').hidden=true}loadRuns()}catch(e){toast(e.message)}};
@@ -1134,16 +1134,16 @@ function drawFigs(box,m,res){openFigs.set(box,[m,res]);const q=s=>box.querySelec
 function redrawFigs(){for(const[box,[m,res]]of openFigs){if(!box.isConnected){openFigs.delete(box);continue}drawFigs(box,m,res)}}
 /* ---- export / import ---- */
 const safeName=s=>String(s||'').trim().replace(/[^\w.-]+/g,'_').replace(/^_+|_+$/g,'');
-async function exportRun(id){try{toast('Preparing file...');const d=await api('export',{run:id},120000),m=d.meta||{};
+async function exportRun(id){try{toast('Preparing file');const d=await api('export',{run:id},120000),m=d.meta||{};
   const name=[safeName(m.name)||('Run_'+id),safeName(m.filament)].filter(Boolean).join('_')+'.palc.json';
   const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(d)],{type:'application/json'}));a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),4000);toast('Saved '+name)}
  catch(e){toast('Export failed: '+e.message)}}
 const CHUNK=512*1024;
 async function importFile(file){if(!file)return;try{const text=await file.text();let ok=false;try{ok=JSON.parse(text).format==='pa_loadcell_run'}catch{}
-  if(!ok){toast('That is not a run file exported from this page');return}
+  if(!ok){toast('Not a run file');return}
   const{token}=await api('import_begin');const n=Math.ceil(text.length/CHUNK);
   for(let i=0;i<n;i++){toast(`Uploading ${Math.round((i+1)/n*100)}%`,60000);await api('import_chunk',{token,seq:i,data:text.slice(i*CHUNK,(i+1)*CHUNK)},30000)}
-  toast('Analysing...',60000);const r=await api('import_end',{token},120000);toast('Imported as Run '+r.run,6000);cur=null;await loadRuns();
+  toast('Analysing',60000);const r=await api('import_end',{token},120000);toast('Imported as Run '+r.run,6000);cur=null;await loadRuns();
   const d=$(`#runs details[data-id="${r.run}"]`);if(d){d.open=true;d.scrollIntoView({block:'nearest',behavior:'smooth'})}}
  catch(e){toast('Import failed: '+e.message,8000)}}
 $('#importBtn').onclick=()=>$('#importFile').click();$('#importFile').onchange=e=>{importFile(e.target.files[0]);e.target.value=''};
@@ -1181,7 +1181,7 @@ function drawViewer(){if(!cur)return;const{seg,m,idx}=cur;$$('#vmode button').fo
   hv.d={static:true,series:series.concat(cmdS),legend:cmdLegend(cmdS.length>0),vlines:[{t:0,color:css('--dim'),label:vedge==='rise'?'speed up':'slow down'}],unit,dec:1,tfmt:t=>(t*1000).toFixed(0)+' ms'};hv.render();
   const ov=vedge==='rise'?'overshoot':'dip below the line';
   const oz=sm&&sm.piro?(vedge==='fall'?` PIRO-EDGE: dip ${pct(sm.piro.dip)} against a ${Math.round(sm.piro.limit*100)}% noise limit.`:sm.piro.over!=null?` PIRO-EDGE: overshoot ${pct(sm.piro.over)}.`:''):'';
-  $('#vinfo').innerHTML=e?`${e.n} edges averaged${e.skipped_first?' (first pulse skipped)':''}.${oz} 10-90% ${vedge==='rise'?'rise':'fall'} <b>${e.rise!=null?Math.round(e.rise*1000)+' ms':'not reached'}</b>, ${ov} <b>${Math.round(e.overshoot*100)}%</b>, signal to noise ${e.snr??'-'}.${cmdS.length?' Dashed: an ideal instant step.':''}`:'Not enough data for this edge.'}}
+  $('#vinfo').innerHTML=e?`${e.n} edges averaged${e.skipped_first?' (first pulse skipped)':''}.${oz} 10-90% ${vedge==='rise'?'rise':'fall'} <b>${e.rise!=null?Math.round(e.rise*1000)+' ms':'not reached'}</b>, ${ov} <b>${Math.round(e.overshoot*100)}%</b>, signal to noise ${e.snr??'-'}.${cmdS.length?' Dashed: an ideal instant step.':''}`:'Not enough data'}}
 /* dashed "what the extruder was told" for a recorded PA value */
 function delayOf(m){return DELAYMODE==='adj'?((m.analysis||{}).offset||0):0}
 function segCommand(m,seg,sm){const fl=m.flows||(m.settings&&m.settings.fast_flow!=null?{fast:m.settings.fast_flow,slow:m.settings.slow_flow}:null);
@@ -1212,7 +1212,7 @@ async function renderCmp(){$('#nCmp').textContent=cmp.length;$$('#cmode button')
  $('#cedge').style.display=cmode==='edge'?'':'none';$('#calign').hidden=cmode!=='raw';
  $('#legend').innerHTML=cmp.map((e,i)=>`<button data-i="${i}" title="Remove"><i style="background:${PAL[i%PAL.length]}"></i>${esc(e.label)} &times;</button>`).join('');
  $$('#legend button').forEach(b=>b.onclick=()=>{cmp.splice(+b.dataset.i,1);renderCmp();$$('.pa .add').forEach(a=>{const r=a.closest('details');a.setAttribute('aria-pressed',inCmp(+r.dataset.id,+a.dataset.add))})});
- if(!cmp.length){cchart.set({series:[],empty:'Open History, then press + on any PA value to add it here.'});$('#ctable').innerHTML='';return}
+ if(!cmp.length){cchart.set({series:[],empty:'Press + on a PA value in History to add it.'});$('#ctable').innerHTML='';return}
  if(cmode==='edge'){const series=cmp.map((e,i)=>{const d=e.edge&&e.edge[cedge];return d?{t:d.t,f:d.y,color:PAL[i%PAL.length],name:e.label,w:2}:null}).filter(Boolean);
   const top=Math.max(1.6,...cmp.map(e=>{const d=e.edge&&e.edge[cedge];return d?1.1+(d.overshoot||0):0}));
   let extra=[];const m0=meta[cmp[0].id]||{};
@@ -1220,7 +1220,7 @@ async function renderCmp(){$('#nCmp').textContent=cmp.length;$$('#cmode button')
    extra=commandSeries([{t0:-(d0.pre??.3),t1:0,flow:0},{t0:0,t1:d0.post??.3,flow:1}],{offset:0,gain:1},{shift:delayOf(m0)}).filter(x=>x.name==='command');
    if(SHOWCMD&&SHOWPUSH)cmp.forEach((e,i)=>{const d=e.edge&&e.edge[cedge];if(!d)return;const mm=meta[e.id]||{};
     const ps=commandSeries([{t0:-(d.pre??.3),t1:0,flow:0},{t0:0,t1:d.post??.3,flow:1,pa:e.pa}],{offset:0,gain:1},{shift:delayOf(mm),smooth:mm.smooth_time,pushColor:PAL[i%PAL.length]}).filter(x=>x.name!=='command');extra=extra.concat(ps)})}
-  cchart.set({series:series.concat(extra),legend:cmdLegend(extra.length>0),vlines:[{t:0,color:css('--dim')}],y0:-.3,y1:top,invert:INVERT,dec:2,tfmt:t=>(t*1000).toFixed(0)+' ms',empty:'These runs have no edge data.'})}
+  cchart.set({series:series.concat(extra),legend:cmdLegend(extra.length>0),vlines:[{t:0,color:css('--dim')}],y0:-.3,y1:top,invert:INVERT,dec:2,tfmt:t=>(t*1000).toFixed(0)+' ms',empty:'No edge data'})}
  else{try{const al=$('#calign').value,segs=await Promise.all(cmp.map(e=>getSeg(e.id,e.idx)));
    let extra=[];const series=cmp.map((e,i)=>{const sg=segs[i];let sh=0;if(al==='fast'){const f=(sg.markers||[]).find(k=>k.name==='fast');if(f)sh=f.t0}
     const mm=meta[e.id]||{},sm=(mm.segments||[]).find(x=>x.idx===e.idx),cs=segCommand(mm,Object.assign({},sg,{markers:(sg.markers||[]).map(k=>Object.assign({},k,{t0:k.t0-sh,t1:k.t1-sh}))}),sm);

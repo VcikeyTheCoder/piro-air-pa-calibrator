@@ -68,9 +68,9 @@ class SampleBus:
             return
         name, lc = self._find()
         if lc is None:
-            raise PAError("no load cell found: add [load_cell] or "
-                          "[load_cell_probe] (looked for '%s', 'load_cell' "
-                          "and 'load_cell_probe')" % self.lc_name)
+            raise PAError("No load cell found. Add [load_cell] or "
+                          "[load_cell_probe] (looked for '%s', 'load_cell', "
+                          "'load_cell_probe')" % self.lc_name)
         self.lc, self.source = lc, name
         self.tare_name = getattr(lc, 'name', None)
         self.gen += 1

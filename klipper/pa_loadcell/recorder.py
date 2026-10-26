@@ -20,7 +20,7 @@ class ManualRecorder:
 
     def start(self, label=''):
         if self.active:
-            raise PAError("already recording")
+            raise PAError("Already recording")
         self.buf, self.label, self.auto_stopped = [], label, False
         self.marks = []
         self.active = True
@@ -38,7 +38,7 @@ class ManualRecorder:
 
     def mark(self, text=''):
         if not self.active or not self.buf:
-            raise PAError("start recording first")
+            raise PAError("Not recording")
         self.marks.append((self.buf[-1][0], text))
 
     def elapsed(self):
@@ -46,11 +46,11 @@ class ManualRecorder:
 
     def stop(self):
         if not self.active:
-            raise PAError("not recording")
+            raise PAError("Not recording")
         self.active = False
         self.bus.unsubscribe(self._on)
         if not self.buf:
-            raise PAError("no samples were received from the load cell")
+            raise PAError("No load cell samples received")
         t0 = self.buf[0][0]
         pa, temp = self._pa_and_temp()
         marks = [{'name': 'mark', 'label': txt or 'mark #%d' % (i + 1),

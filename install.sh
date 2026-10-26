@@ -44,17 +44,17 @@ klipper_service() {
 }
 
 restart_services() {
-  [ "${NO_RESTART:-0}" = 1 ] && { warn "NO_RESTART=1: restart Klipper, Moonraker and nginx yourself"; return; }
+  [ "${NO_RESTART:-0}" = 1 ] && { warn "NO_RESTART=1: restart Klipper, Moonraker and nginx manually"; return; }
   if [ -f "$NGINX_SITE" ] && command -v nginx >/dev/null; then
-    if $SUDO nginx -t >/dev/null 2>&1; then $SUDO systemctl reload nginx; else warn "nginx -t failed; not reloading"; fi
+    if $SUDO nginx -t >/dev/null 2>&1; then $SUDO systemctl reload nginx; else warn "nginx -t failed, nginx not reloaded"; fi
   fi
   local svc
   if [ "$RESTART_MOONRAKER" = 1 ] && svc="$(find_service moonraker)"; then
-    say "Restarting $svc"; $SUDO systemctl restart "$svc" || warn "could not restart $svc"
+    say "Restarting $svc"; $SUDO systemctl restart "$svc" || warn "Restart failed: $svc"
   fi
   if svc="$(klipper_service)"; then
-    say "Restarting $svc"; $SUDO systemctl restart "$svc" || warn "could not restart $svc"
-  else warn "No Klipper service found: run FIRMWARE_RESTART in the Mainsail console"; fi
+    say "Restarting $svc"; $SUDO systemctl restart "$svc" || warn "Restart failed: $svc"
+  else warn "Klipper service not found. Run FIRMWARE_RESTART"; fi
 }
 
 nginx_remove() {
@@ -79,7 +79,7 @@ PY
     sed -i "/$MARK begin/,/$MARK end/d" "$MOONRAKER_CONF"; RESTART_MOONRAKER=1
   fi
   restart_services
-  say "Done. Config ($CONFIG_DIR/pa_loadcell.cfg) and recorded data (~/printer_data/pa_loadcell) were kept."
+  say "Done. Kept $CONFIG_DIR/pa_loadcell.cfg and ~/printer_data/pa_loadcell"
   exit 0
 fi
 
@@ -97,7 +97,7 @@ fi
 say "Installing config"
 CFG="$CONFIG_DIR/pa_loadcell.cfg"
 if [ -f "$CFG" ]; then
-  say "Updating $CFG (your positions and choices are kept)"
+  say "Updating $CFG (existing values kept)"
   cp "$CFG" "$CFG.bak-pa_loadcell"
   python3 - "$CFG" "$REPO/klipper/pa_loadcell.cfg" <<'PY'
 import re, sys
@@ -131,16 +131,16 @@ if add:
         lines.pop()
     lines += ['# added by install.sh'] + add + ['']
 open(cfg, 'w').write('\n'.join(lines))
-print('    obsolete options commented out, new options added: %s' % (', '.join(key(l) for l in add) or 'none'))
-print('    moved to the new defaults: %s' % (', '.join(moved) or 'none'))
+print('    added: %s' % (', '.join(key(l) for l in add) or 'none'))
+print('    updated to new defaults: %s' % (', '.join(moved) or 'none'))
 PY
 else
   cp "$REPO/klipper/pa_loadcell.cfg" "$CFG"
   LC_SEC="$(grep -rhE '^\[load_cell(_probe)?( [^]]+)?\]' "$CONFIG_DIR" --include='*.cfg' 2>/dev/null | head -n1 | tr -d '[]' || true)"
   if [ -n "$LC_SEC" ]; then
-    sed -i "s|^load_cell:.*|load_cell: $LC_SEC|" "$CFG"; say "Detected load cell section: [$LC_SEC]"
+    sed -i "s|^load_cell:.*|load_cell: $LC_SEC|" "$CFG"; say "Load cell section: [$LC_SEC]"
   else
-    warn "No [load_cell] section found in $CONFIG_DIR: set 'load_cell:' in pa_loadcell.cfg"
+    warn "No [load_cell] section in $CONFIG_DIR. Set load_cell: in pa_loadcell.cfg"
   fi
 fi
 
@@ -184,14 +184,14 @@ PY
 if [ -f "$MOONRAKER_CONF" ]; then
   if grep -q "$MARK begin" "$MOONRAKER_CONF"; then echo "    update manager already configured"
   else
-    say "Adding Update button to Mainsail (Machine page)"
+    say "Adding Moonraker update entry"
     cp "$MOONRAKER_CONF" "$MOONRAKER_CONF.bak-pa_loadcell"
     ORIGIN="$(git -C "$REPO" remote get-url origin 2>/dev/null || true)"
     if [ -n "$ORIGIN" ]; then
       printf '\n%s begin\n[update_manager pa_loadcell]\ntype: git_repo\npath: %s\norigin: %s\nprimary_branch: main\nmanaged_services: klipper\n%s end\n' \
         "$MARK" "$REPO" "$ORIGIN" "$MARK" >> "$MOONRAKER_CONF"
       RESTART_MOONRAKER=1
-    else warn "Repo has no git origin: skipped the Update button"; fi
+    else warn "No git origin. Update entry skipped"; fi
   fi
 fi
 
@@ -203,7 +203,7 @@ if [ -f "$NGINX_SITE" ]; then
     $SUDO sed -i "0,/^[[:space:]]*server[[:space:]]*{/s||&\n    $MARK begin\n    location /loadcell/ { alias $UI_DIR/; index index.html; }\n    $MARK end|" "$NGINX_SITE"
   fi
 else
-  warn "nginx site $NGINX_SITE not found: serve $UI_DIR yourself (see README)"
+  warn "nginx site $NGINX_SITE not found. Serve $UI_DIR manually"
 fi
 
 restart_services

@@ -24,12 +24,12 @@ def _slug(s):
 def clean(obj):
     """Validated copy of a theme dict, or PAError."""
     if not isinstance(obj, dict):
-        raise PAError("not a theme file")
+        raise PAError("Not a theme file")
     if obj.get('format', FORMAT) != FORMAT:
-        raise PAError("not a PIRO-EDGE theme file")
+        raise PAError("Not a PIRO-EDGE theme file")
     name = str(obj.get('name') or '').strip()[:40]
     if not name:
-        raise PAError("the theme needs a name")
+        raise PAError("Theme name missing")
     base = obj.get('base', 'piro')
     if base not in LAYOUTS:
         raise PAError("base must be one of: %s" % ', '.join(LAYOUTS))
@@ -42,11 +42,11 @@ def clean(obj):
     out = {}
     for k, v in toks.items():
         if k not in TOKENS:
-            raise PAError("unknown token '%s'" % k)
+            raise PAError("Unknown token '%s'" % k)
         v = str(v).strip()
         low = v.lower()
         if not _VALUE.match(v) or 'url' in low or 'expression' in low:
-            raise PAError("token '%s' has a value that is not allowed" % k)
+            raise PAError("Token '%s' value not allowed" % k)
         out[k] = v
     return {'format': FORMAT, 'version': 1, 'id': _slug(obj.get('id') or name),
             'name': name, 'base': base, 'mode': mode,
@@ -72,7 +72,7 @@ class ThemeStore:
 
     def save(self, obj):
         if len(json.dumps(obj)) > MAX_BYTES:
-            raise PAError("theme file too large")
+            raise PAError("Theme file too large")
         t = clean(obj)
         if t['id'] in LAYOUTS:
             t['id'] += '-custom'

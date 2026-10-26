@@ -368,7 +368,7 @@ def test_upper_limit_steps_up_then_fails():
     # gives up after PA_LIMIT
     p, bus, store, r = make()
     try: r.run(Gcmd(), S(prime_length=0)); assert False
-    except PAError as e: assert 'no dip up to PA 0.200' in str(e), e
+    except PAError as e: assert 'No dip up to PA 0.200' in str(e), e
     m = store.get_run(1)
     assert m['status'] == 'error'
     assert [x['pa'] for x in m['segments']] == [0.0, 0.1, 0.12, 0.14, 0.16,
@@ -387,13 +387,13 @@ def test_safety():
     p, bus, store, r = make()
     try: r.run(Gcmd(), S(max_filament=100)); assert False
     except PAError as e: assert 'MAX_FILAMENT' in str(e), e
-    for kw, msg in ((dict(temp=150.0), 'nozzle'), (dict(z=5.0), 'Z must')):
+    for kw, msg in ((dict(temp=150.0), 'min_temp'), (dict(z=5.0), 'Z must')):
         p, bus, store, r = make(**kw)
         try: r.run(Gcmd(), S()); assert False
         except PAError as e: assert msg in str(e), e
     p, bus, store, r = make(); p.objs.pop('load_cell')
     try: r.run(Gcmd(), S()); assert False
-    except PAError as e: assert 'load cell' in str(e)
+    except PAError as e: assert 'load cell' in str(e).lower()
     # artificial PA needs no max_extrude_cross_section ...
     p, bus, store, r = make(tau=0.045); p.objs['toolhead'].ext.max_extrude_ratio = 0.3
     assert store.get_run(r.run(Gcmd(), S()))['status'] == 'complete'
@@ -520,7 +520,7 @@ def test_piro_pick_rule():
     assert 0.05 <= analysis.piro_pick(segs)['pa'] <= 0.06
     # never dips: no answer, says the answer is higher
     r = analysis.piro_pick(_pts([(0.0, 0.02), (0.05, 0.01), (0.1, 0.0)]))
-    assert r['pa'] is None and 'higher' in r['why'], r
+    assert r['pa'] is None and 'No dip up to' in r['why'], r
     # a dip at PA 0 raises the floor (OznLab rule): 0.06 at -4 % is not a dip
     segs = _pts([(0.0, -0.03), (0.04, 0.0), (0.06, -0.04), (0.08, -0.2), (0.1, -0.4)])
     assert analysis.piro_pick(segs)['fall']['k_bad'] == 0.08

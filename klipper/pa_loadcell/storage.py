@@ -199,18 +199,17 @@ class RunStore:
 
     def import_run(self, data):
         if not isinstance(data, dict) or data.get('format') != EXPORT_FORMAT:
-            raise PAError("not a PA load cell run file")
+            raise PAError("Not a run file")
         if int(data.get('version', 0)) > EXPORT_VERSION:
-            raise PAError("this file was made by a newer version; update "
-                          "the plugin first")
+            raise PAError("Run file from a newer version. Update the plugin")
         meta, segs = data.get('meta'), data.get('segments')
         if not isinstance(meta, dict) or not isinstance(segs, list):
-            raise PAError("run file is incomplete")
+            raise PAError("Run file incomplete")
         for sg in segs:
             if not (isinstance(sg, dict) and isinstance(sg.get('t'), list)
                     and isinstance(sg.get('f'), list)
                     and len(sg['t']) == len(sg['f'])):
-                raise PAError("run file has a damaged segment")
+                raise PAError("Run file has a damaged segment")
         rid = max(self._ids(), default=0) + 1
         os.makedirs(self._dir(rid))
         try:

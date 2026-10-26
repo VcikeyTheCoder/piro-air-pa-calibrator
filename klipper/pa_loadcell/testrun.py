@@ -117,26 +117,26 @@ class PATestRunner:
         now = self.reactor.monotonic()
         L = self.limits
         if not self.bus.available():
-            raise PAError("no load cell found (check [load_cell])")
+            raise PAError("Load cell not found. Check load_cell: in [pa_loadcell]")
         st = self.toolhead.get_status(now)
         homed = st.get('homed_axes', '')
         if not all(a in homed for a in 'xyz'):
-            raise PAError("home all axes first (G28)")
+            raise PAError("Must home all axes first")
         z = self.toolhead.get_position()[2]
         if abs(z - L['required_z']) > L['z_tol']:
-            raise PAError("Z must be at %.1f mm (now %.2f)"
+            raise PAError("Z must be at required_z %.1f mm (now %.2f mm)"
                           % (L['required_z'], z))
         ext = self.toolhead.get_extruder()
         temp = ext.get_status(now).get('temperature', 0.)
         if temp < L['min_temp']:
-            raise PAError("nozzle %.0fC is below the %.0fC minimum"
+            raise PAError("Extruder %.0f °C below min_temp %.0f °C"
                           % (temp, L['min_temp']))
         area = filament_area(ext)
         used = s.filament_mm(area)
         if used > s.max_filament:
-            raise PAError("this test could use up to %.0f mm of filament, above "
-                          "MAX_FILAMENT %.0f mm: lower CYCLES, FAST_TIME or "
-                          "FAST_FLOW, or raise MAX_FILAMENT"
+            raise PAError("Test needs up to %.0f mm of filament, MAX_FILAMENT "
+                          "is %.0f mm. Lower CYCLES, FAST_TIME or FAST_FLOW, "
+                          "or raise MAX_FILAMENT"
                           % (used, s.max_filament))
         vmax = getattr(ext, 'max_e_velocity', None)
         sm = self.window(ext)
@@ -144,20 +144,20 @@ class PATestRunner:
                            ('SLOW_FLOW', s.slow_flow),
                            ('PRIME_FLOW', s.prime_flow)):
             if vmax is not None and flow / area > vmax:
-                raise PAError("%s %.1f mm3/s needs %.1f mm/s of filament, above "
+                raise PAError("%s %.1f mm3/s needs %.1f mm/s, above "
                               "max_extrude_only_velocity %.1f"
                               % (name, flow, flow / area, vmax))
         v = s.charge_speed(s.pa_max, area, s.fast_flow, s.slow_flow, sm)
         if vmax is not None and v > vmax:
-            raise PAError("artificial PA %.3f needs a %.0f mm/s charge move, "
-                          "above max_extrude_only_velocity %.1f: lower PA_MAX "
+            raise PAError("PA_MAX %.3f needs a %.0f mm/s charge move, above "
+                          "max_extrude_only_velocity %.1f. Lower PA_MAX "
                           "or FAST_FLOW" % (s.pa_max, v, vmax))
         lo, hi = st.get('axis_minimum'), st.get('axis_maximum')
         if lo is not None:
             for name, (x, y) in (("park", (s.park_x, s.park_y)),
                                  ("test", (s.test_x, s.test_y))):
                 if not (lo[0] <= x <= hi[0] and lo[1] <= y <= hi[1]):
-                    raise PAError("%s position outside the axis limits" % name)
+                    raise PAError("%s position outside axis limits" % name)
         return temp, area
 
     @staticmethod
@@ -171,7 +171,7 @@ class PATestRunner:
     # -- main ---------------------------------------------------------
     def run(self, gcmd, s):
         if self.state != 'idle':
-            raise PAError("a test is already running")
+            raise PAError("Test already running")
         temp, area = self.precheck(s)
         self.state, self.cancel_flag, self.progress = 'running', False, 0.0
         self.started = self.reactor.monotonic()
@@ -206,7 +206,7 @@ class PATestRunner:
                 status = 'cancelled'
         except Exception as e:
             status, err = 'error', str(e)
-            gcmd.respond_info("PA_LOADCELL_TEST stopped: %s" % err)
+            gcmd.respond_info("PA_LOADCELL_TEST aborted: %s" % err)
         finally:
             self._cleanup(s, orig_pa, saved, col)
             self.store.finalize(self.run_id, status, err)
@@ -273,7 +273,7 @@ class PATestRunner:
         th = self.toolhead
         fil = s.per_pa_mm(area)
         if self.used + fil > s.max_filament - s.prime_length + 1e-6:
-            raise PAError("stopped at MAX_FILAMENT (%.0f mm)" % s.max_filament)
+            raise PAError("Stopped at MAX_FILAMENT %.0f mm" % s.max_filament)
         self.used += fil
         self.current_pa = pa
         if s.rest_time > 0:
@@ -372,15 +372,15 @@ class PATestRunner:
             k = round(k, 5)
             if vmax is not None and s.charge_speed(
                     k, area, s.fast_flow, s.slow_flow, sm) > vmax:
-                raise PAError("PA %.3f needs a faster artificial PA charge "
-                              "move than max_extrude_only_velocity %.1f "
-                              "allows: lower FAST_FLOW" % (k, vmax))
+                raise PAError("PA %.3f charge move exceeds "
+                              "max_extrude_only_velocity %.1f. "
+                              "Lower FAST_FLOW" % (k, vmax))
             idx, sc = self._measure(ctx, k, stage, repeat)
             if sc is None:
                 if self.cancel_flag:
                     raise _Cancelled()
-                raise PAError("no pressure step at PA %.4f: filament "
-                              "loaded and the nozzle hot?" % k)
+                raise PAError("No pressure step at PA %.4f. Check filament "
+                              "and nozzle temperature" % k)
             segs.append({'idx': idx, 'pa': k, 'piro': sc})
             p = point(k)
             lim = max(p['limit'], st['floor'])
@@ -408,11 +408,11 @@ class PATestRunner:
         try:
             # 1. reference
             for attempt in range(3):
-                say("PA 0 reference%s" % (" (again)" if attempt else ""))
+                say("reference PA 0%s" % (" (repeat)" if attempt else ""))
                 measure(0., 'reference', attempt > 0)
                 if segs[-1]['piro']['spread'] <= 1.35:
                     break
-                say("pressure step not steady yet, one more reference")
+                say("pressure step not settled, repeating reference")
             st['floor'] = analysis.floor_from_zero(point(0.)['dip'])
             self.search['floor'] = round(st['floor'], 4)
             # 2. upper limit
@@ -420,10 +420,8 @@ class PATestRunner:
             while not measure(k, 'upper'):
                 k = round(k + s.upper_step, 5)
                 if k > s.pa_limit + 1e-9:
-                    raise PAError("no dip up to PA %.3f: the force never "
-                                  "falls below the line after a slow-down. "
-                                  "Check the filament path, or raise "
-                                  "PA_LIMIT" % (k - s.upper_step))
+                    raise PAError("No dip up to PA %.3f. Check the filament "
+                                  "path or raise PA_LIMIT" % (k - s.upper_step))
             # 3. predict and bracket (higher value first)
             for _ in range(3):
                 k_ok, k_bad, pts = bracket()
@@ -435,7 +433,7 @@ class PATestRunner:
                 self.search['prediction'] = round(pred, 5)
                 if k_ok > 0 and gap <= max(0.006, 0.12 * pred):
                     break
-                say("prediction %.4f, testing around it" % pred)
+                say("estimate %.4f" % pred)
                 d = max(0.004, 0.1 * pred)
                 for x in (pred + d, pred - d):
                     x = snap(x)
@@ -465,7 +463,7 @@ class PATestRunner:
                      < 0.5 * max(p['limit'], st['floor'])]
             close.sort(key=lambda p: abs(p['pa'] - 0.5 * (k_ok + k_bad)))
             for p in close[:2]:
-                say("PA %.4f is a close call, measuring it again" % p['pa'])
+                say("PA %.4f close to limit, repeating" % p['pa'])
                 measure(p['pa'], 'repeat', True)
             # 5. a re-measurement can turn the last clean value into a dip:
             #    make sure a clean value sits close below the corner
@@ -482,7 +480,7 @@ class PATestRunner:
         except _Cancelled:
             return
         except _Budget:
-            say("search budget used up (%d PA values)" % SEARCH_MAX_TRAINS)
+            say("search limit reached (%d PA values)" % SEARCH_MAX_TRAINS)
         res = analysis.piro_pick(segs, sm)
         self.search.update(result=res.get('pa'), unc=res.get('unc'),
                            grade=res.get('grade'))
@@ -490,18 +488,17 @@ class PATestRunner:
             say("PA %.4f +- %.4f (%s)" % (res['pa'], res['unc'],
                                           res['grade']))
         else:
-            say("no answer: %s" % res.get('why', ''))
+            say("no result: %s" % res.get('why', ''))
 
     def _collect(self, col, t0, t1):
         deadline = self.reactor.monotonic() + self.limits['timeout']
         while col.latest < t1:
             if self.reactor.monotonic() > deadline:
-                raise PAError("load cell data timed out (no samples up to "
-                              "the end of this PA window)")
+                raise PAError("Load cell data timed out")
             self.reactor.pause(self.reactor.monotonic() + 0.05)
         out = col.take(t0, t1)
         if not out:
-            raise PAError("no load cell samples in this PA window")
+            raise PAError("No load cell samples in this PA window")
         return out
 
     def _cleanup(self, s, orig_pa, saved, col):
