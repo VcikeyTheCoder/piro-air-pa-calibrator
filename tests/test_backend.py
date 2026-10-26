@@ -35,7 +35,7 @@ class Extruder:
     max_extrude_ratio = 120.0 / filament_area     # max_extrude_cross_section 120
     def __init__(s, p): s.p = p
     def get_status(s, now):
-        return {'temperature': s.p.temp, 'pressure_advance': 0.05}
+        return {'temperature': s.p.temp, 'target': s.p.temp, 'pressure_advance': 0.05}
 
 class Toolhead:
     def __init__(s, p): s.p, s.ext = p, Extruder(p)

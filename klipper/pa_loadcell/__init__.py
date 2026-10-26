@@ -10,6 +10,8 @@ from .feed import SampleBus
 from .recorder import ManualRecorder
 from .settings import Settings
 from .storage import RunStore
+from .themes import ThemeStore
+from . import cfgfile
 from .testrun import PATestRunner, extruder_info
 
 
@@ -21,8 +23,10 @@ class PALoadCell:
         self.bus = SampleBus(printer, config.get('load_cell', 'load_cell'),
                              config.getint('ring_size', 60000, minval=2000),
                              config.getfloat('live_idle', 15., above=1.))
-        self.store = RunStore(config.get('data_dir',
-                                         '~/printer_data/pa_loadcell'))
+        data_dir = config.get('data_dir', '~/printer_data/pa_loadcell')
+        self.store = RunStore(data_dir)
+        self.themes = ThemeStore(data_dir)
+        self.cfg_override = config.get('config_path', None)
         self.runner = PATestRunner(printer, self.bus, self.store, {
             'min_temp': config.getfloat('min_temp', 200.),
             'required_z': config.getfloat('required_z', 20.),
@@ -43,7 +47,8 @@ class PALoadCell:
         for name in ('live', 'info', 'defaults', 'runs', 'run', 'segment',
                      'tag', 'delete', 'record_start', 'record_stop', 'mark',
                      'cancel', 'export', 'import_begin', 'import_chunk',
-                     'import_end', 'reanalyze'):
+                     'import_end', 'reanalyze', 'config_save', 'theme_list',
+                     'theme_save', 'theme_delete'):
             wh.register_endpoint('pa_loadcell/' + name,
                                  self._wrap(getattr(self, '_wh_' + name)))
 
@@ -94,6 +99,7 @@ class PALoadCell:
                        'legs': r.legs_since(req.get_int('leg_seq', 0)),
                        'elapsed': round(self.reactor.monotonic() - r.started,
                                         1) if r.state != 'idle' else 0}
+        out['printer'] = self._printer_status()
         out['rec'] = {'active': self.rec.active,
                       'elapsed': round(self.rec.elapsed(), 1),
                       'marks': len(self.rec.marks)}
@@ -204,6 +210,58 @@ class PALoadCell:
             raise PAError("this run is still being recorded")
         skip = req.get('skip_first', None)
         return self.store.reanalyze(rid, None if skip is None else bool(skip))
+
+    def _printer_status(self):
+        """Nozzle temperature (current / set) and Z for the status chips."""
+        try:
+            th = self.printer.lookup_object('toolhead', None)
+            if th is None:
+                return None
+            now = self.reactor.monotonic()
+            st = th.get_extruder().get_status(now)
+            return {'temp': round(st.get('temperature', 0.), 1),
+                    'target': round(st.get('target', 0.), 1),
+                    'z': round(th.get_position()[2], 2),
+                    'homed': th.get_status(now).get('homed_axes', '')}
+        except Exception:
+            return None
+
+    # -- settings saved to pa_loadcell.cfg --------------------------------
+    def _wh_config_save(self, req):
+        vals = req.get('values', None)
+        if not isinstance(vals, dict) or not vals:
+            raise PAError("nothing to save")
+        if self.runner.state != 'idle':
+            raise PAError("wait until the test has finished")
+        merged = asdict(self.defaults)
+        for k, v in vals.items():
+            if k not in cfgfile.EDITABLE:
+                raise PAError("'%s' cannot be changed from the page" % k)
+            cur = merged[k]
+            try:
+                merged[k] = (int(v) if isinstance(cur, int)
+                             and not isinstance(cur, bool) else
+                             float(v) if isinstance(cur, float) else str(v))
+            except (TypeError, ValueError):
+                raise PAError("'%s' must be a number" % k)
+        new = Settings(**merged)
+        new.validate()
+        path = cfgfile.save(cfgfile.config_path(self.printer,
+                                                self.cfg_override),
+                            {cfgfile.EDITABLE[k]: getattr(new, k)
+                             for k in vals})
+        self.defaults = new           # used right away, no restart needed
+        return {'saved': path, 'defaults': asdict(new)}
+
+    # -- custom themes ------------------------------------------------------
+    def _wh_theme_list(self, req):
+        return {'themes': self.themes.list()}
+
+    def _wh_theme_save(self, req):
+        return {'theme': self.themes.save(req.get('theme', None))}
+
+    def _wh_theme_delete(self, req):
+        self.themes.delete(req.get_str('id'))
 
     def get_status(self, eventtime):
         return {'state': self.runner.state,

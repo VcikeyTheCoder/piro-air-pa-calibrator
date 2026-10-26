@@ -125,6 +125,12 @@ class Gcmd:
 def build(data=None):
     p = Printer()
     data = data or tempfile.mkdtemp()
+    cfgdir = tempfile.mkdtemp()
+    import shutil
+    shutil.copy(os.path.join(HERE, '..', 'klipper', 'pa_loadcell.cfg'),
+                os.path.join(cfgdir, 'pa_loadcell.cfg'))
+    p.get_start_args = lambda: {'config_file': os.path.join(cfgdir, 'printer.cfg')}
+    p.cfgdir = cfgdir
     plug = pa_loadcell.load_config(Cfg(p, data))
     return p, plug
 

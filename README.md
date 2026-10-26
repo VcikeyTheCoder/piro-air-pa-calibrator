@@ -78,6 +78,8 @@ live_idle: 15
 max_record_seconds: 300
 #   Live buffer size (samples), seconds the stream stays on after the last
 #   viewer, and the limit for manual recordings.
+#config_path:
+#   File the Settings page saves to. Default: pa_loadcell.cfg next to printer.cfg.
 ```
 
 No change to `[extruder]` is needed. The pulses are extrude-only, so `max_extrude_cross_section` does not apply.
@@ -113,8 +115,10 @@ Current force and the last 10 minutes of load cell data. Drag or scroll to move 
 ![PA test](docs/images/test.png)
 
 **Start test** runs the test. The five steps show how far it is, and the live graph shows the pulses. The panel on the
-right holds the filament name and *Check up to* (`pa_max`). **Pulses, prime and position** holds every other setting.
+right holds the filament name and *Check up to* (`pa_max`), and the last result. Every other value is in **Settings**.
 The summary shows the time and filament the test will use and warns about values your printer cannot do.
+
+The header shows the extruder temperature (current / target) and Z in every theme.
 
 ### History (analysis)
 
@@ -122,6 +126,7 @@ Every saved run is listed with its result. Open a test run to see its analysis:
 
 ![Result](docs/images/answer.png)
 
+- **Test info**: nozzle temperature, fast and slow flow and time, pulses, prime, and filament used.
 - **Result card**: the PA value to use, how sure it is (± and a *good / fair / poor* grade), a button to copy the
   `SET_PRESSURE_ADVANCE` command, and warnings if something looked wrong during the test.
 
@@ -138,6 +143,54 @@ Every saved run is listed with its result. Open a test run to see its analysis:
 At the bottom: your own PA pick and notes, **Re-analyse**, **Export run** and **Import run** (to share a run as a
 `.palc.json` file), and **Delete run**.
 
+### Settings
+
+| Section | What it holds |
+|---|---|
+| Appearance | The theme, and your own imported themes |
+| Test defaults | Fast/slow flow and time, cycles, prime, rest, PA search limits, filament limit |
+| Positions | `test_x/test_y`, `park_x/park_y` |
+| Graphs | Colour of the command line on the graphs |
+| Safety | `min_temp`, `required_z` and the other limits (read only) |
+
+**Save** writes the changed values into `[pa_loadcell]` in `pa_loadcell.cfg`. Other sections, comments and the
+safety options are not touched. The previous file is kept as `pa_loadcell.cfg.bak-pa_loadcell-ui`. Values are
+checked before saving, and saving is refused while a test runs. The `PA_LOADCELL_TEST` command uses the new values
+straight away; no restart is needed.
+
+### Themes
+
+| Theme | Look |
+|---|---|
+| PIRO | Graphite and amber, dark or light (default) |
+| Mainsail | Mainsail-style sidebar with printer status |
+| Fluidd | Fluidd-style icon rail |
+| RatOS | Zinc and lime, numbered steps |
+| Cat | Catppuccin Mocha (dark) or Latte (light), with a cat |
+
+Themes change colours and layout only; every feature works the same. The chosen theme is remembered by each
+browser. A theme can also be picked with the address: `/loadcell/?theme=cat&mode=light`.
+
+**Your own themes.** *Export current theme* downloads the current colours as a `.json` file. Edit it and load it with
+*Import theme*. Imported themes are stored on the printer in `~/printer_data/pa_loadcell/themes/`, so every browser
+sees them. You can also copy files into that folder directly.
+
+```json
+{
+  "format": "piro_edge_theme",
+  "version": 1,
+  "name": "Ocean",
+  "author": "you",
+  "base": "fluidd",
+  "mode": "dark",
+  "tokens": { "accent": "#ff6f61", "trace": "#4dd0e1", "bg": "#0d1117" }
+}
+```
+
+`base` is the layout (`piro`, `mainsail`, `fluidd`, `ratos`, `cat`). Tokens left out come from the base.
+Tokens: `bg`, `panel`, `panel2`, `head`, `ph`, `rule`, `text`, `dim`, `trace`, `accent`, `onaccent`, `bad`, `good`,
+`fair`, `grid`, `fast`, `slow`, `cmd`, `radius`, `font`. Values may only be colours, sizes and font names.
+
 ### Compare
 
 ![Compare](docs/images/compare.png)
@@ -151,7 +204,7 @@ PIRO-EDGE the first time they are opened.
 
 Webhooks (Moonraker `printer.pa_loadcell.<name>`): `live`, `info`, `defaults`, `runs`, `run`, `segment`, `tag`,
 `delete`, `record_start`, `record_stop`, `mark`, `cancel`, `export`, `reanalyze`, `import_begin`, `import_chunk`,
-`import_end`.
+`import_end`, `config_save`, `theme_list`, `theme_save`, `theme_delete`.
 
 ## Development
 
@@ -173,6 +226,8 @@ The harness serves the page at `http://127.0.0.1:8080/?ws=127.0.0.1:8765`.
 | "No dip up to PA 0.200" | Check for filament slipping or a partial clog; for very soft filament raise `pa_limit` |
 | Grade *poor* | Read the warnings on the result; more `cycles` or a higher `fast_flow` usually help |
 | Unknown config section `pa_loadcell` | Run `bash install.sh` again |
+| Settings: "no [pa_loadcell] section" | Your section is in another file; set `config_path:` to that file |
+| Imported theme refused | Check the token names and values in the file against the list above |
 
 ## Credits
 

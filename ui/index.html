@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en" data-theme="dark"><head><meta charset="utf-8">
+<html lang="en" data-theme="piro" data-mode="dark"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>PIRO-EDGE</title>
 <style>
@@ -7,8 +7,9 @@
    (like a printer status LED), a calm teal for the load cell trace. */
 :root{--bg:#1d1f22;--panel:#25282c;--panel2:#2c2f34;--rule:#393d43;--text:#e9e6df;--dim:#9c998f;
  --trace:#6fb5a9;--slow:rgba(111,181,169,.09);--fast:rgba(214,162,74,.13);--amber:#d6a24a;--rec:#d0675e;--ok:#97bf88;--grid:#2f3337;
- --onacc:#1d1f22;--r:5px;--font:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif}
-:root[data-theme=light]{--bg:#e5e3de;--panel:#efede8;--panel2:#e7e5e0;--rule:#cdc9c1;--text:#27282a;--dim:#6b6962;
+ --onacc:#1d1f22;--r:5px;--font:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+ --cmd:var(--amber);--head:var(--panel);--ph:transparent;--fair:var(--amber)}
+:root[data-theme=piro][data-mode=light]{--bg:#e5e3de;--panel:#efede8;--panel2:#e7e5e0;--rule:#cdc9c1;--text:#27282a;--dim:#6b6962;
  --trace:#2d7c71;--slow:rgba(45,124,113,.09);--fast:rgba(168,112,27,.12);--amber:#a8701b;--rec:#b4453c;--ok:#4f7d43;--grid:#d9d6d0;--onacc:#fff}
 *{box-sizing:border-box}[hidden]{display:none!important}html,body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 var(--font)}
 body{min-height:100vh}.num{font-variant-numeric:tabular-nums}
@@ -26,7 +27,7 @@ button.tog .dot{width:7px;height:7px;border-radius:50%;background:var(--dim)}but
 input,select,textarea{background:var(--bg);border:1px solid var(--rule);border-radius:var(--r);padding:6px 9px;min-width:0}
 input.bad{border-color:var(--rec)}
 textarea{width:100%;min-height:56px;resize:vertical}
-header{display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:10px 16px;background:var(--panel);border-bottom:1px solid var(--rule)}
+header{display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:10px 16px;background:var(--head);border-bottom:1px solid var(--rule)}
 header h1{font-size:15px;margin:0;font-weight:700;letter-spacing:.01em;display:flex;align-items:baseline;gap:8px}
 header h1 span{font-weight:400;color:var(--dim);font-size:13px;letter-spacing:0}
 .chip{display:inline-flex;align-items:center;gap:6px;padding:2px 10px;border:1px solid var(--rule);border-radius:99px;font-size:12px;color:var(--dim);white-space:nowrap}
@@ -170,29 +171,137 @@ canvas.fig{display:block;width:100%}
 .runline .res{font-weight:650;font-variant-numeric:tabular-nums}
 .tagrow{display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;margin-top:14px}
 details.raw{margin-top:12px}details.raw>summary{cursor:pointer;color:var(--dim);font-size:12px}
+
+/* ===================== THEMES =====================
+   html[data-theme] picks colours + layout, html[data-mode] dark / light.
+   Custom themes (Settings > Appearance) start from one of these and
+   override the colour tokens inline. */
+:root[data-theme=mainsail]{--bg:#121212;--panel:#1e1e1e;--panel2:#2a2a2a;--rule:#ffffff1f;--text:#ffffff;--dim:#ffffffb3;--trace:#2196f3;--slow:rgba(33,150,243,.08);--fast:rgba(255,179,0,.12);
+ --amber:#2196f3;--cmd:#ffb300;--rec:#f44336;--ok:#4caf50;--fair:#ffc107;--grid:#2a2a2a;--onacc:#fff;--r:4px;--head:#1e1e1e;--ph:#272727;--font:Roboto,"Segoe UI",ui-sans-serif,system-ui,sans-serif;--sidew:240px}
+:root[data-theme=fluidd]{--bg:#121212;--panel:#28282b;--panel2:#333337;--rule:#ffffff14;--text:#ffffffde;--dim:#ffffff8f;--trace:#2196f3;--slow:rgba(33,150,243,.08);--fast:rgba(255,152,0,.12);
+ --amber:#2196f3;--cmd:#ff9800;--rec:#f44336;--ok:#4caf50;--fair:#ffc107;--grid:#333337;--onacc:#fff;--r:4px;--head:#1e1e20;--ph:#333337;--font:Roboto,"Segoe UI",ui-sans-serif,system-ui,sans-serif;--sidew:56px}
+:root[data-theme=ratos]{--bg:#09090b;--panel:#18181b;--panel2:#27272a;--rule:#27272a;--text:#f4f4f5;--dim:#a1a1aa;--trace:#7bff33;--slow:rgba(123,255,51,.06);--fast:rgba(161,161,170,.10);
+ --amber:#7bff33;--cmd:#a1a1aa;--rec:#f87171;--ok:#7bff33;--fair:#facc15;--grid:#232327;--onacc:#0b0f05;--r:10px;--head:#18181b;--ph:transparent}
+:root[data-theme=cat]{--bg:#1e1e2e;--panel:#181825;--panel2:#313244;--rule:#313244;--text:#cdd6f4;--dim:#a6adc8;--trace:#f5c2e7;--slow:rgba(245,194,231,.07);--fast:rgba(203,166,247,.12);
+ --amber:#f5c2e7;--cmd:#cba6f7;--rec:#f38ba8;--ok:#a6e3a1;--fair:#f9e2af;--grid:#2a2b3c;--onacc:#11111b;--r:16px;--head:#1e1e2e;--ph:transparent;--soft:#3a2c40;--soft2:#25332e;--mauve:#cba6f7}
+:root[data-theme=cat][data-mode=light]{--bg:#eff1f5;--panel:#e6e9ef;--panel2:#dce0e8;--rule:#ccd0da;--text:#4c4f69;--dim:#6c6f85;--trace:#ea76cb;--slow:rgba(234,118,203,.08);--fast:rgba(136,57,239,.10);
+ --amber:#ea76cb;--cmd:#8839ef;--rec:#d20f39;--ok:#40a02b;--fair:#df8e1d;--grid:#d8dbe3;--onacc:#fff;--head:#eff1f5;--soft:#f6dcef;--soft2:#dcefd6;--mauve:#8839ef}
+.navhead,.navstat{display:none}
+:root[data-theme=mainsail] body,:root[data-theme=fluidd] body{background:linear-gradient(to right,var(--panel) var(--sidew),var(--bg) var(--sidew))}
+:root[data-theme=ratos] #setBtn,:root[data-theme=cat] #setBtn{display:none!important}
+:root[data-theme=ratos] header,:root[data-theme=cat] header{flex-wrap:nowrap}
+@media(max-width:1500px){:root[data-theme=ratos] header h1 span,:root[data-theme=cat] header h1 span{display:none}}
+@media(max-width:1100px){:root[data-theme=ratos] header,:root[data-theme=cat] header{flex-wrap:wrap}}
+nav button .ic{display:none;width:18px;height:18px;flex:none}
+.status-chip{display:inline-flex}
+.chip .heat{background:#e57373}
+/* Mainsail + Fluidd: navigation in a left column */
+:root[data-theme=mainsail] body,:root[data-theme=fluidd] body{display:grid;grid-template-columns:var(--sidew) minmax(0,1fr);grid-template-rows:auto auto auto 1fr;align-items:start}
+:root[data-theme=mainsail] body>*,:root[data-theme=fluidd] body>*{grid-column:2}
+:root[data-theme=mainsail] #tabs,:root[data-theme=fluidd] #tabs{grid-column:1;grid-row:1 / span 5;flex-direction:column;align-items:stretch;gap:0;padding:0;border:0;border-right:1px solid var(--rule);position:sticky;top:0;height:100vh;overflow:auto;background:var(--panel)}
+:root[data-theme=mainsail] #tabs button,:root[data-theme=fluidd] #tabs button{display:flex;align-items:center;gap:12px;border:0;border-left:4px solid transparent;padding:12px 16px;text-align:left}
+:root[data-theme=mainsail] #tabs button[aria-selected=true],:root[data-theme=fluidd] #tabs button[aria-selected=true]{border-left-color:var(--amber);background:color-mix(in srgb,var(--amber) 13%,transparent)}
+:root[data-theme=mainsail] nav button .ic,:root[data-theme=fluidd] nav button .ic{display:block}
+:root[data-theme=mainsail] #tabs button[aria-selected=true] .ic,:root[data-theme=fluidd] #tabs button[aria-selected=true] .ic{color:var(--amber)}
+:root[data-theme=mainsail] .navhead{display:flex;align-items:center;gap:10px;height:57px;padding:0 16px;border-bottom:1px solid #ffffff40;font-size:19px;margin-bottom:8px}
+:root[data-theme=mainsail] .navstat{display:grid;gap:6px;margin-top:auto;padding:14px 16px;border-top:1px solid var(--rule);font-size:12.5px}
+.navstat div{display:flex;justify-content:space-between;color:var(--dim)}.navstat b{color:var(--text);font-weight:500}
+.navstat .bar{height:3px;background:var(--panel2);border-radius:3px;overflow:hidden}.navstat .bar i{display:block;height:100%;background:#f44336}
+:root[data-theme=mainsail] header .status-chip{display:none}
+:root[data-theme=mainsail] header{box-shadow:0 2px 4px #0006;border:0}
+:root[data-theme=fluidd] #tabs{padding-top:6px}
+:root[data-theme=fluidd] #tabs button{justify-content:center;padding:14px 0;border-left-width:3px}
+:root[data-theme=fluidd] #tabs .lbl,:root[data-theme=fluidd] #tabs .badge{display:none}
+:root[data-theme=mainsail] button.primary,:root[data-theme=mainsail] button.danger,:root[data-theme=mainsail] .tagrow button,:root[data-theme=mainsail] .ctl button,
+:root[data-theme=fluidd] button.primary,:root[data-theme=fluidd] button.danger,:root[data-theme=fluidd] .tagrow button,:root[data-theme=fluidd] .ctl button{text-transform:uppercase;letter-spacing:.06em;font-size:12.5px}
+:root[data-theme=mainsail] .big,:root[data-theme=fluidd] .big,:root[data-theme=mainsail] .answer .pav{font-weight:500}
+:root[data-theme=mainsail] .answer .pav{color:var(--amber)}
+/* panel title bars (Mainsail / Fluidd) */
+:root[data-theme=mainsail] .figs figure .ft,:root[data-theme=fluidd] .figs figure .ft{background:var(--ph);margin:-10px -12px 8px;padding:10px 12px;border-radius:var(--r) var(--r) 0 0}
+:root[data-theme=mainsail] .run>summary,:root[data-theme=fluidd] .run>summary{background:var(--ph)}
+:root[data-theme=mainsail] .card,:root[data-theme=fluidd] .card,:root[data-theme=fluidd] .figs figure,:root[data-theme=mainsail] .figs figure{border-color:transparent}
+/* RatOS + Cat: tabs as pills inside the header (moved there by placeNav) */
+header #tabs{background:none;border:0;padding:0;gap:4px;overflow:visible}
+header #tabs button{border:0;border-radius:8px;padding:7px 13px}
+:root[data-theme=ratos] header #tabs button[aria-selected=true]{background:var(--panel2);color:var(--text)}
+:root[data-theme=ratos] header{min-height:60px}
+:root[data-theme=ratos] .track{grid-template-columns:1fr;gap:0;margin-top:14px}
+:root[data-theme=ratos] .track li{border:0;display:grid;grid-template-columns:40px 1fr;align-items:center;padding:6px 0;font-size:12px}
+:root[data-theme=ratos] .track li::before{grid-row:span 2;width:30px;height:30px;border-radius:99px;border:2px solid #3f3f46;display:grid;place-items:center;margin:0;font-weight:700;color:var(--dim)}
+:root[data-theme=ratos] .track li.done::before{background:var(--amber);border-color:var(--amber);color:var(--onacc)}
+:root[data-theme=ratos] .track li.now::before{border-color:var(--amber);color:var(--amber)}
+:root[data-theme=ratos] .track li:not(.done):not(.now){opacity:.55}
+:root[data-theme=ratos] .runhead h2{font-size:24px;letter-spacing:-.02em}
+:root[data-theme=cat] header{border:0;padding:14px 22px}
+:root[data-theme=cat] header #tabs{background:var(--panel);border-radius:999px;padding:4px}
+:root[data-theme=cat] header #tabs button{border-radius:999px;padding:7px 16px}
+:root[data-theme=cat] header #tabs button[aria-selected=true]{background:var(--amber);color:var(--onacc);font-weight:600}
+:root[data-theme=cat] header h1{color:var(--amber)}
+:root[data-theme=cat] button,:root[data-theme=cat] .seg{border-radius:999px}
+:root[data-theme=cat] .card,:root[data-theme=cat] .figs figure,:root[data-theme=cat] .answer{border-color:transparent;box-shadow:0 10px 28px #0000001a}
+:root[data-theme=cat] .chip{border:0;background:var(--panel)}
+:root[data-theme=cat] .track li{border:0;border-radius:14px;background:var(--bg);padding:9px 11px}
+:root[data-theme=cat] .track li.done{background:var(--soft2)}
+:root[data-theme=cat] .track li.now{background:var(--soft);box-shadow:inset 0 0 0 2px var(--amber)}
+:root[data-theme=cat] .big,:root[data-theme=cat] .answer .pav{color:var(--amber);font-weight:800}
+:root[data-theme=cat] .answer,:root[data-theme=cat] .lastres{position:relative;margin-top:44px}
+:root[data-theme=cat] .answer::after,:root[data-theme=cat] .lastres::after{content:'';position:absolute;top:-36px;right:44px;width:104px;height:38px;pointer-events:none;
+ background:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 120 44'%3E%3Cpath d='M14 44V8l12 10q34-10 68 0l12-10v36Z' fill='%23cba6f7'/%3E%3Cellipse cx='44' cy='32' rx='4' ry='5.5' fill='%2311111b'/%3E%3Cellipse cx='76' cy='32' rx='4' ry='5.5' fill='%2311111b'/%3E%3Ccircle cx='45.5' cy='30' r='1.3' fill='%23fff'/%3E%3Ccircle cx='77.5' cy='30' r='1.3' fill='%23fff'/%3E%3Cpath d='M57 40l3 2 3-2' stroke='%2311111b' stroke-width='1.8' fill='none'/%3E%3Cpath d='M28 40H8M28 36l-18-4M92 40h20M92 36l18-4' stroke='%2311111b' stroke-width='1.2' opacity='.5'/%3E%3C/svg%3E") no-repeat center/contain}
+/* Settings tab */
+.setgrid{display:grid;grid-template-columns:200px minmax(0,1fr);gap:16px;align-items:start}
+.setnav{display:flex;flex-direction:column;gap:2px;padding:8px;position:sticky;top:10px}
+.setnav button{border:0;background:none;text-align:left;padding:9px 12px;color:var(--dim)}
+.setnav button.on{background:var(--panel2);color:var(--text)}
+.setcol{display:flex;flex-direction:column;gap:16px}
+.setcol .card{padding:16px}
+.setcol h3{margin:0 0 4px;font-size:15px}
+.thcards{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px;margin-top:12px}
+.thc{border:2px solid var(--rule);border-radius:10px;overflow:hidden;cursor:pointer;background:var(--panel);text-align:left;padding:0;display:block;width:100%}
+.thc[aria-pressed=true]{border-color:var(--amber)}
+.thc .pv{height:78px;padding:10px;display:grid;gap:6px;align-content:start}
+.thc .nm{padding:8px 10px;font-size:13px}.thc .nm b{display:block}.thc .nm span{color:var(--dim);font-size:12px}
+.setform{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.lastres .pav{font-size:40px;font-weight:650;letter-spacing:-.03em;line-height:1.05}
+.rinfo{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin:0 0 12px}
+.rinfo div{background:var(--panel2);border-radius:var(--r);padding:9px 11px;font-size:12px;color:var(--dim)}
+.rinfo b{display:block;color:var(--text);font-size:14px;font-weight:600;margin-top:2px}
+.rinfo .fst b{color:var(--cmd)}.rinfo .slw b{color:var(--trace)}
+@media(max-width:900px){.setgrid{grid-template-columns:1fr}.setnav{flex-direction:row;flex-wrap:wrap;position:static}.setform,.rinfo{grid-template-columns:repeat(2,minmax(0,1fr))}
+ :root[data-theme=mainsail],:root[data-theme=fluidd]{--sidew:56px}:root[data-theme=mainsail] #tabs .lbl,:root[data-theme=mainsail] .navhead b,:root[data-theme=mainsail] .navstat{display:none}
+ :root[data-theme=mainsail] #tabs button{justify-content:center;padding:14px 0}}
 @media(max-width:980px){.tgrid{grid-template-columns:1fr}.tside{position:static}}
 @media(max-width:620px){.answer{flex-direction:column;align-items:stretch}.answer .side{flex:none}.fg3{grid-template-columns:1fr 1fr}.track{grid-template-columns:repeat(5,minmax(0,1fr))}.track li b{font-size:11px}.figs{grid-template-columns:1fr}.answer .pav{font-size:36px}}
 @media(max-width:900px){.figs{grid-template-columns:1fr}}
 @media(max-width:620px){.big{font-size:34px}header{padding:8px 12px}main{padding:10px 12px 30px}.ctl .grp{border:0;padding:0}.fg{grid-template-columns:1fr 1fr}
  .vw .hint{display:none}#lvw .main canvas{height:44vh;min-height:220px}#hvw .main canvas{height:260px}}
 @media(prefers-reduced-motion:reduce){*{transition:none!important}}
+
+@media(max-width:620px){html[data-theme=ratos] #tabs,html[data-theme=cat] #tabs{max-width:100%;overflow-x:auto;flex-wrap:nowrap;scrollbar-width:none}
+html[data-theme=ratos] #tabs::-webkit-scrollbar,html[data-theme=cat] #tabs::-webkit-scrollbar{display:none}
+html[data-theme=ratos] #tabs button,html[data-theme=cat] #tabs button{flex:none}
+html[data-theme=cat] #tabs .lbl{display:none}}
 </style></head>
 <body>
 <header>
- <h1>PIRO-EDGE<span>pressure advance from the load cell</span></h1>
+ <h1 id="brand">PIRO-EDGE<span>pressure advance from the load cell</span></h1>
  <span id="cSrc" class="chip"><i></i><span>connecting</span></span>
  <span id="cRate" class="chip num" hidden></span>
+ <span id="cTemp" class="chip num status-chip" hidden title="Nozzle: current / set"><i class="heat"></i><span></span></span>
+ <span id="cZ" class="chip num status-chip" hidden></span>
  <span id="cState" class="chip" hidden></span>
  <span class="sp"></span>
  <a class="mainsail" href="/" style="color:var(--dim);text-decoration:none">Back to Mainsail</a>
- <button id="themeBtn" class="quiet" title="Switch light / dark">Theme</button>
+ <button id="setBtn" class="quiet" title="Settings and themes" style="display:inline-flex;gap:6px;align-items:center"><svg class="ic" style="display:block;width:16px;height:16px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/></svg>Settings</button>
 </header>
 <div id="bar"><i></i></div>
 <nav role="tablist" id="tabs">
- <button role="tab" data-tab="live" aria-selected="true">Live</button>
- <button role="tab" data-tab="test" aria-selected="false">PA test</button>
- <button role="tab" data-tab="hist" aria-selected="false">History</button>
- <button role="tab" data-tab="cmp" aria-selected="false">Compare<span class="badge num" id="nCmp">0</span></button>
+ <div class="navhead"><svg width="26" height="26" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 20 L12 4 L21 20 Z" fill="#D41216"/></svg><b>PIRO-EDGE</b></div>
+ <button role="tab" data-tab="live" aria-selected="true"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12h4l3-8 4 16 3-8h6"/></svg><span class="lbl">Live</span></button>
+ <button role="tab" data-tab="test" aria-selected="false"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 5v14l11-7z"/></svg><span class="lbl">PA test</span></button>
+ <button role="tab" data-tab="hist" aria-selected="false"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5M12 7v5l3 3"/></svg><span class="lbl">History</span></button>
+ <button role="tab" data-tab="cmp" aria-selected="false"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 7h13M17 4l3 3-3 3M17 17H4M7 14l-3 3 3 3"/></svg><span class="lbl">Compare</span><span class="badge num" id="nCmp">0</span></button>
+ <button role="tab" data-tab="set" aria-selected="false"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/></svg><span class="lbl">Settings</span></button>
+ <div class="navstat" id="navstat"></div>
 </nav>
 <div id="banner"></div>
 <main>
@@ -242,6 +351,7 @@ details.raw{margin-top:12px}details.raw>summary{cursor:pointer;color:var(--dim);
   </div>
   <div class="tside">
    <form id="form" class="form" autocomplete="off"></form>
+   <div class="card pcard lastres" id="lastres" hidden></div>
    <div class="card pcard"><div class="facts num" id="sum"></div></div>
    <div id="checks" style="display:flex;flex-direction:column;gap:8px"></div>
    <div class="fixed" id="fixed" hidden></div>
@@ -272,6 +382,26 @@ details.raw{margin-top:12px}details.raw>summary{cursor:pointer;color:var(--dim);
  <div class="scope"><canvas id="cc" style="height:340px"></canvas><div class="tip" id="ccTip"></div></div>
  <div id="ctable" style="margin-top:12px"></div>
 </section>
+<section id="set">
+ <div class="setgrid">
+  <div class="card setnav" id="setnav"><button class="on" data-to="setApp">Appearance</button><button data-to="setDef">Test defaults</button><button data-to="setPos">Positions</button><button data-to="setGraph">Graphs</button><button data-to="setSafe">Safety</button></div>
+  <div class="setcol">
+   <div class="card" id="setApp"><div class="row"><h3>Theme</h3><span class="sp"></span><span class="small dim">Colours and layout only; every feature works the same in each theme. Saved in this browser.</span></div>
+    <div class="thcards" id="thBuilt"></div>
+    <div class="row" style="margin-top:16px"><b style="font-size:13px">Your themes</b><span class="small dim">stored on the printer, so every browser sees them</span><span class="sp"></span>
+     <button id="thImport">Import theme</button><input id="thFile" type="file" accept=".json,application/json" hidden><button id="thExport" title="Download the current theme as a file you can edit and import">Export current theme</button></div>
+    <div class="thcards" id="thCustom"></div></div>
+   <div class="card" id="setDef"><div class="row"><h3>Test defaults</h3><span class="sp"></span><span class="small dim" id="defWhere">saved to pa_loadcell.cfg on the printer</span></div>
+    <svg id="pulse" viewBox="0 0 420 150" role="img" aria-label="Pulse shape for one PA value" style="max-width:560px;margin:8px 0"></svg>
+    <div id="defForm"></div>
+    <div class="row" style="margin-top:14px"><button class="primary" id="defSave">Save to printer</button><button id="defReset">Undo changes</button><span class="small dim" id="defMsg"></span></div></div>
+   <div class="card" id="setPos"><h3>Positions</h3><div class="small dim">Where the nozzle extrudes in the air, and where it waits after the test.</div><div id="posForm" style="margin-top:10px"></div>
+    <div class="row" style="margin-top:14px"><button class="primary" id="posSave">Save to printer</button></div></div>
+   <div class="card" id="setGraph"><h3>Graphs</h3><div class="small dim">Saved in this browser.</div>
+    <div class="row" style="margin-top:12px;gap:12px"><span class="row" style="gap:6px" id="setCmd"></span><button class="inv tog" aria-pressed="false" title="Flip the graph: negative up"></button></div></div>
+   <div class="card" id="setSafe"><h3>Safety</h3><div class="small dim">Set in pa_loadcell.cfg only, on purpose.</div><div class="setform" id="safeForm" style="margin-top:10px"></div></div>
+  </div></div>
+</section>
 </main>
 <div id="toast" role="status"></div>
 
@@ -294,15 +424,42 @@ function ftick(v,step){const a=Math.abs(v),sg=v<-1e-9?'-':'';if(step>=60||(a>=12
 
 /* wall clock label from unix seconds */
 function hms(v,frac){const d=new Date(v*1000),p=n=>(n<10?'0':'')+n;return p(d.getHours())+':'+p(d.getMinutes())+':'+p(d.getSeconds())+(frac?'.'+Math.floor((v%1+1)%1*10):'')}
-/* theme */
-function theme(t){document.documentElement.dataset.theme=t;store.set('theme',t);if(window.ready)redrawAll()}
-theme(Q.get('theme')||store.get('theme','dark'));
-$('#themeBtn').onclick=()=>theme(document.documentElement.dataset.theme==='dark'?'light':'dark');
+/* ---- themes ----
+   Built-in: colours + layout in the CSS (html[data-theme], html[data-mode]).
+   Custom: a JSON file from Settings, stored on the printer; it picks a
+   built-in layout ("base") and overrides colour tokens inline. */
+const BUILTIN=[{id:'piro',name:'PIRO',desc:'Graphite and amber',modes:['dark','light'],pv:['#1d1f22','#25282c','#d6a24a']},
+ {id:'mainsail',name:'Mainsail',desc:'Looks like Mainsail',modes:['dark'],pv:['#121212','#1e1e1e','#2196f3']},
+ {id:'fluidd',name:'Fluidd',desc:'Looks like Fluidd',modes:['dark'],pv:['#121212','#28282b','#2196f3']},
+ {id:'ratos',name:'RatOS',desc:'Zinc and lime',modes:['dark'],pv:['#09090b','#18181b','#7bff33']},
+ {id:'cat',name:'Cat',desc:'Catppuccin with a cat',modes:['dark','light'],pv:['#1e1e2e','#181825','#f5c2e7']}];
+const TOKMAP={bg:'--bg',panel:'--panel',panel2:'--panel2',head:'--head',ph:'--ph',rule:'--rule',text:'--text',dim:'--dim',trace:'--trace',accent:'--amber',
+ onaccent:'--onacc',bad:'--rec',good:'--ok',fair:'--fair',grid:'--grid',fast:'--fast',slow:'--slow',radius:'--r',font:'--font',cmd:'--cmd'};
+let CUSTOM=[],THEME={id:'piro',mode:'dark'},WANT=null;
+function applyTheme(sel,save=true){if(save)WANT=null;const h=document.documentElement,c=CUSTOM.find(t=>t.id===sel.id),b=BUILTIN.find(t=>t.id===sel.id);
+ if(!c&&!b)sel={id:'piro',mode:sel.mode==='light'?'light':'dark'};
+ const base=c?c.base:sel.id,bt=BUILTIN.find(t=>t.id===base),mode=c?c.mode:(bt.modes.includes(sel.mode)?sel.mode:bt.modes[0]);
+ for(const v of Object.values(TOKMAP))h.style.removeProperty(v);
+ h.dataset.theme=base;h.dataset.mode=mode;
+ if(c)for(const[k,v]of Object.entries(c.tokens||{}))if(TOKMAP[k])h.style.setProperty(TOKMAP[k],v);
+ THEME={id:sel.id,mode};if(save)store.set('theme2',THEME);placeNav();
+ $('#brand').innerHTML=base==='cat'?'PIRO-EDGE<span>pressure advance, measured by a curious cat</span>':'PIRO-EDGE<span>pressure advance from the load cell</span>';
+ if(window.ready){redrawAll();renderThemeCards()}}
+/* RatOS and Cat keep the tabs in the header row; the others below it / in the side column */
+function placeNav(){const nav=$('#tabs'),hd=$('header');if(!nav)return;const inHead=['ratos','cat'].includes(document.documentElement.dataset.theme);
+ if(inHead&&nav.parentElement!==hd)hd.insertBefore(nav,hd.querySelector('.mainsail'));
+ else if(!inHead&&nav.parentElement===hd)$('#bar').after(nav)}
+(function initTheme(){let t=store.get('theme2',null);const q=Q.get('theme'),old=store.get('theme',null);
+ if(q)t=q==='light'||q==='dark'?{id:'piro',mode:q}:{id:q,mode:Q.get('mode')||'dark'};
+ else if(!t&&old)t={id:'piro',mode:old==='light'?'light':'dark'};   // from the old Theme button
+ t=t||{id:'piro',mode:'dark'};if(!BUILTIN.some(b=>b.id===t.id))WANT=t;applyTheme(t,false)})();
+function theme(m){applyTheme({id:THEME.id,mode:m})}
+$('#setBtn').onclick=()=>setTab('set');
 
 /* ---- Moonraker JSON-RPC over websocket with auto-reconnect ---- */
 const rpc={id:1,pend:new Map(),ws:null,back:500,up:false,
  connect(){const ws=this.ws=new WebSocket(Q.get('ws')?'ws://'+Q.get('ws'):(location.protocol==='https:'?'wss://':'ws://')+location.host+'/websocket');
-  ws.onopen=()=>{this.up=true;this.back=500;status();if($('#hist').classList.contains('on'))loadRuns()};
+  ws.onopen=()=>{this.up=true;this.back=500;status();loadThemes();if($('#hist').classList.contains('on')||$('#test').classList.contains('on'))loadRuns()};
   ws.onmessage=e=>{let m;try{m=JSON.parse(e.data)}catch{return}const p=this.pend.get(m.id);if(!p)return;this.pend.delete(m.id);clearTimeout(p.to);
    m.error?p.rej(new Error(m.error.message||'Request failed')):p.res(m.result)};
   ws.onclose=()=>{this.up=false;status();for(const[,p]of this.pend){clearTimeout(p.to);p.rej(new Error('disconnected'))}this.pend.clear();setTimeout(()=>this.connect(),this.back);this.back=Math.min(this.back*2,8000)};
@@ -403,7 +560,7 @@ function triPdf(x,h){if(h<=1e-6)return 0;if(x<=-h||x>=h)return 0;return(1-Math.a
 /* legs: [{t0,t1,flow,pa,noPA}] sorted. Returns dashed series in force units. */
 function commandSeries(legs,fit,o){if(!fit||!legs.length)return[];const sh=o.shift||0,Y=q=>fit.offset+fit.gain*q,out=[];
  if(SHOWCMD){const t=[],f=[];for(const g of legs){t.push(g.t0+sh,g.t1+sh);f.push(Y(g.flow),Y(g.flow))}
-  out.push({t,f,color:o.color||css('--amber'),dash:[6,4],w:1.6,noScale:true,name:'command'})}
+  out.push({t,f,color:o.color||css('--cmd'),dash:[6,4],w:1.6,noScale:true,name:'command'})}
  if(SHOWCMD&&SHOWPUSH){const h=Math.max(.001,(o.smooth??.04)/2),t=[],f=[];
   /* flat between speed changes; around each change the smoothed step plus the PA push.
      Speed changes are far apart compared with the smoothing window, so they never overlap. */
@@ -413,7 +570,7 @@ function commandSeries(legs,fit,o){if(!fit||!legs.length)return[];const sh=o.shi
   const g=legs[legs.length-1];t.push(g.t1+sh);f.push(Y(g.flow));
   out.push({t,f,color:o.pushColor||css('--rec'),dash:[2,3],w:1.2,noScale:true,alpha:.85,name:'with PA'})}
  return out}
-function cmdLegend(has){const L=[];if(has&&SHOWCMD){L.push({label:'what the extruder was told',color:css('--amber'),dash:[6,4]});if(SHOWPUSH)L.push({label:'with PA push',color:css('--rec'),dash:[2,3]})}return L}
+function cmdLegend(has){const L=[];if(has&&SHOWCMD){L.push({label:'what the extruder was told',color:css('--cmd'),dash:[6,4]});if(SHOWPUSH)L.push({label:'with PA push',color:css('--rec'),dash:[2,3]})}return L}
 const WINS=[1,2,5,10,30,60,120,300,600];
 const wname=s=>s<60?s+' s':(s/60)+' min';
 
@@ -538,7 +695,7 @@ const KEEP=600;let CAPN=1<<18,bt=new Float64Array(CAPN),bf=new Float32Array(CAPN
 function pushS(t,f){if(bn&&t<=bt[bn-1])return;if(bn===CAPN){const k=CAPN>>2;bt.copyWithin(0,k,bn);bf.copyWithin(0,k,bn);bn-=k}bt[bn]=t;bf[bn]=f;bn++}
 function trimBuf(){if(!bn)return;const k=lb(bt,bt[bn-1]-KEEP,bn);if(k>640){bt.copyWithin(0,k,bn);bf.copyWithin(0,k,bn);bn-=k}}
 function resetBuf(){bn=0;seq=0;clk=null;paMarks.length=0;lastPaT=null;liveLegs.length=0;legSeq=0;liveFit=null;tv.follow=true;tv.x0=null;lv.follow=true;lv.x0=null}
-let clk=null,info={},tst={state:'idle'},rec={active:false},liveErr='';
+let clk=null,info={},tst={state:'idle'},rec={active:false},liveErr='',PRN=null;
 const lv=new Viewer($('#lvw'),{key:'live',live:true,keep:KEEP,label:'Live load cell force',onView:liveStats});
 const tv=new Viewer($('#tvw'),{key:'tlive',live:true,keep:KEEP,label:'Live load cell force during the test'});
 /* where each PA value started (exact print_time from the backend) */
@@ -565,7 +722,7 @@ async function pollLoop(){for(;;){
   if(Date.now()-fitAt>500){fitAt=Date.now();const f=fitLive();if(f)liveFit=f}
   if(tst.state!=='idle'&&T.state==='idle'&&T.run)rememberOffset(T.run);
   while(paMarks.length&&bn&&paMarks[0].t<bt[0])paMarks.shift();
-  if(r.samples.length){const off=Date.now()/1000-r.samples[r.samples.length-1][0];clk=clk==null||Math.abs(off-clk)>5?off:clk+(off-clk)*.05}seq=r.seq;info=r;tst=r.test||tst;rec=r.rec||rec;status()}
+  if(r.samples.length){const off=Date.now()/1000-r.samples[r.samples.length-1][0];clk=clk==null||Math.abs(off-clk)>5?off:clk+(off-clk)*.05}seq=r.seq;info=r;tst=r.test||tst;rec=r.rec||rec;PRN=r.printer||null;status()}
  catch(e){liveErr=e.message;status()}await sleep(liveErr?1500:110)}}
 
 /* ---- status ---- */
@@ -589,7 +746,12 @@ function status(){const s=$('#cSrc'),k=info.source;let cls='',txt='';
  $('#tstart').disabled=!!busy||rec.active;$('#tcancel').hidden=tst.state!=='running';
  const p=$('#tprog');p.hidden=!busy;p.firstElementChild.style.width=Math.round((tst.progress||0)*100)+'%';
  $('#tstat').textContent=busy?((tst.note||('PA '+(tst.pa??'-')))+(tst.phase?'  ·  '+tst.phase+' leg':'')+'  ·  '+Math.round(tst.elapsed||0)+' s'):'';
- if(busy||status.wasBusy)liveSearch(tst);status.wasBusy=busy}
+ if(busy||status.wasBusy)liveSearch(tst);status.wasBusy=busy;printerChips(busy)}
+/* nozzle temperature (current / set) and Z, in every theme */
+function printerChips(busy){const p=PRN,ct=$('#cTemp'),cz=$('#cZ');ct.hidden=cz.hidden=!p;
+ if(p){ct.querySelector('span').innerHTML=`Extruder <b style="color:var(--text)">${fmt(p.temp,1)}</b> / ${fmt(p.target,0)} &deg;C`;cz.textContent='Z '+fmt(p.z,2)}
+ $('#navstat').innerHTML=p?`<div><span>Extruder</span><b class="num">${fmt(p.temp,1)} / ${fmt(p.target,0)} &deg;C</b></div><div class="bar"><i style="width:${clamp(p.temp/300*100,0,100)}%"></i></div>
+  <div><span>Load cell</span><b class="num">${info.rate||0} Hz</b></div><div><span>Position Z</span><b class="num">${fmt(p.z,2)} mm</b></div><div><span>State</span><b>${busy?'PA test running':rec.active?'Recording':'Ready'}</b></div>`:''}
 
 /* ---- live drawing ---- */
 function liveStats(x0,x1){const a=lb(bt,x0,bn),b=lb(bt,x1+1e-9,bn),n=b-a;if(!n){['#sMin','#sMax','#sMean','#sStd'].forEach(s=>$(s).textContent='-');return}
@@ -601,7 +763,7 @@ function finishSearch(m){if(!m||m.kind!=='test')return;const r=(m.analysis||{}).
 function liveData(last){const sig={t:bt.subarray(0,bn),f:bf.subarray(0,bn),color:css('--trace')};
  const legs=liveLegs.map(g=>Object.assign({},g,{pa:paAt(g.t0)})),cmd=commandSeries(legs,liveFit,{shift:DELAYMODE==='adj'?(store.get('offset',0)||0):0,smooth:DEF&&DEF.extruder&&DEF.extruder.smooth_time});
  return{series:[sig,...cmd],ovSeries:[sig],legend:cmdLegend(cmd.length>0),tmin:bn?bt[0]:null,tmax:bn?bt[bn-1]:null,
-  vlines:paMarks.map(m=>({t:m.t,label:m.label,color:css('--amber')})),unit:info.unit==='g'?'g':'',dec:1,tfmt:t=>ftick(t,.1),clock:clk,
+  vlines:paMarks.map(m=>({t:m.t,label:m.label,color:css('--cmd')})),unit:info.unit==='g'?'g':'',dec:1,tfmt:t=>ftick(t,.1),clock:clk,
   empty:rpc.up?'Waiting for load cell data':'Offline',now:last,nowText:last==null?'':fmt(last,1)}}
 function frame(){const onL=$('#live').classList.contains('on'),onT=$('#test').classList.contains('on');
  if(!document.hidden&&(onL||onT)){let last=null;
@@ -630,27 +792,43 @@ const ADV=[
  ['Search','fg3',[['upper_step','Upper step','',.005,'Added while there is no dip'],['pa_limit','PA limit','',.01,'No dip here: test fails'],['skip_first','First pulse','',[['1','Skip'],['0','Use']],'']]],
  ['Position and safety','fg',[['test_x','Test X','mm',1,'Where the nozzle extrudes'],['test_y','Test Y','mm',1,''],['park_x','Park X','mm',1,'Where it waits after'],['park_y','Park Y','mm',1,''],
    ['max_filament','Filament cap','mm',10,'A test that could use more is refused']]]];
-const FKEY='form.v3';
+const FKEY='form.v4';
 let DEF=null;
 const area=()=>DEF&&DEF.extruder&&DEF.extruder.filament_area||Math.PI*.875*.875;
 const smoothT=()=>Math.min(Math.max((DEF&&DEF.extruder&&DEF.extruder.smooth_time)||.04,.01),.1);
 function fieldHTML([k,l,u,st,hint,col],v){const ctl=Array.isArray(st)?`<select name="${k}">${st.map(o=>{const[val,lab]=Array.isArray(o)?o:[o,o];return`<option value="${esc(val)}"${String(val)===String(v)?' selected':''}>${esc(lab)}</option>`}).join('')}</select>`
   :`<input name="${k}" ${st==='text'?'type="text"':`type="number" step="${st}" inputmode="decimal"`} value="${esc(v)}">`;
  return`<label class="f" title="${esc(hint)}"><span class="lb">${col?`<i class="d ${col}"></i>`:''}${l}</span><div class="inp" data-k="${k}">${ctl}${u?`<em>${u}</em>`:''}</div>${hint?`<span class="hint">${esc(hint)}</span>`:''}</label>`}
+const ADVKEYS=ADV.flatMap(g=>g[2].map(f=>f[0])),POSKEYS=['test_x','test_y','park_x','park_y'];
 async function loadDefaults(){try{const d=await api('defaults');DEF=d;const saved=store.get(FKEY,{}),val=k=>saved[k]??d[k]??'';
-  const advOpen=store.get('adv',false);
-  $('#form').innerHTML=`<div class="card main">${MAINF.map(f=>fieldHTML(f,val(f[0]))).join('')}</div>
-   <details class="adv"${advOpen?' open':''}><summary>Pulses, prime and position</summary><div class="in">
-    <svg id="pulse" viewBox="0 0 420 150" role="img" aria-label="Pulse shape for one PA value"></svg>
-    ${ADV.map(([g,cls,fs])=>`<div><h4>${g}</h4><div class="fg ${cls}">${fs.map(f=>fieldHTML(f,val(f[0]))).join('')}</div></div>`).join('')}
-    <div class="row"><span class="small dim">Defaults come from pa_loadcell.cfg.</span><span class="sp"></span><button type="button" id="treset" class="quiet">Reset to defaults</button></div></div></details>`;
-  $('#form details.adv').addEventListener('toggle',e=>store.set('adv',e.target.open));
-  $('#treset').onclick=()=>{store.set(FKEY,{});loadDefaults()};
-  $$('#form input,#form select').forEach(i=>i.addEventListener('input',()=>{store.set(FKEY,formVals());summary()}));summary();
+  $('#form').innerHTML=`<div class="card main">${MAINF.map(f=>fieldHTML(f,val(f[0]))).join('')}
+   <div class="small dim" id="advLine"></div></div>`;
+  $$('#form input,#form select').forEach(i=>i.addEventListener('input',()=>{store.set(FKEY,mainVals());summary()}));
+  renderSettings();summary();
   const L=d.limits||{};if(L.required_z!=null){const fx=$('#fixed');fx.hidden=false;
    fx.innerHTML=`Before you start: heat the nozzle (at least <b>${fmt(L.min_temp,0)} &deg;C</b>), home all axes and move to <b>Z ${fmt(L.required_z,1)} mm</b>. These two limits are set in pa_loadcell.cfg. Klipper's own PA is held at 0 during the test and put back after.`}}
  catch(e){$('#form').innerHTML='<div class="card empty">Could not read defaults: '+esc(e.message)+'</div>'}}
-const formVals=()=>Object.fromEntries($$('#form input,#form select').map(i=>[i.name,i.type==='number'?parseFloat(i.value):i.value]));
+const numv=i=>i.type==='number'?parseFloat(i.value):i.value;
+const mainVals=()=>Object.fromEntries($$('#form input,#form select').map(i=>[i.name,numv(i)]));
+/* everything a test needs: the two main fields + the saved defaults */
+const formVals=()=>{const v={};for(const k of ADVKEYS)if(DEF&&DEF[k]!=null)v[k]=typeof DEF[k]==='number'?DEF[k]:String(DEF[k]);return Object.assign(v,mainVals())};
+/* ---- Settings: test defaults + positions, saved to pa_loadcell.cfg ---- */
+function renderSettings(only){if(!DEF)return;
+ if(!only||only==='#defForm')$('#defForm').innerHTML=ADV.filter(g=>g[0]!=='Position and safety').map(([g,cls,fs])=>`<div style="margin-bottom:12px"><h4>${g}</h4><div class="setform">${fs.map(f=>fieldHTML(f,DEF[f[0]]??'')).join('')}</div></div>`).join('')+
+  `<div><h4>Run</h4><div class="setform">${fieldHTML(['max_filament','Filament cap','mm',10,'A test that could use more is refused'],DEF.max_filament)}${fieldHTML(['pa_max','Check up to','',.005,'Default for the PA test tab'],DEF.pa_max)}</div></div>`;
+ if(!only||only==='#posForm')$('#posForm').innerHTML=`<div class="setform">${[['test_x','Test X','mm',1,'Where the nozzle extrudes'],['test_y','Test Y','mm',1,''],['park_x','Park X','mm',1,'Where it waits after'],['park_y','Park Y','mm',1,'']].map(f=>fieldHTML(f,DEF[f[0]]??'')).join('')}</div>`;
+ const L=DEF.limits||{};$('#safeForm').innerHTML=[['Min nozzle temperature',L.min_temp,'°C'],['Test height Z',L.required_z,'mm'],['Z tolerance',L.z_tol,'mm'],['No-data timeout',L.timeout,'s']].map(([l,v,u])=>`<label class="f">${l}<div class="inp"><input value="${esc(v??'')}" disabled><em>${u}</em></div></label>`).join('');
+ if(!only||only==='#defForm'){$$('#defForm input,#defForm select').forEach(i=>i.addEventListener('input',()=>{drawPulse(Object.assign({},DEF,setVals('#defForm')));$('#defMsg').textContent='not saved yet'}));
+ drawPulse(DEF);$('#defMsg').textContent=''}
+ $('#advLine').innerHTML=`Fast ${fmt(DEF.fast_flow,1)} mm³/s for ${fmt(DEF.fast_time,2)} s, slow ${fmt(DEF.slow_flow,1)} mm³/s, ${DEF.cycles} pulses per PA, test at X${fmt(DEF.test_x,0)} Y${fmt(DEF.test_y,0)}. <a href="#" id="advEdit" style="color:var(--amber)">Change in Settings</a>`;
+ $('#advEdit').onclick=e=>{e.preventDefault();setTab('set');$('#setDef').scrollIntoView({block:'start',behavior:'smooth'})}}
+const setVals=sel=>Object.fromEntries($$(sel+' input,'+sel+' select').map(i=>[i.name,i.name==='skip_first'?parseInt(i.value):numv(i)]));
+async function saveDefaults(sel){if(!DEF)return;const v=setVals(sel),ch={};for(const[k,x]of Object.entries(v))if(String(x)!==String(DEF[k]))ch[k]=x;
+ if(!Object.keys(ch).length){toast('Nothing changed');return}
+ try{const r=await api('config_save',{values:ch},15000);Object.assign(DEF,r.defaults);renderSettings(sel);summary();toast('Saved to '+(r.saved||'pa_loadcell.cfg').split('/').pop())}
+ catch(e){toast('Not saved: '+e.message,8000)}}
+$('#defSave').onclick=()=>saveDefaults('#defForm');$('#posSave').onclick=()=>saveDefaults('#posForm');$('#defReset').onclick=()=>renderSettings('#defForm');
+$$('#setnav button').forEach(b=>b.onclick=()=>{$$('#setnav button').forEach(x=>x.classList.toggle('on',x===b));$('#'+b.dataset.to).scrollIntoView({block:'start',behavior:'smooth'})});
 const TYP=7,MAXN=14;
 function plan(v){const A=area(),fast=v.fast_flow/A*v.fast_time,slow=v.slow_flow/A*v.slow_time,per=slow+v.cycles*(fast+slow),
   prime=v.prime_length>0?v.prime_length:0,primeT=prime&&v.prime_flow>0?prime*A/v.prime_flow:0,perS=v.rest_time+v.slow_time+v.cycles*(v.fast_time+v.slow_time),
@@ -671,8 +849,8 @@ function drawPulse(v){const sv=$('#pulse');if(!sv)return;const W=420,x0=10,x1=W-
   <text x="${s1+v.slow_time*sx/2}" y="${ys-16}" text-anchor="middle"><tspan class="v">${fmt(v.slow_flow,1)}</tspan> ${fmt(v.slow_time,1)} s</text>
   <text x="${x0+v.slow_time*sx/2}" y="${base+14}" text-anchor="middle">lead-in</text>
   <text x="${x1}" y="${base+14}" text-anchor="end">${v.cycles} pulses per PA value${v.cycles>shown?' (first '+shown+' shown)':''}</text>
-  <text x="${x0}" y="${base+32}">&#9650; PA push at each speed-up, &#9660; pull-back at each slow-down (extrude-only, no XY move)</text>`}
-function summary(){if(!$('#form input'))return;const v=formVals(),p=plan(v),bad=[],warn=[],ex=DEF&&DEF.extruder||{};
+  <text x="${x0}" y="${base+32}">&#9650; PA push at each speed-up, &#9660; pull-back at each slow-down</text>`}
+function summary(){if(!$('#form input')||!DEF)return;const v=formVals(),p=plan(v),bad=[],warn=[],ex=DEF&&DEF.extruder||{};
  $$('#form .inp').forEach(e=>e.classList.remove('bad'));const mark=k=>{const e=$(`#form .inp[data-k="${k}"]`);if(e)e.classList.add('bad')};
  if(!(v.pa_limit>0&&v.pa_limit<=2)){bad.push('PA limit must be between 0 and 2');mark('pa_limit')}
  if(!(v.pa_max>0&&v.pa_max<=v.pa_limit)){bad.push('Check up to must be above 0 and at most the PA limit');mark('pa_max')}
@@ -698,7 +876,7 @@ function summary(){if(!$('#form input'))return;const v=formVals(),p=plan(v),bad=
   ${SI(TI.spool)}<div><b>${p.filTyp.toFixed(0)} mm</b> of filament <span class="sub">at most ${p.filMax.toFixed(0)} of the ${fmt(v.max_filament,0)} mm cap</span><div class="meter ${pct>=100?'bad':pct>80?'warn':''}"><i style="width:${pct}%"></i></div></div>
   ${SI(TI.drop)}<div>Fast leg <b>${p.fast.toFixed(2)} mm</b> at ${p.vf.toFixed(1)} mm/s <span class="sub">PA push window ${Math.round(p.sm*1000)} ms (your smooth time)</span></div>`;
  $('#checks').innerHTML=bad.length||warn.length?`<div class="alert ${bad.length?'bad':''}">${bad.concat(warn).map(esc).join('<br>')}</div>`:'';
- drawPulse(v);$('#tstart').dataset.ok=bad.length?'0':'1'}
+ $('#tstart').dataset.ok=bad.length?'0':'1'}
 $('#tstart').onclick=async()=>{if($('#tstart').dataset.ok==='0'){toast('Fix the settings marked in red first');return}
  const v=formVals();const q=s=>/\s/.test(s)?'"'+s.replace(/"/g,'')+'"':s;
  const script='PA_LOADCELL_TEST '+Object.entries(v).filter(([k,x])=>x!==''&&!Number.isNaN(x)).map(([k,x])=>k.toUpperCase()+'='+(typeof x==='string'?q(x):x)).join(' ');
@@ -722,10 +900,37 @@ function liveSearch(T){const running=T.state&&T.state!=='idle';if(running&&T.sea
 let runs=[],kind='all',cur=null,vmode='trace',vedge='fall';const meta={},segCache={};
 const OVPTS=4000;   // points for the overview of a long recording; detail is loaded per view
 const hv=new Viewer($('#hvw'),{key:'hist',label:'Recorded load cell force',onView:needDetail});
-async function loadRuns(){try{runs=(await api('runs',{},60000)).runs;renderRuns()}catch(e){$('#runs').innerHTML='<div class="empty">'+esc(e.message)+'</div>'}}
-const gradeHTML=g=>g?`<span class="grade ${g}"><i></i>${g}</span>`:'';
+async function loadRuns(){try{runs=(await api('runs',{},60000)).runs;renderRuns();renderLastRes()}catch(e){$('#runs').innerHTML='<div class="empty">'+esc(e.message)+'</div>'}}
+const gradeLabel=g=>document.documentElement.dataset.theme==='cat'?({good:'good kitty',fair:'okay',poor:'try again'}[g]||g):g;
+const gradeHTML=g=>g?`<span class="grade ${g}"><i></i>${gradeLabel(g)}</span>`:'';
+/* ---- theme cards, import / export ---- */
+function themeCard(t,on,extra=''){const[bg,p,a]=t.pv;return`<div class="thc" role="button" tabindex="0" data-th="${esc(t.id)}" aria-pressed="${on}"><div class="pv" style="background:${bg}">
+  <div style="height:9px;width:55%;background:${p};border-radius:3px"></div><div style="height:34px;background:${p};border-radius:${t.base==='cat'||t.id==='cat'?12:4}px;display:flex;align-items:flex-end;padding:7px"><div style="height:7px;width:42%;background:${a};border-radius:3px"></div></div></div>
+  <div class="nm"><b>${esc(t.name)}${on?' ✓':''}</b><span>${esc(t.desc)}</span>${extra}</div></div>`}
+function renderThemeCards(){if(!$('#thBuilt'))return;
+ $('#thBuilt').innerHTML=BUILTIN.map(t=>themeCard(t,THEME.id===t.id,t.modes.length>1?`<div class="seg" style="margin-top:6px">${t.modes.map(m=>`<button data-mode="${m}" data-for="${t.id}" aria-pressed="${THEME.id===t.id&&THEME.mode===m}">${m==='dark'?(t.id==='cat'?'Mocha':'Dark'):(t.id==='cat'?'Latte':'Light')}</button>`).join('')}</div>`:'')).join('');
+ $('#thCustom').innerHTML=CUSTOM.length?CUSTOM.map(t=>{const tk=t.tokens||{};return themeCard({id:t.id,name:t.name,base:t.base,desc:`based on ${t.base}${t.author?', by '+t.author:''}`,pv:[tk.bg||'#222',tk.panel||'#333',tk.accent||'#888']},THEME.id===t.id,
+   `<div class="row" style="margin-top:6px;gap:4px"><button class="quiet" data-exp="${esc(t.id)}" style="padding:2px 8px">Export</button><button class="quiet danger" data-del="${esc(t.id)}" style="padding:2px 8px">Delete</button></div>`)}).join(''):'<div class="small dim">None yet. Export a theme, edit the colours in the file, and import it here.</div>';
+ $$('.thc').forEach(c=>{c.onclick=e=>{if(e.target.closest('button'))return;applyTheme({id:c.dataset.th,mode:THEME.mode})};c.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();c.click()}}});
+ $$('#thBuilt [data-mode]').forEach(b=>b.onclick=()=>applyTheme({id:b.dataset.for,mode:b.dataset.mode}));
+ $$('#thCustom [data-exp]').forEach(b=>b.onclick=()=>downloadJSON(CUSTOM.find(t=>t.id===b.dataset.exp),b.dataset.exp+'.theme.json'));
+ $$('#thCustom [data-del]').forEach(b=>b.onclick=async()=>{if(!confirm('Delete this theme from the printer?'))return;try{await api('theme_delete',{id:b.dataset.del});if(THEME.id===b.dataset.del)applyTheme({id:'piro',mode:'dark'});await loadThemes()}catch(e){toast(e.message)}})}
+async function loadThemes(){try{CUSTOM=(await api('theme_list')).themes||[]}catch{CUSTOM=[]}
+ if(WANT&&CUSTOM.some(t=>t.id===WANT.id)){applyTheme(WANT,false);WANT=null}else if(CUSTOM.some(t=>t.id===THEME.id))applyTheme(THEME,false);renderThemeCards()}
+function downloadJSON(o,name){const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(o,null,1)],{type:'application/json'}));a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),3000)}
+$('#thExport').onclick=()=>{const c=CUSTOM.find(t=>t.id===THEME.id),b=BUILTIN.find(t=>t.id===THEME.id),tokens={};for(const[k,v]of Object.entries(TOKMAP)){const x=css(v);if(x)tokens[k]=x}
+ downloadJSON({format:'piro_edge_theme',version:1,name:(c?c.name:b.name)+' copy',base:document.documentElement.dataset.theme,mode:document.documentElement.dataset.mode,author:'',tokens},'my-theme.theme.json')};
+$('#thImport').onclick=()=>$('#thFile').click();
+$('#thFile').onchange=async e=>{const f=e.target.files[0];e.target.value='';if(!f)return;try{const o=JSON.parse(await f.text());const r=await api('theme_save',{theme:o});await loadThemes();applyTheme({id:r.theme.id});toast('Theme "'+r.theme.name+'" added')}
+ catch(err){toast('Import failed: '+(err instanceof SyntaxError?'not a JSON file':err.message),8000)}};
+/* last finished test on the PA test tab */
+function renderLastRes(){const box=$('#lastres');if(!box)return;const r=(runs||[]).find(x=>x.kind==='test'&&x.result&&x.result.pa!=null);box.hidden=!r;if(!r)return;
+ const cmd='SET_PRESSURE_ADVANCE ADVANCE='+r.result.pa;
+ box.innerHTML=`<div class="row"><b style="font-size:13px">Last result</b><span class="sp"></span><span class="small dim">${esc(r.filament||r.name)} · ${esc(r.date||'')}</span></div>
+  <div class="row" style="margin-top:8px;align-items:flex-end;gap:12px"><span class="pav num">${r.result.pa}</span><span class="dim num">± ${r.result.unc}</span>${gradeHTML(r.result.grade)}</div>
+  <div class="row" style="margin-top:10px"><code style="background:var(--bg);border:1px solid var(--rule);border-radius:4px;padding:4px 8px;font-size:12px">${cmd}</code><button class="quiet" data-cp="${cmd}" onclick="navigator.clipboard&&navigator.clipboard.writeText(this.dataset.cp).then(()=>toast('Copied'),()=>toast(this.dataset.cp))">Copy</button></div>`}
 function renderRuns(){const q=$('#search').value.toLowerCase();const list=runs.filter(r=>(kind==='all'||r.kind===kind)&&(!q||(r.name+' '+(r.filament||'')+' '+(r.notes||'')).toLowerCase().includes(q)));
- $('#runs').innerHTML=list.map(r=>`<details class="run card" data-id="${r.id}"><summary class="runline"><b>${esc(r.name)}</b><span style="color:var(--dim)">${esc(r.filament||'')}</span>
+ $('#runs').innerHTML=list.map(r=>`<details class="run card" data-id="${r.id}"><summary class="runline"><b>${esc(r.name)}</b><span style="color:var(--dim)">${[esc(r.filament||''),r.nozzle_temp!=null?fmt(r.nozzle_temp,0)+' °C':''].filter(Boolean).join(' · ')}</span>
   ${r.kind==='test'?(r.result?`<span class="res">PA ${r.result.pa}</span><span class="num dim">&plusmn; ${r.result.unc}</span>${gradeHTML(r.result.grade)}`:`<span class="chip ${r.status==='error'?'bad':'warn'}"><i></i>${r.status==='error'?'no answer':esc(r.status)}</span>`):'<span class="chip">Recording</span>'}
   <span class="sp"></span>${r.imported?'<span class="chip">imported</span>':''}<span class="num dim">${r.segments} ${r.kind==='test'?'PA values':'segment'}${r.pa_pick!=null?', your pick '+r.pa_pick:''}</span><span class="num dim">${esc(r.date)}</span></summary><div class="body" style="color:var(--dim)">Loading</div></details>`).join('')||
   '<div class="empty">'+(runs.length?'No runs match.':'No runs yet. Start a PA test or press Record on the Live tab.')+'</div>';
@@ -875,11 +1080,20 @@ function drawThumb(cv,s,res){const p=s.piro,F=p&&fig(cv,{x0:0,x1:1,y0:-.35,y1:.3
  p.fall_curve.forEach((v,j)=>{const x=F.L+j/(n-1)*F.pw,y=F.Y(clamp(v,-.35,.35));j?c.lineTo(x,y):c.moveTo(x,y)});c.stroke()}
 function drawThumbs(){for(let i=thumbs.length-1;i>=0;i--)if(!thumbs[i][0].isConnected)thumbs.splice(i,1);for(const[cv,s,res]of thumbs)drawThumb(cv,s,res)}
 const resOf=m=>(m.analysis||{}).result||null;
+/* the settings a test ran with: temperature, flows, times */
+function runInfoHTML(m){const s=m.settings||{},n=(m.segments||[]).length,secs=(m.segments||[]).reduce((a,x)=>a+(x.duration||0),0),lm=m.leg_mm||{};
+ const used=lm.fast!=null&&s.cycles?n*(lm.slow+s.cycles*(lm.fast+lm.slow))+(s.prime_length||0):null,f=(v,d)=>v==null?'-':fmt(+v,d);
+ const prime=s.prime_length!=null?(s.prime_length>0?`${f(s.prime_length,0)} mm at ${f(s.prime_flow,1)} mm³/s`:'off'):(s.warmup!=null?f(s.warmup,0)+' s warm-up':'-');
+ const cells=[['Nozzle temperature',m.nozzle_temp!=null?f(m.nozzle_temp,0)+' °C':'-',''],['Fast flow',`${f(s.fast_flow,1)} mm³/s · ${f(s.fast_time,2)} s`,'fst'],['Slow flow',`${f(s.slow_flow,2)} mm³/s · ${f(s.slow_time,1)} s`,'slw'],
+  ['Pulses per PA',s.cycles!=null?s.cycles+((m.analysis||{}).skip_first!==false?' (first skipped)':''):'-',''],['Prime',prime,''],['Smoothing',m.smooth_time!=null?Math.round(m.smooth_time*1000)+' ms':'-',''],
+  ['PA values tested',n+(m.search?'':' (fixed list)'),''],['Time · filament',`${fdur(secs)}${used!=null?' · '+Math.round(used)+' mm':''}`,'']];
+ return`<div class="rinfo">${cells.map(([k,v,c])=>`<div class="${c}">${k}<b class="num">${esc(v)}</b></div>`).join('')}</div>`}
 function renderRun(id,box){const m=meta[id],st=m.settings||{},test=m.kind==='test',res=test?resOf(m):null;
  const near=m.pa_pick!=null&&test&&m.segments.length?m.segments.reduce((a,b)=>Math.abs(b.pa-m.pa_pick)<Math.abs(a.pa-m.pa_pick)?b:a).idx:null;
  const limOf=s=>Math.max(s.piro?s.piro.limit:0,(res&&res.floor)||0);
  box.style.color='';box.innerHTML=`${m.imported?`<div class="small dim" style="margin-bottom:8px">Imported ${esc(m.imported.at)} (originally Run ${esc(m.imported.from_id)}, ${esc(m.imported.from_date)})</div>`:''}
   ${test?answerHTML(m,res):''}
+  ${test?runInfoHTML(m):''}
   ${m.error&&test&&res&&res.pa!=null?`<div style="color:var(--amber);margin-bottom:8px">${esc(m.error)}</div>`:''}
   ${test?`<div class="how"><h3>${res&&res.pa!=null?'How the value was chosen':'What the test saw'}</h3>${res?stepsHTML(m,res):''}
    <div class="figs">
@@ -1020,11 +1234,12 @@ $('#calign').onchange=renderCmp;$('#cclear').onclick=()=>{cmp.length=0;renderCmp
 
 /* ---- tabs ---- */
 function setTab(t){$$('#tabs button').forEach(b=>b.setAttribute('aria-selected',b.dataset.tab===t));$$('section').forEach(s=>s.classList.toggle('on',s.id===t));
- if(t==='hist'){loadRuns();setTimeout(()=>{hv.render();redrawFigs();drawThumbs()},0)}if(t==='cmp')setTimeout(renderCmp,0);if(t==='test'){if(!DEF)loadDefaults();setTimeout(()=>liveSearch(tst),0)}}
+ if(t==='set'){renderThemeCards();if(!DEF)loadDefaults()}
+ if(t==='hist'){loadRuns();setTimeout(()=>{hv.render();redrawFigs();drawThumbs()},0)}if(t==='cmp')setTimeout(renderCmp,0);if(t==='test'){if(!DEF)loadDefaults();if(!runs.length)loadRuns();setTimeout(()=>liveSearch(tst),0)}}
 $$('#tabs button').forEach(b=>b.onclick=()=>setTab(b.dataset.tab));
 function redrawAll(){for(const v of viewers)v.render();try{drawViewer();drawThumbs();redrawFigs();renderCmp();liveSearch(tst)}catch{}}
 let rzT=0;addEventListener('resize',()=>{for(const v of viewers){v.chart.render();v.ov.render()}cchart.render();clearTimeout(rzT);rzT=setTimeout(()=>{drawThumbs();redrawFigs();liveSearch(tst)},150)});
-$('#ccmd').innerHTML=CMDHTML;paintInvert();paintCmd();window.ready=true;
+$('#ccmd').innerHTML=CMDHTML;$('#setCmd').innerHTML=CMDHTML;paintInvert();paintCmd();window.ready=true;renderThemeCards();
 rpc.connect();pollLoop();frame();renderCmp();
 (function waitDefaults(){if(rpc.up)loadDefaults();else setTimeout(waitDefaults,300)})();
 setTab(Q.get('tab')||'live');
