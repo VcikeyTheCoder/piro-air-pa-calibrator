@@ -1173,7 +1173,7 @@ function drawViewer(){if(!cur)return;const{seg,m,idx}=cur;$$('#vmode button').fo
   const cs=segCommand(m,seg,sm);hv.d.series=hv.d.series.concat(cs.series);hv.d.legend=cmdLegend(cs.series.length>0);
   hv.render();
   const thin=seg.decimated&&!(useChunk&&!chunk.dec);
-  $('#vinfo').textContent=(sm?sm.samples:seg.samples)+' samples'+(seg.rate?', '+seg.rate+' Hz':'')+'.'+(bandsOf(seg).length?' Blue bands are slow phases, amber bands are fast phases.':'')+(thin?' Zoom in to see every sample.':'')+cs.info}
+  $('#vinfo').textContent=(sm?sm.samples:seg.samples)+' samples'+(seg.rate?', '+seg.rate+' Hz':'')+'.'+(bandsOf(seg).length?' Teal bands: slow. Amber bands: fast.':'')+(thin?' Zoom in to see every sample.':'')+cs.info}
  else{const wins=edgeWindows(seg,vedge,e),series=wins.map(w=>({t:w.t,f:w.f,color:css('--dim'),alpha:.45,w:1}));
   let cmdS=[];
   if(e){const b=baselineOf(wins);series.push({t:e.t,f:e.y.map(v=>v*e.amp+b),color:css('--trace'),w:2.2,name:'mean'});
@@ -1190,7 +1190,7 @@ function segCommand(m,seg,sm){const fl=m.flows||(m.settings&&m.settings.fast_flo
  const legs=(seg.markers||[]).filter(k=>k.name==='slow'||k.name==='fast').map(k=>({t0:k.t0,t1:k.t1,flow:fl[k.name],pa:seg.pa})).sort((a,b)=>a.t0-b.t0);
  const sh=delayOf(m),series=commandSeries(legs,sm.cmd,{shift:sh,smooth:m.smooth_time});
  const off=(m.analysis||{}).offset;
- return{series,info:` Dashed: what the extruder was told, fitted at ${fmt(Math.abs(sm.cmd.gain),1)} ${seg.unit==='g'?'g':'counts'} per mm³/s`+(off!=null?`; sensor delay ${Math.round(off*1000)} ms (${DELAYMODE==='adj'?'line shifted by it':'raw times'})`:'')+'.'}}
+ return{series,info:` Dashed: command, ${fmt(Math.abs(sm.cmd.gain),1)} ${seg.unit==='g'?'g':'counts'} per mm³/s`+(off!=null?`. Sensor delay ${Math.round(off*1000)} ms (${DELAYMODE==='adj'?'adjusted':'raw'})`:'')+'.'}}
 /* ideal instant step at the edge (0 ms), in the units of the edge curve */
 function idealStep(e,fit,pa,m,pushColor){const pre=-(e.pre??.3),post=e.post??.3;
  return commandSeries([{t0:pre,t1:0,flow:0},{t0:0,t1:post,flow:1,pa}],fit,{shift:delayOf(m),smooth:m.smooth_time,pushColor})}
@@ -1228,7 +1228,7 @@ async function renderCmp(){$('#nCmp').textContent=cmp.length;$$('#cmode button')
     return{t:sg.t.map(x=>x-sh),f:sg.f,color:PAL[i%PAL.length],name:e.label}});
    cchart.set({series:series.concat(extra),legend:cmdLegend(extra.length>0),invert:INVERT,unit:cmp[0].unit==='g'?'g':'',dec:1,tfmt:t=>t.toFixed(2)+' s'})}catch(e){toast(e.message)}}
  const rows=cmp.map((e,i)=>{const d=e.edge&&e.edge[cedge];return`<tr><td><i style="display:inline-block;width:10px;height:3px;background:${PAL[i%PAL.length]};margin-right:8px"></i>${esc(e.label)}</td><td class="num">${d&&d.rise!=null?Math.round(d.rise*1000)+' ms':'-'}</td><td class="num">${d?Math.round(d.overshoot*100)+'%':'-'}</td><td class="num">${d?.snr??'-'}</td><td class="num">${d?.n??'-'}</td></tr>`}).join('');
- $('#ctable').innerHTML=`<table><thead><tr><th>Curve</th><th>10-90% ${cedge==='rise'?'rise':'fall'}</th><th>${cedge==='rise'?'Overshoot':'Dip below the line'}</th><th>Signal to noise</th><th>Edges</th></tr></thead><tbody>${rows}</tbody></table>`}
+ $('#ctable').innerHTML=`<table><thead><tr><th>Curve</th><th>10-90% ${cedge==='rise'?'rise':'fall'}</th><th>${cedge==='rise'?'Overshoot':'Dip'}</th><th>Signal to noise</th><th>Edges</th></tr></thead><tbody>${rows}</tbody></table>`}
 $$('#cmode button').forEach(b=>b.onclick=()=>{cmode=b.dataset.m;renderCmp()});$$('#cedge button').forEach(b=>b.onclick=()=>{cedge=b.dataset.e;renderCmp()});
 $('#calign').onchange=renderCmp;$('#cclear').onclick=()=>{cmp.length=0;renderCmp();$$('.pa .add').forEach(a=>a.setAttribute('aria-pressed','false'))};
 
