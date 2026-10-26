@@ -145,6 +145,8 @@ At the bottom: your own PA pick and notes, **Re-analyse**, **Export run** and **
 
 ### Settings
 
+![Settings](docs/images/settings.png)
+
 | Section | What it holds |
 |---|---|
 | Appearance | The theme, and your own imported themes |
@@ -158,6 +160,10 @@ safety options are not touched. The previous file is kept as `pa_loadcell.cfg.ba
 checked before saving, and saving is refused while a test runs. The `PA_LOADCELL_TEST` command uses the new values
 straight away; no restart is needed.
 
+![Test defaults](docs/images/settings-defaults.png)
+
+The pulse picture at the top changes as you edit the values, so you can see the test before saving it.
+
 ### Themes
 
 | Theme | Look |
@@ -167,6 +173,13 @@ straight away; no restart is needed.
 | Fluidd | Fluidd-style icon rail |
 | RatOS | Zinc and lime, numbered steps |
 | Cat | Catppuccin Mocha (dark) or Latte (light), with a cat |
+
+| | |
+|---|---|
+| **PIRO** dark<br>![PIRO](docs/images/theme-piro.png) | **PIRO** light<br>![PIRO light](docs/images/theme-piro-light.png) |
+| **Mainsail**<br>![Mainsail](docs/images/theme-mainsail.png) | **Fluidd**<br>![Fluidd](docs/images/theme-fluidd.png) |
+| **RatOS**<br>![RatOS](docs/images/theme-ratos.png) | **Cat** Mocha<br>![Cat Mocha](docs/images/theme-cat.png) |
+| **Cat** Latte<br>![Cat Latte](docs/images/theme-cat-light.png) | |
 
 Themes change colours and layout only; every feature works the same. The chosen theme is remembered by each
 browser. A theme can also be picked with the address: `/loadcell/?theme=cat&mode=light`.
