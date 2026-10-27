@@ -39,27 +39,85 @@ class Extruder:
 
 class Toolhead:
     def __init__(s, p): s.p, s.ext = p, Extruder(p)
-    def get_last_move_time(s): return s.p.pt
-    def dwell(s, d): s.p.pt += d
-    def wait_moves(s): pass
+    def _fl(s): s.p.objs['gcode'].flush()
+    def get_last_move_time(s): s._fl(); return s.p.pt
+    def dwell(s, d): s._fl(); s.p.pt += d
+    def wait_moves(s): s._fl()
     def get_position(s): return [0, 0, s.p.z, 0]
     def get_extruder(s): return s.ext
     def get_status(s, now):
         return {'homed_axes': 'xyz', 'axis_minimum': [0, 0, 0],
                 'axis_maximum': [250, 250, 250], 'max_accel': 4000,
-                'max_accel_to_decel': 2000}
+                'max_accel_to_decel': 2000, 'max_velocity': 300,
+                'minimum_cruise_ratio': 0.5}
 
 class Gcode:
     """Times E moves like Klipper: an XY+E move runs at F over the XY
-    distance, an extrude-only move at F over the E distance."""
-    def __init__(s, p): s.p, s.n_e, s.pos = p, 0, {'X': 0.0, 'Y': 0.0}
+    distance, an extrude-only move at F over the E distance. XY+E moves are
+    planned like Klipper's lookahead (same direction: the lower speed at the
+    junction, a turn: 0, accel from SET_VELOCITY_LIMIT) and get Klipper's
+    pressure advance: filament rate r + K * dr/dt, smoothed with Klipper's
+    triangle weighting over smooth_time (kin_extruder.c)."""
+    DT = 0.001
+    def __init__(s, p):
+        s.p, s.n_e, s.pos = p, 0, {'X': 0.0, 'Y': 0.0}
+        s.pa, s.sm, s.accel, s.pending = 0.0, 0.04, 4000.0, []
+    def flush(s):
+        mv, s.pending = s.pending, []
+        if not mv: return
+        n = len(mv)
+        for i, m in enumerate(mv):          # junction speeds
+            prev = mv[i - 1] if i else None
+            m['v0'] = 0. if not prev or prev['dir'] != m['dir'] else min(prev['v'], m['v'])
+        for i, m in enumerate(mv):
+            m['v1'] = mv[i + 1]['v0'] if i + 1 < n else 0.
+        a, t, segs = s.accel, s.p.pt, []
+        for m in mv:
+            v0, vc, v1 = m['v0'], m['v'], m['v1']
+            ta, td = (vc - v0) / a, (vc - v1) / a
+            tc = max(0., m['d'] - (vc * vc - v0 * v0) / (2 * a) - (vc * vc - v1 * v1) / (2 * a)) / vc
+            segs.append((t, ta, tc, td, v0, vc, v1, m['r'])); t += ta + tc + td
+        t0, t1, h, dt = s.p.pt, t, s.sm / 2., s.DT
+        def rate(x):                        # nominal filament rate
+            for (ts, ta, tc, td, v0, vc, v1, r) in segs:
+                if ts <= x < ts + ta + tc + td:
+                    u = x - ts
+                    if u < ta: return r * (v0 + a * u)
+                    if u < ta + tc: return r * vc
+                    return r * (vc - a * (u - ta - tc))
+            return 0.
+        g0 = t0 - h - dt
+        N = int((t1 + h + dt - g0) / dt) + 2
+        r = [rate(g0 + (i + .5) * dt) for i in range(N)]
+        pa = [r[i] + s.pa * ((r[i + 1] - r[i - 1]) / (2 * dt) if 0 < i < N - 1 else 0.) for i in range(N)]
+        k = max(1, int(round(h / dt)))
+        w = [(k - abs(j)) for j in range(-k + 1, k)]; ws = float(sum(w))
+        for i in range(N):
+            acc = 0.
+            for j in range(-k + 1, k):
+                if 0 <= i + j < N: acc += pa[i + j] * w[j + k - 1]
+            s.p.windows.append((g0 + i * dt, g0 + (i + 1) * dt, acc / ws))
+        s.p.pt = t1
     def run_script_from_command(s, script):
         for line in script.split('\n'):
             s.p.log.append(line)
+            m = re.match(r'SET_PRESSURE_ADVANCE ADVANCE=([-\d.]+)(?: SMOOTH_TIME=([\d.]+))?', line)
+            if m:
+                s.pa = float(m.group(1))
+                if m.group(2): s.sm = float(m.group(2))
+            m = re.match(r'SET_VELOCITY_LIMIT ACCEL=([\d.]+)', line)
+            if m: s.accel = float(m.group(1))
             w = dict((k, float(v)) for k, v in re.findall(r'([XYEF])([-\d.]+)', line)) if line.startswith('G1') else {}
+            xy = [(a, w[a] - s.pos[a]) for a in 'XY' if a in w and abs(w[a] - s.pos[a]) > 0]
+            if 'E' in w and 'F' in w and xy and w['E'] > 0:
+                ax, d = xy[0]
+                s.pending.append({'d': abs(d), 'dir': (ax, d > 0), 'v': w['F'] / 60.,
+                                  'r': w['E'] / abs(d)})
+                s.pos[ax] = w[ax]; s.n_e += 1
+                continue
+            s.flush()
             if 'E' in w and 'F' in w:
-                xy = [abs(w[a] - s.pos[a]) for a in 'XY' if a in w]
-                d = max(xy) if xy and max(xy) > 0 else abs(w['E'])
+                d = abs(w['E'])
                 dur = d / (w['F'] / 60)
                 s.p.windows.append((s.p.pt, s.p.pt + dur, w['E'] / dur))
                 s.p.pt += dur
@@ -362,6 +420,46 @@ def test_full_search_finds_pa():
     e = m['segments'][1]
     assert e['piro']['n'] == 2 and e['cmd']['gain'] > 0   # first pulse skipped
     assert 'PIRO-EDGE PA' in g.out[-1], g.out[-1]
+
+def test_klipper_method_finds_pa():
+    """PA_METHOD=klipper: back-and-forth line, Klipper's own PA, no conversion"""
+    p, bus, store, r = make(tau=0.045)
+    p.windows.sort()
+    rid = r.run(Gcmd(), S(pa_method='klipper'))
+    m = store.get_run(rid)
+    assert m['status'] == 'complete' and m['pa_method'] == 'klipper', m['status']
+    res = m['analysis']['result']
+    assert res['pa'] is not None and abs(res['pa'] - 0.045) < 0.004, res
+    assert 'measured' not in res, res                     # no smooth time conversion
+    ln = m['line']
+    assert 15 < ln['length'] < 18 and abs(ln['cross_section'] - 0.544) < 0.01, ln
+    # the line: only Y moves around test_y, inside the line ends
+    ys = [float(x) for l in p.log for x in re.findall(r'G1 Y([-\d.]+) E', l)]
+    assert ys and min(ys) >= 100 - ln['length'] / 2 - 1e-3 and max(ys) <= 100 + ln['length'] / 2 + 1e-3
+    # PA set by Klipper for every value, accel limits set and restored
+    pas = [l for l in p.log if l.startswith('SET_PRESSURE_ADVANCE')]
+    assert pas[0] == 'SET_PRESSURE_ADVANCE ADVANCE=0.00000' and pas[-1] == 'SET_PRESSURE_ADVANCE ADVANCE=0.05000', pas
+    assert len(pas) == len(m['segments']) + 2, (len(pas), len(m['segments']))
+    vl = [l for l in p.log if l.startswith('SET_VELOCITY_LIMIT')]
+    assert vl == ['SET_VELOCITY_LIMIT ACCEL=4000.0 MINIMUM_CRUISE_RATIO=0',
+                  'SET_VELOCITY_LIMIT ACCEL=4000.0 MINIMUM_CRUISE_RATIO=0.500'], vl
+    seg = store.get_segment(rid, 1)
+    assert seg['method'] == 'klipper'
+    f = [k for k in seg['markers'] if k['name'] == 'fast'][0]
+    assert abs(f['t1'] - f['t0'] - 0.6) < 0.01, f
+
+def test_klipper_method_checks():
+    p, bus, store, r = make(tau=0.045)
+    try: r.run(Gcmd(), S(pa_method='klipper', test_y=3)); assert False
+    except PAError as e: assert 'does not fit' in str(e), e
+    p, bus, store, r = make(tau=0.045)
+    p.objs['toolhead'].get_status = lambda now: {'homed_axes': 'xyz', 'axis_minimum': [0, 0, 0],
+        'axis_maximum': [250, 250, 250], 'max_accel': 4000, 'max_velocity': 10}
+    try: r.run(Gcmd(), S(pa_method='klipper')); assert False
+    except PAError as e: assert 'max_velocity' in str(e), e
+    for bad in (dict(pa_method='wobble'), dict(move_axis='Z'), dict(smooth_time=0.5)):
+        try: S(**bad); assert False, bad
+        except PAError: pass
 
 def test_upper_limit_steps_up_then_fails():
     # no melt lag: the force never dips, so the search climbs by 0.02 and

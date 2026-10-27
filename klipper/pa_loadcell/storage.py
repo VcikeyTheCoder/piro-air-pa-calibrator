@@ -134,8 +134,9 @@ class RunStore:
                     'stale'):
             a.pop(old, None)
         if meta.get('kind') == 'test':
-            art = meta.get('method') in ('PIRO-EDGE', 'artificial') or \
-                (meta.get('settings') or {}).get('method') == 'artificial'
+            art = (meta.get('method') in ('PIRO-EDGE', 'artificial') or
+                   (meta.get('settings') or {}).get('method') == 'artificial') \
+                and meta.get('pa_method', 'push') != 'klipper'
             a['result'] = analysis.piro_pick(
                 meta['segments'],
                 (meta.get('smooth_time') or 0.04) if art else None)

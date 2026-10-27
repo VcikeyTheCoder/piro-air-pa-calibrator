@@ -60,6 +60,9 @@ def test_themes_save_list_delete():
     saved = call(p, 'theme_save', theme=t)['theme']
     assert saved['id'] == 'ocean-blue' and saved['base'] == 'fluidd'
     assert saved['tokens']['cmd'] == '#ffb74d'
+    term = call(p, 'theme_save', theme={'name': 'Crimson', 'base': 'terminal', 'tokens': {}})['theme']
+    assert term['base'] == 'terminal' and term['id'] == 'crimson'
+    call(p, 'theme_delete', id='crimson')
     lst = call(p, 'theme_list')['themes']
     assert [x['name'] for x in lst] == ['Ocean Blue']
     call(p, 'theme_delete', id='ocean-blue')

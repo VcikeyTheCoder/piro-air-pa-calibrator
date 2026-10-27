@@ -8,7 +8,7 @@ import re
 from .errors import PAError
 
 FORMAT = 'piro_edge_theme'
-LAYOUTS = ('piro', 'mainsail', 'fluidd', 'ratos', 'cat')
+LAYOUTS = ('piro', 'mainsail', 'fluidd', 'ratos', 'cat', 'terminal')
 TOKENS = ('bg', 'panel', 'panel2', 'head', 'ph', 'rule', 'text', 'dim',
           'trace', 'accent', 'onaccent', 'bad', 'good', 'fair', 'grid',
           'fast', 'slow', 'radius', 'font', 'cmd')

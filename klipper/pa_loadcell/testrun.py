@@ -17,7 +17,16 @@ Search (_search):
      just below it (higher one first: a mixed order spreads slow drift)
   4. two values inside the remaining gap, one more above it if the line
      needs it, and a second measurement of values close to their limit
-  5. the answer: analysis.piro_pick over everything measured"""
+  5. the answer: analysis.piro_pick over everything measured
+
+PA_METHOD=klipper: Klipper's own PA and smoothing act instead. The nozzle
+runs back and forth on a short line along MOVE_AXIS with a constant amount
+of filament per mm (85 % of max_extrude_cross_section); fast and slow come
+from the toolhead speed, the PA value from SET_PRESSURE_ADVANCE. The turn of
+the line sits inside the slow leg, after the dip window. Move times are
+computed from the planned trapezoids (MINIMUM_CRUISE_RATIO=0 during the test)
+so the lookahead queue is never flushed in the middle of a train. The result
+is Klipper's value directly: no smooth time conversion."""
 import collections
 import math
 from dataclasses import asdict
@@ -40,7 +49,8 @@ def extruder_info(ext):
             'max_cross_section': round(ratio * area, 3) if ratio else None,
             'max_e_velocity': getattr(ext, 'max_e_velocity', None),
             'max_e_dist': getattr(ext, 'max_e_dist', None),
-            'smooth_time': smooth_time(ext)}
+            'smooth_time': smooth_time(ext),
+            'max_extrude_ratio': ratio}
 
 
 def smooth_time(ext):
@@ -139,16 +149,32 @@ class PATestRunner:
                           "or raise MAX_FILAMENT"
                           % (used, s.max_filament))
         vmax = getattr(ext, 'max_e_velocity', None)
-        sm = self.window(ext)
-        for name, flow in (('FAST_FLOW', s.fast_flow),
-                           ('SLOW_FLOW', s.slow_flow),
-                           ('PRIME_FLOW', s.prime_flow)):
+        sm = self.window(ext, s)
+        flows = (('FAST_FLOW', s.fast_flow), ('SLOW_FLOW', s.slow_flow),
+                 ('PRIME_FLOW', s.prime_flow))
+        if s.pa_method == 'klipper':
+            flows = flows[2:]                # only the prime is extrude-only
+            ln = s.line(area, getattr(ext, 'max_extrude_ratio', None), sm)
+            vmx = st.get('max_velocity')
+            if vmx is not None and ln['v_fast'] > vmx:
+                raise PAError("Klipper method needs %.0f mm/s toolhead speed, "
+                              "above max_velocity %.0f. Lower FAST_FLOW"
+                              % (ln['v_fast'], vmx))
+            lo, hi = st.get('axis_minimum'), st.get('axis_maximum')
+            if lo is not None:
+                i = 'XY'.index(s.move_axis)
+                c = (s.test_x, s.test_y)[i]
+                if c - ln['length'] / 2 < lo[i] or c + ln['length'] / 2 > hi[i]:
+                    raise PAError("Klipper method line (%.1f mm along %s) does "
+                                  "not fit around the test position"
+                                  % (ln['length'], s.move_axis))
+        for name, flow in flows:
             if vmax is not None and flow / area > vmax:
                 raise PAError("%s %.1f mm3/s needs %.1f mm/s, above "
                               "max_extrude_only_velocity %.1f"
                               % (name, flow, flow / area, vmax))
         v = s.charge_speed(s.pa_max, area, s.fast_flow, s.slow_flow, sm)
-        if vmax is not None and v > vmax:
+        if s.pa_method == 'push' and vmax is not None and v > vmax:
             raise PAError("PA_MAX %.3f needs a %.0f mm/s charge move, above "
                           "max_extrude_only_velocity %.1f. Lower PA_MAX "
                           "or FAST_FLOW" % (s.pa_max, v, vmax))
@@ -161,10 +187,11 @@ class PATestRunner:
         return temp, area
 
     @staticmethod
-    def window(ext):
-        """Artificial PA charge window: Klipper's pressure_advance_smooth_time
-        (clamped 0.01 .. 0.1 s like OznLab), so the K found is the K Klipper's
-        own smoothed PA needs."""
+    def window(ext, s=None):
+        """Smoothing window: SMOOTH_TIME if set, else Klipper's
+        pressure_advance_smooth_time (clamped 0.01 .. 0.1 s like OznLab)."""
+        if s is not None and s.smooth_time:
+            return s.smooth_time
         st = smooth_time(ext)
         return min(max(st if st else 0.04, 0.01), 0.1)
 
@@ -177,9 +204,17 @@ class PATestRunner:
         self.started = self.reactor.monotonic()
         now = self.reactor.monotonic()
         ext = self.toolhead.get_extruder()
-        orig_pa = ext.get_status(now).get('pressure_advance', 0.)
+        est = ext.get_status(now)
+        orig_pa = est.get('pressure_advance', 0.)
+        orig_sm = est.get('smooth_time')
         fast_mm, slow_mm = s.leg_mm(area)
-        sm = self.window(ext)
+        sm = self.window(ext, s)
+        klip = s.pa_method == 'klipper'
+        ln = s.line(area, getattr(ext, 'max_extrude_ratio', None), sm) \
+            if klip else None
+        tst = self.toolhead.get_status(now)
+        orig_lim = {k: tst.get(k) for k in ('max_accel', 'minimum_cruise_ratio',
+                                            'max_accel_to_decel')}
         self.note, self.used, self.search = '', 0.0, None
         self.run_id = self.store.new_run('test', {
             'filament': s.filament, 'nozzle_temp': round(temp, 1),
@@ -187,7 +222,9 @@ class PATestRunner:
             'filament_area': round(area, 4),
             'leg_mm': {'fast': round(fast_mm, 4), 'slow': round(slow_mm, 4)},
             'filament_mm': round(s.filament_mm(area), 1),
-            'smooth_time': sm,
+            'smooth_time': sm, 'pa_method': s.pa_method,
+            'line': ({k: round(v, 4) for k, v in ln.items()}
+                     if ln else None),
             'analysis': {'skip_first': bool(s.skip_first)}})
         col = SegmentCollector()
         status, err, saved = 'complete', '', False
@@ -197,18 +234,24 @@ class PATestRunner:
             self._g("SAVE_GCODE_STATE NAME=PA_LC\nG90\nM83\nM220 S100\nM221 S100")
             saved = True
             self._g("G1 X%.2f Y%.2f F6000" % (s.test_x, s.test_y))
-            self._set_klipper_pa(0.)         # the charge is put in by hand
+            if s.smooth_time:
+                self._g("SET_PRESSURE_ADVANCE ADVANCE=0 SMOOTH_TIME=%.4f" % sm)
+            self._set_klipper_pa(0.)         # push: the charge is put in by hand
+            if klip:
+                self._set_limits(s, orig_lim)
             self._prime(s, area, ext)
             if s.prime_rest > 0:
                 self.toolhead.dwell(s.prime_rest)
-            self._search((col, s, area, sm), gcmd)
+            if klip:
+                self._motion_check(col, s, ln, gcmd)
+            self._search((col, s, area, sm, ln), gcmd)
             if self.cancel_flag:
                 status = 'cancelled'
         except Exception as e:
             status, err = 'error', str(e)
             gcmd.respond_info("PA_LOADCELL_TEST aborted: %s" % err)
         finally:
-            self._cleanup(s, orig_pa, saved, col)
+            self._cleanup(s, orig_pa, saved, col, orig_sm, orig_lim if klip else None)
             self.store.finalize(self.run_id, status, err)
             self.state, self.current_pa, self.phase = 'idle', None, ''
             self.pa_t, self.note = None, ''
@@ -269,19 +312,25 @@ class PATestRunner:
 
     def _measure(self, ctx, pa, stage=None, repeat=False):
         """Run one PA value and save it. Returns (segment index, score)."""
-        col, s, area, sm = ctx
+        col, s, area, sm, ln = ctx
         th = self.toolhead
         fil = s.per_pa_mm(area)
         if self.used + fil > s.max_filament - s.prime_length + 1e-6:
             raise PAError("Stopped at MAX_FILAMENT %.0f mm" % s.max_filament)
         self.used += fil
         self.current_pa = pa
+        if ln:
+            self._set_klipper_pa(pa)          # Klipper's own PA from here on
+            self._line_start(s, ln)
         if s.rest_time > 0:
             th.dwell(s.rest_time)
         t_base = th.get_last_move_time()      # recording starts here
         self.pa_t = t_base
         col.discard_before(t_base - 0.05)
-        markers, partial = self._train_artificial(pa, s, area, sm, t_base)
+        if ln:
+            markers, partial = self._train_klipper(s, ln, area, t_base)
+        else:
+            markers, partial = self._train_artificial(pa, s, area, sm, t_base)
         th.wait_moves()
         t_end = th.get_last_move_time()
         samples = self._collect(col, t_base, t_end)
@@ -289,7 +338,8 @@ class PATestRunner:
             return None, None
         seg = {'pa': pa, 'unit': self.bus.unit,
                'rate': round(self.bus.rate, 1), 'markers': markers,
-               'partial': partial, 'method': 'artificial',
+               'partial': partial,
+               'method': 'klipper' if ln else 'artificial',
                'flows': {'fast': s.fast_flow, 'slow': s.slow_flow},
                't': [round(t - t_base, 4) for t, _ in samples],
                'f': [round(v, 3) for _, v in samples]}
@@ -344,9 +394,129 @@ class PATestRunner:
             self._log_leg(down, end, s.slow_flow, 'slow')
         return markers, partial
 
+    # -- klipper method -------------------------------------------------
+    def _set_limits(self, s, orig):
+        """Test accel (never above the current limit) and no cruise ratio,
+        so a speed change is one short ramp at the start / end of a leg."""
+        acc = min(s.test_accel, orig.get('max_accel') or s.test_accel)
+        self.accel = acc
+        if orig.get('minimum_cruise_ratio') is not None:
+            self._g("SET_VELOCITY_LIMIT ACCEL=%.1f MINIMUM_CRUISE_RATIO=0" % acc)
+        else:
+            self._g("SET_VELOCITY_LIMIT ACCEL=%.1f ACCEL_TO_DECEL=%.1f"
+                    % (acc, acc))
+
+    def _restore_limits(self, orig):
+        if orig.get('max_accel') is None:
+            return
+        if orig.get('minimum_cruise_ratio') is not None:
+            self._g("SET_VELOCITY_LIMIT ACCEL=%.1f MINIMUM_CRUISE_RATIO=%.3f"
+                    % (orig['max_accel'], orig['minimum_cruise_ratio']))
+        elif orig.get('max_accel_to_decel') is not None:
+            self._g("SET_VELOCITY_LIMIT ACCEL=%.1f ACCEL_TO_DECEL=%.1f"
+                    % (orig['max_accel'], orig['max_accel_to_decel']))
+        else:
+            self._g("SET_VELOCITY_LIMIT ACCEL=%.1f" % orig['max_accel'])
+
+    def _line_ends(self, s, ln):
+        i = 'XY'.index(s.move_axis)
+        c = (s.test_x, s.test_y)[i]
+        return s.move_axis, c - ln['length'] / 2, c + ln['length'] / 2
+
+    def _line_start(self, s, ln):
+        axis, a, b = self._line_ends(s, ln)
+        x, y = (a, s.test_y) if axis == 'X' else (s.test_x, a)
+        self._g("G1 X%.3f Y%.3f F6000" % (x, y))
+
+    @staticmethod
+    def plan_line(s, ln, accel):
+        """The moves of one train on the line: list of
+        (name, distance, cruise_v, start_v, end_v) and the leg times.
+        Junctions: same direction -> the lower cruise speed, turn -> 0."""
+        vf, vs = ln['v_fast'], ln['v_slow']
+        seq = [('lead', ln['d_before'], vs, 0., vs)]
+        for k in range(s.cycles):
+            seq.append(('fast', ln['d_fast'], vf, vs, vs))
+            seq.append(('after', ln['d_after'], vs, vs, 0.))       # turn
+            seq.append(('before', ln['d_before'], vs, 0.,
+                        vs if k < s.cycles - 1 else 0.))
+        out, t = [], 0.
+        for name, d, vc, v0, v1 in seq:
+            ta, tdc = (vc - v0) / accel, (vc - v1) / accel
+            da, dd = (vc * vc - v0 * v0) / (2 * accel), \
+                (vc * vc - v1 * v1) / (2 * accel)
+            tc = max(0., d - da - dd) / vc
+            out.append({'name': name, 'd': d, 'v': vc, 't0': t,
+                        'ta': ta, 'tc': tc, 'td': tdc,
+                        't1': t + ta + tc + tdc})
+            t += ta + tc + tdc
+        return out
+
+    def _train_klipper(self, s, ln, area, t_base):
+        """Queue one train on the line without flushing the lookahead, then
+        markers from the planned trapezoids (speed changes at the middle of
+        each ramp)."""
+        axis, a, b = self._line_ends(s, ln)
+        plan = self.plan_line(s, ln, self.accel)
+        rel = lambda x: round(x, 4)
+        pos, sign, partial = a, 1., False
+        self.phase = 'lead-in'
+        for i, mv in enumerate(plan):
+            if self.cancel_flag and mv['name'] == 'fast':
+                partial = True
+                plan = plan[:i]
+                break
+            pos += sign * mv['d']
+            self._g("G1 %s%.4f E%.5f F%.2f" % (axis, pos, mv['d'] * ln['ratio'],
+                                               mv['v'] * 60.))
+            if mv['name'] == 'after':
+                sign = -sign
+        markers, first = [], plan[0]
+        ups = [m['t0'] + m['ta'] / 2 for m in plan if m['name'] == 'fast']
+        downs = [m['t1'] - m['td'] / 2 for m in plan if m['name'] == 'fast']
+        end = plan[-1]['t1'] if plan else 0.
+        markers.append({'name': 'slow', 'sweep': -1, 't0': rel(first['t0']),
+                        't1': rel(ups[0] if ups else end)})
+        for k, (u, d) in enumerate(zip(ups, downs)):
+            nxt = ups[k + 1] if k + 1 < len(ups) else end
+            markers.append({'name': 'fast', 'sweep': k, 't0': rel(u), 't1': rel(d)})
+            markers.append({'name': 'slow', 'sweep': k, 't0': rel(d), 't1': rel(nxt)})
+            self._log_leg(t_base + u, t_base + d, s.fast_flow, 'fast')
+            self._log_leg(t_base + d, t_base + nxt, s.slow_flow, 'slow')
+        self.phase = 'fast'
+        return markers, partial
+
+    def _motion_check(self, col, s, ln, gcmd):
+        """One empty pass along the line: warn when moving makes the load
+        cell much noisier than standing still."""
+        th = self.toolhead
+        axis, a, b = self._line_ends(s, ln)
+        self._line_start(s, ln)
+        th.dwell(0.6)
+        t0 = th.get_last_move_time()
+        th.dwell(0.6)
+        t1 = th.get_last_move_time()
+        x, y = (b, s.test_y) if axis == 'X' else (s.test_x, b)
+        self._g("G1 X%.3f Y%.3f F%.1f" % (x, y, ln['v_fast'] * 60.))
+        t2 = th.get_last_move_time()
+        th.wait_moves()
+        try:
+            smp = self._collect(col, t0, t2)
+        except PAError:
+            return
+        t = [p[0] for p in smp]
+        f = [p[1] for p in smp]
+        still = analysis._detrended_sigma(t, f, t0 + 0.05, t1 - 0.05)
+        moving = analysis._detrended_sigma(t, f, t1 + 0.1, t2 - 0.1)
+        self.motion_noise = (still, moving)
+        if still and moving and moving > 2 * still:
+            gcmd.respond_info("PIRO-EDGE: load cell noise while moving is "
+                              "%.1fx the still noise. Results may be less "
+                              "certain" % (moving / still))
+
     # -- PIRO-EDGE adaptive search -------------------------------------
     def _search(self, ctx, gcmd):
-        col, s, area, sm = ctx
+        col, s, area, sm, ln = ctx
         steps, segs = [], []
         self.search = {'steps': steps, 'result': None}
         vmax = getattr(self.toolhead.get_extruder(), 'max_e_velocity', None)
@@ -370,7 +540,7 @@ class PATestRunner:
             if len(segs) >= SEARCH_MAX_TRAINS:
                 raise _Budget()
             k = round(k, 5)
-            if vmax is not None and s.charge_speed(
+            if not ln and vmax is not None and s.charge_speed(
                     k, area, s.fast_flow, s.slow_flow, sm) > vmax:
                 raise PAError("PA %.3f charge move exceeds "
                               "max_extrude_only_velocity %.1f. "
@@ -467,9 +637,11 @@ class PATestRunner:
                 measure(p['pa'], 'repeat', True)
             # 5. a re-measurement can turn the last clean value into a dip:
             #    make sure a clean value sits close below the corner
-            for _ in range(2):
+            # (a clean value far below the corner sits on the flat part and
+            #  would pull the fitted line, and the answer, low)
+            for _ in range(3):
                 k_ok, k_bad, _ = bracket()
-                if k_ok > 0 and k_bad - k_ok <= max(0.008, 0.25 * k_bad):
+                if k_ok > 0 and k_bad - k_ok <= max(0.004, 0.1 * k_bad):
                     break
                 x = snap(k_bad - max(0.005, 0.12 * k_bad))
                 if x <= k_ok or tested(x):
@@ -481,7 +653,7 @@ class PATestRunner:
             return
         except _Budget:
             say("search limit reached (%d PA values)" % SEARCH_MAX_TRAINS)
-        res = analysis.piro_pick(segs, sm)
+        res = analysis.piro_pick(segs, None if ln else sm)
         self.search.update(result=res.get('pa'), unc=res.get('unc'),
                            grade=res.get('grade'))
         if res.get('pa') is not None:
@@ -501,10 +673,13 @@ class PATestRunner:
             raise PAError("No load cell samples in this PA window")
         return out
 
-    def _cleanup(self, s, orig_pa, saved, col):
+    def _cleanup(self, s, orig_pa, saved, col, orig_sm=None, orig_lim=None):
         steps = [lambda: self.bus.unsubscribe(col.on_samples),
-                 lambda: self._g("SET_PRESSURE_ADVANCE ADVANCE=%.5f"
-                                 % orig_pa)]
+                 lambda: self._g("SET_PRESSURE_ADVANCE ADVANCE=%.5f%s"
+                                 % (orig_pa, (" SMOOTH_TIME=%.4f" % orig_sm)
+                                    if s.smooth_time and orig_sm else ""))]
+        if orig_lim:
+            steps.append(lambda: self._restore_limits(orig_lim))
         steps.append(lambda: self._g("G1 X%.2f Y%.2f F6000"
                                      % (s.park_x, s.park_y)))
         if saved:

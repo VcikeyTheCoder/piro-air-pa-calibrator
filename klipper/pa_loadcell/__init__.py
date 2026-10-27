@@ -116,6 +116,9 @@ class PALoadCell:
         out['limits'] = self.runner.limits
         th = self.printer.lookup_object('toolhead', None)
         out['extruder'] = extruder_info(th.get_extruder()) if th else None
+        if th:
+            st = th.get_status(self.reactor.monotonic())
+            out['toolhead'] = {k: st.get(k) for k in ('max_velocity', 'max_accel')}
         return out
 
     def _wh_mark(self, req):

@@ -10,7 +10,13 @@ the way OznLab sensor does it, github.com/ozancs/oznlab-sensor), so no XY
 motion and no max_extrude_cross_section change is needed.
 
 The search (see testrun.py): PA 0, then PA_MAX (+UPPER_STEP until the force
-dips, failing at PA_LIMIT), then values around the predicted answer."""
+dips, failing at PA_LIMIT), then values around the predicted answer.
+
+PA_METHOD=klipper instead lets Klipper's own pressure advance and smoothing
+act: the nozzle moves back and forth on a short line along MOVE_AXIS with a
+constant amount of filament per mm, fast and slow come from the toolhead
+speed, and the PA value is set with SET_PRESSURE_ADVANCE. No conversion is
+applied to its result."""
 from dataclasses import dataclass, fields
 from .errors import PAError
 
@@ -44,6 +50,10 @@ class Settings:
     test_x: float = 0.0           # nozzle extrudes (in air) here
     test_y: float = 0.0
     filament: str = ""            # free-text name stored in run metadata
+    pa_method: str = "push"       # push = test push, klipper = Klipper's PA
+    move_axis: str = "Y"          # klipper method: line axis
+    test_accel: float = 5000.0    # klipper method: toolhead accel, mm/s^2
+    smooth_time: float = 0.0      # 0 = the extruder's pressure_advance_smooth_time
 
     @classmethod
     def from_config(cls, config):
@@ -68,7 +78,14 @@ class Settings:
                                      maxval=1),
             park_x=g('park_x'), park_y=g('park_y'),
             test_x=g('test_x'), test_y=g('test_y'),
-            filament=config.get('filament', '').strip().strip('"\''))
+            filament=config.get('filament', '').strip().strip('"\''),
+            pa_method=config.getchoice('pa_method', {'push': 'push',
+                                                     'klipper': 'klipper'},
+                                       'push'),
+            move_axis=config.getchoice('move_axis', {'X': 'X', 'Y': 'Y',
+                                                     'x': 'X', 'y': 'Y'}, 'Y'),
+            test_accel=g('test_accel', 5000., above=0.),
+            smooth_time=g('smooth_time', 0., minval=0., maxval=0.1))
 
     def merged(self, gcmd):
         """Defaults overridden by command parameters."""
@@ -82,6 +99,8 @@ class Settings:
             else:
                 out[f.name] = gcmd.get(key, cur)
         s = Settings(**out)
+        s.pa_method = str(s.pa_method).strip().lower()
+        s.move_axis = str(s.move_axis).strip().upper()
         s.validate()
         return s
 
@@ -110,6 +129,14 @@ class Settings:
             raise PAError("PRIME_REST and REST_TIME must be >= 0")
         if self.skip_first not in (0, 1):
             raise PAError("SKIP_FIRST must be 0 or 1")
+        if self.pa_method not in ('push', 'klipper'):
+            raise PAError("PA_METHOD must be push or klipper")
+        if self.move_axis not in ('X', 'Y'):
+            raise PAError("MOVE_AXIS must be X or Y")
+        if self.test_accel <= 0:
+            raise PAError("TEST_ACCEL must be > 0")
+        if self.smooth_time and not 0.01 <= self.smooth_time <= 0.1:
+            raise PAError("SMOOTH_TIME must be 0 (printer value) or 0.01 to 0.1")
 
     # -- derived amounts (area = filament cross-section in mm^2) --------
     def leg_mm(self, area):
@@ -134,6 +161,27 @@ class Settings:
     def duration_s(self, area, trains=SEARCH_TYPICAL):
         return self.per_pa_s() * trains + self.prime_time(area) + \
             self.prime_rest
+
+    # -- klipper method: the back-and-forth line ------------------------
+    def line(self, area, max_ratio=None, smooth=0.04):
+        """Geometry of the klipper method. max_ratio = Klipper's
+        max_extrude_ratio (max_extrude_cross_section / filament area). The
+        line is 85 % of that cross-section, capped at the 0.4 mm nozzle
+        default (0.64 mm2) so a raised limit does not shrink the motion to
+        nothing. -> dict"""
+        cap = 0.64 / area                    # Klipper default, 0.4 mm nozzle
+        r = 0.85 * min(max_ratio or cap, cap)   # filament mm per toolhead mm
+        vf, vs = self.fast_flow / area / r, self.slow_flow / area / r
+        h = (self.smooth_time or smooth) / 2.
+        # turn around inside the slow leg: after the dip window (ends
+        # h + 0.305 s after the slow-down), before the late slow level
+        rev = 0.4 if self.slow_time >= 0.8 else 0.5 * self.slow_time
+        rev = max(rev, min(0.5 * self.slow_time, h + 0.33))
+        d_f, d_a, d_b = vf * self.fast_time, vs * rev, vs * (self.slow_time - rev)
+        return {'ratio': r, 'v_fast': vf, 'v_slow': vs, 'rev': rev,
+                'd_fast': d_f, 'd_after': d_a, 'd_before': d_b,
+                'length': d_f + d_a + d_b,
+                'cross_section': r * area}
 
     @staticmethod
     def charge_speed(pa, area, fast_flow, slow_flow, smooth):

@@ -23,14 +23,16 @@ SPEED = int(os.environ.get('SPEED', '1'))
 
 
 class Gcode(tb.Gcode):
-    def __init__(s, p): super().__init__(p); s.cmds = {}
+    def __init__(s, p): super().__init__(p); s.cmds = {}; s.cap = 0
     def register_command(s, n, cb, desc=None): s.cmds[n] = cb
+    def _sync(s):                       # E speed windows -> the fake load cell
+        s.p.speeds.extend(s.p.windows[s.cap:]); s.cap = len(s.p.windows)
+    def flush(s):
+        super().flush(); s._sync()
     def run_script_from_command(s, script):
         for line in script.split('\n'):
-            n = len(s.p.windows)
             super().run_script_from_command(line)
-            for a, b, v in s.p.windows[n:]:     # E speed in mm/s per leg
-                s.p.speeds.append((a, b, v))
+            s._sync()
             m = re.match(r'SET_PRESSURE_ADVANCE ADVANCE=([\d.]+)', line)
             if m:
                 s.p.pa_tl.append((s.p.pt, float(m.group(1))))
@@ -71,7 +73,7 @@ class LoadCell(tb.LoadCell):
             u = s.u_at(t - 1 / RATE, t); pa = s.pa_at(t)
             dz = (u - s.z) / s.tau
             s.z = u + (s.z - u) * math.exp(-1 / RATE / s.tau)
-            force = K * (s.z + pa * dz) + s.rng.gauss(0, NOISE)
+            force = K * s.z + s.rng.gauss(0, NOISE)   # Klipper PA is in the moves (test_backend.Gcode)
             counts = force * 95.783 + 345400
             data.append((t, force if s.tared else None, counts, 345400))
         if n1 > n0:
@@ -99,6 +101,7 @@ class Cfg:
     def getfloat(s, n, default=None, **k):
         return {'park_x': 10., 'park_y': 10., 'test_x': 150., 'test_y': 20.}.get(n, default)
     def getint(s, n, default=None, **k): return default
+    def getchoice(s, n, choices, default=None): return choices[default] if default in choices else default
 
 
 class Req:

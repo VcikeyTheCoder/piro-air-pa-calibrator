@@ -17,9 +17,10 @@ Tested on printers with more than 200 runs across several filaments.
 
 - Adaptive search: usually 6 to 8 PA values instead of a fixed sweep, about 1 to 2 minutes per filament
 - Result with ± uncertainty and a *good / fair / poor* grade, converted to Klipper's smoothed PA
+- Two methods: test push (no motion) or Klipper's own PA on a short line, to compare them on your printer
 - Graphs that show how the value was chosen, from the raw pulse to the final line fit
 - Live load cell graph, manual recordings, compare across runs, export and import of runs
-- Settings saved to `pa_loadcell.cfg`, five themes plus custom theme files
+- Settings saved to `pa_loadcell.cfg`, six themes (including a tmux + Neovim style Terminal theme) plus custom theme files
 - Works with `[load_cell]` and `[load_cell_probe]`
 
 ## Install
@@ -43,6 +44,7 @@ appears in the sidebar. Details: [Installation](https://github.com/VcikeyTheCode
 | Command | Description |
 |---|---|
 | `PA_LOADCELL_TEST` | Run the test. Parameters override `[pa_loadcell]`, e.g. `PA_LOADCELL_TEST FILAMENT="PETG black" FAST_FLOW=10` |
+| `PA_LOADCELL_TEST PA_METHOD=klipper` | The same test with Klipper's own PA and smoothing (short back-and-forth line) |
 | `PA_LOADCELL_DIAG` | Check the load cell stream: expect about 320 samples/s |
 
 The test needs the nozzle at `min_temp`, all axes homed and Z at `required_z` (20 mm). Apply the result with
