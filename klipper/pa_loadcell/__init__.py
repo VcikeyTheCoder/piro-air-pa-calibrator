@@ -55,7 +55,25 @@ class PALoadCell:
     # -- G-code -------------------------------------------------------
     def cmd_test(self, gcmd):
         try:
-            self.runner.run(gcmd, self.defaults.merged(gcmd))
+            auto = int(gcmd.get('APPLY', '0') or 0) == 1
+        except ValueError:
+            auto = False
+        try:
+            s = self.defaults.merged(gcmd)
+        except Exception as e:
+            if not auto:
+                raise gcmd.error(str(e)) if isinstance(e, PAError) else e
+            try:
+                fail = float(gcmd.get('FAIL_PA', self.defaults.fail_pa))
+            except ValueError:
+                fail = self.defaults.fail_pa
+            self.runner.fallback(gcmd, fail, str(e))
+            return
+        if s.apply:
+            self.runner.auto(gcmd, s)
+            return
+        try:
+            self.runner.run(gcmd, s)
         except PAError as e:
             raise gcmd.error(str(e))
 

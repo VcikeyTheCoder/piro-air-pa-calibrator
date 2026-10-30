@@ -26,9 +26,16 @@ from the toolhead speed, the PA value from SET_PRESSURE_ADVANCE. The turn of
 the line sits inside the slow leg, after the dip window. Move times are
 computed from the planned trapezoids (MINIMUM_CRUISE_RATIO=0 during the test)
 so the lookahead queue is never flushed in the middle of a train. The result
-is Klipper's value directly: no smooth time conversion."""
+is Klipper's value directly: no smooth time conversion.
+
+APPLY=1 (auto): run() inside auto(), the result set as Klipper's PA; a poor
+result, a failure or a cancel applies FAIL_PA and never raises, so a print
+start goes on. REUSE_HOURS: the last auto run is reused when it is recent and
+matches (filament, target temperature, wall flow, method, smooth time).
+RESTRICT=0: the test runs where the nozzle is, no Z check, no moves."""
 import collections
 import math
+import time
 from dataclasses import asdict
 from .errors import PAError
 from . import analysis
@@ -133,7 +140,8 @@ class PATestRunner:
         if not all(a in homed for a in 'xyz'):
             raise PAError("Must home all axes first")
         z = self.toolhead.get_position()[2]
-        if abs(z - L['required_z']) > L['z_tol']:
+        free = not s.restrict
+        if not free and abs(z - L['required_z']) > L['z_tol']:
             raise PAError("Z must be at required_z %.1f mm (now %.2f mm)"
                           % (L['required_z'], z))
         ext = self.toolhead.get_extruder()
@@ -164,6 +172,13 @@ class PATestRunner:
             if lo is not None:
                 i = 'XY'.index(s.move_axis)
                 c = (s.test_x, s.test_y)[i]
+                if free:        # slide the line inside the axis limits
+                    half = ln['length'] / 2 + 0.5
+                    c = min(max(c, lo[i] + half), hi[i] - half)
+                    if i == 0:
+                        s.test_x = c
+                    else:
+                        s.test_y = c
                 if c - ln['length'] / 2 < lo[i] or c + ln['length'] / 2 > hi[i]:
                     raise PAError("Klipper method line (%.1f mm along %s) does "
                                   "not fit around the test position"
@@ -179,7 +194,7 @@ class PATestRunner:
                           "max_extrude_only_velocity %.1f. Lower PA_MAX "
                           "or FAST_FLOW" % (s.pa_max, v, vmax))
         lo, hi = st.get('axis_minimum'), st.get('axis_maximum')
-        if lo is not None:
+        if lo is not None and not free:
             for name, (x, y) in (("park", (s.park_x, s.park_y)),
                                  ("test", (s.test_x, s.test_y))):
                 if not (lo[0] <= x <= hi[0] and lo[1] <= y <= hi[1]):
@@ -199,6 +214,10 @@ class PATestRunner:
     def run(self, gcmd, s):
         if self.state != 'idle':
             raise PAError("Test already running")
+        if not s.restrict:              # where the nozzle is now
+            pos = self.toolhead.get_position()
+            s.test_x = s.park_x = round(pos[0], 3)
+            s.test_y = s.park_y = round(pos[1], 3)
         temp, area = self.precheck(s)
         self.state, self.cancel_flag, self.progress = 'running', False, 0.0
         self.started = self.reactor.monotonic()
@@ -233,7 +252,8 @@ class PATestRunner:
             # 100 % speed and flow so each leg lasts exactly its planned time
             self._g("SAVE_GCODE_STATE NAME=PA_LC\nG90\nM83\nM220 S100\nM221 S100")
             saved = True
-            self._g("G1 X%.2f Y%.2f F6000" % (s.test_x, s.test_y))
+            if s.restrict:
+                self._g("G1 X%.2f Y%.2f F6000" % (s.test_x, s.test_y))
             if s.smooth_time:
                 self._g("SET_PRESSURE_ADVANCE ADVANCE=0 SMOOTH_TIME=%.4f" % sm)
             self._set_klipper_pa(0.)         # push: the charge is put in by hand
@@ -268,6 +288,117 @@ class PATestRunner:
         if status == 'error':
             raise PAError(err)
         return self.run_id
+
+    # -- auto PA (APPLY=1) ----------------------------------------------
+    def auto(self, gcmd, s):
+        """Test (or reuse) and set the result as Klipper's PA. Never raises:
+        a print start must go on, with FAIL_PA when there is no good value."""
+        now = self.reactor.monotonic()
+        try:
+            ext = self.toolhead.get_extruder()
+            target = float(ext.get_status(now).get('target', 0.) or 0.)
+            sm = self.window(ext, s)
+        except Exception:
+            target, sm = 0., s.smooth_time or 0.04
+        hit = None
+        if s.reuse_hours > 0:
+            try:
+                hit = self._reuse(s, target, sm)
+            except Exception:
+                hit = None
+        if hit:
+            rid, a = hit
+            self._apply(a['applied'])
+            try:
+                self.store.update_auto(rid, {'reused': int(a.get('reused', 0)) + 1,
+                                             'last_used': time.time()})
+            except Exception:
+                pass
+            gcmd.respond_info(
+                "PIRO-EDGE: PA %.4f reused from Run %d (%s, %.0f °C, %.1f mm³/s, "
+                "%.0f min ago)" % (a['applied'], rid, a.get('filament') or '-',
+                                   a.get('target_temp', 0), a.get('wall_flow', 0),
+                                   (time.time() - a.get('time', 0)) / 60.))
+            return a['applied']
+        if self.state != 'idle':
+            self.fallback(gcmd, s.fail_pa, "a test is already running")
+            return s.fail_pa
+        before, rid, reason, res = self.run_id, None, '', {}
+        try:
+            rid = self.run(gcmd, s)
+        except Exception as e:
+            reason = str(e)
+            rid = self.run_id if self.run_id != before else None
+        if rid is not None:
+            try:
+                m = self.store.get_run(rid)
+                res = (m.get('analysis') or {}).get('result') or {}
+                if not reason and m.get('status') != 'complete':
+                    reason = m.get('status') or 'no result'
+            except Exception as e:
+                reason = reason or str(e)
+        good = not reason and res.get('pa') is not None \
+            and res.get('grade') in ('good', 'fair')
+        if not good and not reason:
+            reason = ("grade %s" % res['grade']) if res.get('pa') is not None \
+                else "no result"
+        value = float(res['pa']) if good else s.fail_pa
+        self._apply(value)
+        if rid is not None:
+            try:
+                self.store.update_auto(rid, {
+                    'applied': round(value, 4), 'fallback': not good,
+                    'reason': reason, 'time': time.time(),
+                    'filament': s.filament, 'target_temp': round(target, 1),
+                    'wall_flow': round(s.fast_flow, 3), 'pa_method': s.pa_method,
+                    'smooth': round(sm, 4), 'reused': 0})
+            except Exception:
+                pass
+        if good:
+            gcmd.respond_info("PIRO-EDGE: PA %.4f applied (%s, +- %.4f)"
+                              % (value, res['grade'], res.get('unc') or 0))
+        else:
+            gcmd.respond_info(("PIRO-EDGE: test cancelled, PA %.4f applied" % value)
+                              if reason == 'cancelled' else
+                              "PIRO-EDGE: test failed (%s), PA %.4f applied"
+                              % (reason, value))
+        return value
+
+    def fallback(self, gcmd, value, reason):
+        """APPLY=1 with settings that cannot run: FAIL_PA, no error."""
+        self._apply(value)
+        gcmd.respond_info("PIRO-EDGE: test failed (%s), PA %.4f applied"
+                          % (reason, value))
+
+    def _apply(self, value):
+        try:
+            self._g("SET_PRESSURE_ADVANCE ADVANCE=%.5f" % value)
+        except Exception:
+            pass
+
+    def _reuse(self, s, target, sm):
+        """The last auto run, when recent and made under the same
+        conditions. -> (run id, auto dict) or None"""
+        rid, m = self.store.last_auto()
+        if rid is None:
+            return None
+        a = m['auto']
+        name = lambda x: ' '.join(str(x or '').lower().split())
+        if a.get('fallback') or a.get('applied') is None or not name(s.filament):
+            return None
+        if time.time() - float(a.get('time', 0)) > s.reuse_hours * 3600.:
+            return None
+        if name(a.get('filament')) != name(s.filament):
+            return None
+        if abs(float(a.get('target_temp', -999)) - target) > 2.:
+            return None
+        wf = float(a.get('wall_flow', 0))
+        if abs(wf - s.fast_flow) > 0.05 * s.fast_flow:
+            return None
+        if a.get('pa_method') != s.pa_method or \
+                abs(float(a.get('smooth', 0)) - sm) > 1e-4:
+            return None
+        return rid, a
 
     def _log_leg(self, t0, t1, flow, name):
         self.leg_seq += 1
@@ -680,8 +811,9 @@ class PATestRunner:
                                     if s.smooth_time and orig_sm else ""))]
         if orig_lim:
             steps.append(lambda: self._restore_limits(orig_lim))
-        steps.append(lambda: self._g("G1 X%.2f Y%.2f F6000"
-                                     % (s.park_x, s.park_y)))
+        if s.restrict or s.pa_method == 'klipper':   # free + klipper: back to the start
+            steps.append(lambda: self._g("G1 X%.2f Y%.2f F6000"
+                                         % (s.park_x, s.park_y)))
         if saved:
             steps.append(lambda: self._g("RESTORE_GCODE_STATE NAME=PA_LC"))
         for fn in steps:        # one failing step must not skip the rest

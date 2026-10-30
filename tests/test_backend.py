@@ -461,6 +461,90 @@ def test_klipper_method_checks():
         try: S(**bad); assert False, bad
         except PAError: pass
 
+def test_auto_apply_and_reuse():
+    """APPLY=1 + RESTRICT=0: test where the nozzle is (no Z check, no XY
+    moves), set the result, reuse it for the next print"""
+    p, bus, store, r = make(tau=0.045, z=5.0)
+    g = Gcmd()
+    s = S(apply=1, restrict=0, reuse_hours=1, filament='Fibreel red', fast_flow=14)
+    v = r.auto(g, s)
+    assert abs(v - 0.045) < 0.005, (v, g.out)
+    assert not [l for l in p.log if re.match(r'G1 [XY]', l)], 'no XY moves'
+    pas = [l for l in p.log if l.startswith('SET_PRESSURE_ADVANCE')]
+    assert pas[-1] == 'SET_PRESSURE_ADVANCE ADVANCE=%.5f' % v, pas
+    assert 'applied' in g.out[-1] and 'PIRO-EDGE: PA' in g.out[-1], g.out
+    rid, m = store.last_auto()
+    a = m['auto']
+    assert a['applied'] == round(v, 4) and not a['fallback'] and a['wall_flow'] == 14
+    assert a['target_temp'] == 210.0 and a['filament'] == 'Fibreel red'
+    assert any(x['auto'] for x in store.list_runs())
+    # same conditions: reused, no new run
+    n_runs, n_log = len(store.list_runs()), len(p.log)
+    g2 = Gcmd()
+    assert r.auto(g2, S(apply=1, restrict=0, reuse_hours=1,
+                        filament=' fibreel  RED', fast_flow=14.3)) == a['applied']
+    assert len(store.list_runs()) == n_runs and 'reused from Run %d' % rid in g2.out[-1]
+    assert p.log[n_log:] == ['SET_PRESSURE_ADVANCE ADVANCE=%.5f' % a['applied']]
+    assert store.last_auto()[1]['auto']['reused'] == 1
+    # anything different, too old, or REUSE_HOURS=0: a new test
+    tgt, sm = 210.0, 0.04
+    for kw in (dict(filament='PETG'), dict(fast_flow=16), dict(pa_method='klipper'),
+               dict(filament='')):
+        d = dict(apply=1, restrict=0, reuse_hours=1, filament='Fibreel red', fast_flow=14)
+        d.update(kw)
+        assert r._reuse(S(**d), tgt, sm) is None, kw
+    assert r._reuse(S(apply=1, reuse_hours=1, filament='Fibreel red', fast_flow=14), 214.0, sm) is None
+    assert r._reuse(S(apply=1, reuse_hours=1, filament='Fibreel red', fast_flow=14), 211.0, sm)
+    store.update_auto(rid, {'time': a['time'] - 2 * 3600})
+    assert r._reuse(S(apply=1, reuse_hours=1, filament='Fibreel red', fast_flow=14), tgt, sm) is None
+
+def test_auto_fallback_never_raises():
+    # cannot start (too cold): FAIL_PA, no run, no error
+    p, bus, store, r = make(temp=150.0, z=5.0)
+    g = Gcmd()
+    assert r.auto(g, S(apply=1, restrict=0, fail_pa=0.02)) == 0.02
+    assert 'test failed' in g.out[-1] and 'min_temp' in g.out[-1], g.out
+    assert p.log[-1] == 'SET_PRESSURE_ADVANCE ADVANCE=0.02000' and not store.list_runs()
+    # no pressure response at all: the run ends in an error -> FAIL_PA, recorded
+    p, bus, store, r = make(z=5.0)
+    g = Gcmd()
+    assert r.auto(g, S(apply=1, restrict=0, fail_pa=0.03, filament='x', reuse_hours=1)) == 0.03
+    rid, m = store.last_auto()
+    assert m['status'] == 'error' and m['auto']['fallback'] and m['auto']['applied'] == 0.03
+    assert p.log[-1] == 'SET_PRESSURE_ADVANCE ADVANCE=0.03000', p.log[-3:]
+    assert r._reuse(S(apply=1, filament='x', reuse_hours=1), 210.0, 0.04) is None
+    # cancelled from the page: FAIL_PA, the print goes on
+    p, bus, store, r = make(tau=0.045, z=5.0)
+    gc = p.objs['gcode']; orig = gc.run_script_from_command
+    def hook(script):
+        orig(script)
+        if gc.n_e == 30: r.cancel()
+    gc.run_script_from_command = hook
+    g = Gcmd()
+    assert r.auto(g, S(apply=1, restrict=0)) == 0.02
+    assert 'cancelled' in g.out[-1], g.out
+    # a test already running: FAIL_PA, the running test is left alone
+    p, bus, store, r = make(tau=0.045)
+    r.state, r.run_id = 'running', 7
+    g = Gcmd()
+    assert r.auto(g, S(apply=1)) == 0.02 and r.run_id == 7 and r.state == 'running'
+    # without APPLY a failure still raises
+    p, bus, store, r = make(temp=150.0)
+    try: r.run(Gcmd(), S()); assert False
+    except PAError: pass
+
+def test_restrict_klipper_line_slides_inside():
+    """RESTRICT=0 + klipper method next to the axis edge: the line is moved
+    inside the limits, centred as close to the nozzle as possible"""
+    p, bus, store, r = make(tau=0.045, z=5.0)       # nozzle at X0 Y0
+    rid = r.run(Gcmd(), S(pa_method='klipper', restrict=0))
+    m = store.get_run(rid)
+    assert m['status'] == 'complete', m.get('error')
+    ln = m['line']['length']
+    ys = [float(x) for l in p.log for x in re.findall(r'G1 Y([-\d.]+) E', l)]
+    assert ys and min(ys) >= 0 and max(ys) <= ln + 1.01, (min(ys), max(ys))
+    assert abs(m['settings']['test_y'] - (ln / 2 + 0.5)) < 0.01, m['settings']['test_y']
+
 def test_upper_limit_steps_up_then_fails():
     # no melt lag: the force never dips, so the search climbs by 0.02 and
     # gives up after PA_LIMIT

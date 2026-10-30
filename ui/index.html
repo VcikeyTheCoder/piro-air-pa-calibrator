@@ -1031,10 +1031,16 @@ function renderLastRes(){const box=$('#lastres');if(!box)return;const r=(runs||[
  box.innerHTML=`<div class="row"><b style="font-size:13px">Last result</b><span class="sp"></span><span class="small dim">${esc(r.filament||r.name)} · ${esc(r.date||'')}</span></div>
   <div class="row" style="margin-top:8px;align-items:flex-end;gap:12px"><span class="pav num"><span class="pvt">${r.result.pa}</span><span class="pxv">${pixel(String(r.result.pa),7)}</span></span><span class="dim num">± ${r.result.unc}</span>${gradeHTML(r.result.grade)}</div>
   <div class="row" style="margin-top:10px"><code style="background:var(--bg);border:1px solid var(--rule);border-radius:4px;padding:4px 8px;font-size:12px">${cmd}</code><button class="quiet" data-cp="${cmd}" onclick="navigator.clipboard&&navigator.clipboard.writeText(this.dataset.cp).then(()=>toast('Copied'),()=>toast(this.dataset.cp))">Copy</button></div>`}
+/* auto PA (PA_AUTO before a print): what was applied */
+const autoChip=a=>!a?'':a.fallback?`<span class="chip warn" title="${esc(a.reason||'')}"><i></i>Auto · fallback ${a.applied}</span>`
+ :`<span class="chip" title="Set as Klipper's PA at print start">Auto · applied${a.reused?' · reused '+a.reused+'×':''}</span>`;
+function autoHTML(a){if(!a)return'';const ago=t=>t?new Date(t*1000).toLocaleString():'-';
+ return`<div class="small dim" style="margin-bottom:8px">Auto PA at print start: ${a.fallback?`no usable result (${esc(a.reason||'-')}), <b>PA ${a.applied}</b> applied`:`<b>PA ${a.applied}</b> applied`}.
+  Wall flow ${fmt(+a.wall_flow||0,1)} mm³/s, target ${fmt(+a.target_temp||0,0)} °C, ${esc(a.filament||'no filament name')}.${a.reused?` Reused for ${a.reused} more print${a.reused>1?'s':''}, last ${esc(ago(a.last_used))}.`:''}</div>`}
 function renderRuns(){const q=$('#search').value.toLowerCase();const list=runs.filter(r=>(kind==='all'||r.kind===kind)&&(!q||(r.name+' '+(r.filament||'')+' '+(r.notes||'')).toLowerCase().includes(q)));
  $('#runs').innerHTML=list.map(r=>`<details class="run card" data-id="${r.id}"><summary class="runline"><b>${esc(r.name)}</b><span style="color:var(--dim)">${[esc(r.filament||''),r.nozzle_temp!=null?fmt(r.nozzle_temp,0)+' °C':''].filter(Boolean).join(' · ')}</span>
   ${r.kind==='test'?(r.result?`<span class="res">PA ${r.result.pa}</span><span class="num dim">&plusmn; ${r.result.unc}</span>${gradeHTML(r.result.grade)}`:`<span class="chip ${r.status==='error'?'bad':'warn'}"><i></i>${r.status==='error'?'Failed':esc(r.status)}</span>`):'<span class="chip">Recording</span>'}
-  <span class="sp"></span>${r.imported?'<span class="chip">imported</span>':''}<span class="num dim">${r.segments} ${r.kind==='test'?'PA values':'segment'}${r.pa_pick!=null?', pick '+r.pa_pick:''}</span><span class="num dim">${esc(r.date)}</span></summary><div class="body" style="color:var(--dim)">Loading</div></details>`).join('')||
+  <span class="sp"></span>${autoChip(r.auto)}${r.imported?'<span class="chip">imported</span>':''}<span class="num dim">${r.segments} ${r.kind==='test'?'PA values':'segment'}${r.pa_pick!=null?', pick '+r.pa_pick:''}</span><span class="num dim">${esc(r.date)}</span></summary><div class="body" style="color:var(--dim)">Loading</div></details>`).join('')||
   '<div class="empty">'+(runs.length?'No runs match.':'No runs. Start a PA test or Record on Live.')+'</div>';
  $$('#runs details').forEach(d=>{d.addEventListener('toggle',()=>{if(d.open){openRun(+d.dataset.id,d.querySelector('.body'));SELRUN=+d.dataset.id;term()}});if((cur&&cur.id===+d.dataset.id)||OPEN===+d.dataset.id){d.open=true;if(OPEN===+d.dataset.id){OPEN=null;setTimeout(()=>d.scrollIntoView({block:'start'}),50)}}})}
 $('#search').oninput=renderRuns;$('#refresh').onclick=loadRuns;
@@ -1196,6 +1202,7 @@ function renderRun(id,box){const m=meta[id],st=m.settings||{},test=m.kind==='tes
  const near=m.pa_pick!=null&&test&&m.segments.length?m.segments.reduce((a,b)=>Math.abs(b.pa-m.pa_pick)<Math.abs(a.pa-m.pa_pick)?b:a).idx:null;
  const limOf=s=>Math.max(s.piro?s.piro.limit:0,(res&&res.floor)||0);
  box.style.color='';box.innerHTML=`${m.imported?`<div class="small dim" style="margin-bottom:8px">Imported ${esc(m.imported.at)} (originally Run ${esc(m.imported.from_id)}, ${esc(m.imported.from_date)})</div>`:''}
+  ${test?autoHTML(m.auto):''}
   ${test?answerHTML(m,res):''}
   ${test?runInfoHTML(m):''}
   ${m.error&&test&&res&&res.pa!=null?`<div style="color:var(--amber);margin-bottom:8px">${esc(m.error)}</div>`:''}

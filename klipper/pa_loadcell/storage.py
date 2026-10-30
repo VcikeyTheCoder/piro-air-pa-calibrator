@@ -163,6 +163,25 @@ class RunStore:
         meta['search'] = search
         _atomic(self._meta_path(rid), meta)
 
+    def update_auto(self, rid, values):
+        """Auto PA record of a run (applied value, conditions, reuse)."""
+        meta = _load(self._meta_path(rid))
+        a = dict(meta.get('auto') or {})
+        a.update(values)
+        meta['auto'] = a
+        _atomic(self._meta_path(rid), meta)
+
+    def last_auto(self):
+        """(id, meta) of the newest run made by auto PA, or (None, None)."""
+        for rid in reversed(self._ids()):
+            try:
+                m = _load(self._meta_path(rid))
+            except (OSError, ValueError):
+                continue
+            if m.get('auto'):
+                return rid, m
+        return None, None
+
     def finalize(self, rid, status, error=''):
         meta = _load(self._meta_path(rid))
         meta['status'], meta['error'] = status, error
@@ -246,7 +265,8 @@ class RunStore:
                 continue
             out.append({k: m.get(k) for k in (
                 'id', 'name', 'kind', 'date', 'status', 'filament',
-                'nozzle_temp', 'pa_pick', 'notes', 'settings', 'imported')})
+                'nozzle_temp', 'pa_pick', 'notes', 'settings', 'imported',
+                'auto', 'pa_method')})
             out[-1]['segments'] = len(m.get('segments', []))
             r = (m.get('analysis') or {}).get('result') or {}
             out[-1]['result'] = {k: r.get(k) for k in ('pa', 'unc', 'grade')} \

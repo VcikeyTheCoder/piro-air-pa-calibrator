@@ -156,6 +156,14 @@ def seed_history(p, plug):
     lc.tau = TAU0
     rid = plug.store.list_runs()[0]['id']
     plug.store.set_tag(rid, pa_pick=0.07, notes='felt right on the corner test')
+    # auto PA at print start (PA_AUTO): applied, reused once, and a fallback
+    auto = {'APPLY': '1', 'RESTRICT': '0', 'FAST_FLOW': '14.7', 'REUSE_HOURS': '1',
+            'FILAMENT': 'Fibreel red PLA', 'MAX_FILAMENT': '1000'}
+    g.cmds['PA_LOADCELL_TEST'](Gcmd(auto))
+    g.cmds['PA_LOADCELL_TEST'](Gcmd(auto))
+    lc.tau = 0.4
+    g.cmds['PA_LOADCELL_TEST'](Gcmd(dict(auto, FILAMENT='TPU 95A', PRIME_LENGTH='0')))
+    lc.tau = TAU0
     lc.tau = 0.4                   # huge melt lag: no dip up to 0.2 -> fails
     try:
         g.cmds['PA_LOADCELL_TEST'](Gcmd({'FILAMENT': 'TPU 95A',

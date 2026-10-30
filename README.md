@@ -18,6 +18,7 @@ Tested on printers with more than 200 runs across several filaments.
 - Adaptive search: usually 6 to 8 PA values instead of a fixed sweep, about 1 to 2 minutes per filament
 - Result with ± uncertainty and a *good / fair / poor* grade, converted to Klipper's smoothed PA
 - Two methods: test push (no motion) or Klipper's own PA on a short line, to compare them on your printer
+- Auto PA before every print at the slicer's outer wall flow (OrcaSlicer), set as Klipper's PA, no copying
 - Graphs that show how the value was chosen, from the raw pulse to the final line fit
 - Live load cell graph, manual recordings, compare across runs, export and import of runs
 - Settings saved to `pa_loadcell.cfg`, six themes (including a tmux + Neovim style Terminal theme) plus custom theme files
@@ -46,9 +47,30 @@ appears in the sidebar. Details: [Installation](https://github.com/VcikeyTheCode
 | `PA_LOADCELL_TEST` | Run the test. Parameters override `[pa_loadcell]`, e.g. `PA_LOADCELL_TEST FILAMENT="PETG black" FAST_FLOW=10` |
 | `PA_LOADCELL_TEST PA_METHOD=klipper` | The same test with Klipper's own PA and smoothing (short back-and-forth line) |
 | `PA_LOADCELL_DIAG` | Check the load cell stream: expect about 320 samples/s |
+| `PA_AUTO {rawparams}` | In PRINT_START: auto PA before every print (`pa_auto.cfg`) |
 
 The test needs the nozzle at `min_temp`, all axes homed and Z at `required_z` (20 mm). Apply the result with
 `SET_PRESSURE_ADVANCE ADVANCE=<value>`. All parameters: [Commands](https://github.com/VcikeyTheCoder/piro-air-pa-calibrator/wiki/Commands).
+
+## Auto PA before every print
+
+When pressure advance is off in the OrcaSlicer filament profile, PA is measured at the outer wall flow and wall
+temperature, and set. A recent result of the same filament is reused; no usable result sets 0.02.
+
+OrcaSlicer, Machine start G-code (one line):
+
+```
+print_start EXTRUDER=[first_layer_temperature] BED=[first_layer_bed_temperature] CHAMBER=[chamber_temperature] PRINT_TEMP={nozzle_temperature[initial_extruder]} PA_ON={if enable_pressure_advance[initial_extruder]}1{else}0{endif} WALL_FLOW={outer_wall_volumetric_speed} FILAMENT="{filament_settings_id[initial_extruder]}"
+```
+
+PRINT_START, after the bed mesh:
+
+```
+PA_AUTO {rawparams}
+```
+
+Position, retract and flick are variables in `pa_auto.cfg`. Details:
+[Auto PA before every print](https://github.com/VcikeyTheCoder/piro-air-pa-calibrator/wiki/Auto-PA).
 
 ## Example
 

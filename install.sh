@@ -66,7 +66,7 @@ nginx_remove() {
 if [ "${1:-}" = "--uninstall" ]; then
   say "Uninstalling"
   rm -rf "$EXTRAS/pa_loadcell" "$UI_DIR"
-  [ -f "$CONFIG_DIR/printer.cfg" ] && sed -i '/^\[include pa_loadcell.cfg\]$/d' "$CONFIG_DIR/printer.cfg"
+  [ -f "$CONFIG_DIR/printer.cfg" ] && sed -i -e '/^\[include pa_loadcell.cfg\]$/d' -e '/^\[include pa_auto.cfg\]$/d' "$CONFIG_DIR/printer.cfg"
   python3 - "$CONFIG_DIR/.theme/navi.json" <<'PY' 2>/dev/null || true
 import json, sys
 p = sys.argv[1]; items = json.load(open(p))
@@ -79,7 +79,7 @@ PY
     sed -i "/$MARK begin/,/$MARK end/d" "$MOONRAKER_CONF"; RESTART_MOONRAKER=1
   fi
   restart_services
-  say "Done. Kept $CONFIG_DIR/pa_loadcell.cfg and ~/printer_data/pa_loadcell"
+  say "Done. Kept $CONFIG_DIR/pa_loadcell.cfg, pa_auto.cfg and ~/printer_data/pa_loadcell"
   exit 0
 fi
 
@@ -144,16 +144,32 @@ else
   fi
 fi
 
-say "Adding include to printer.cfg"
-PCFG="$CONFIG_DIR/printer.cfg"
-if grep -qx '\[include pa_loadcell.cfg\]' "$PCFG"; then
-  echo "    already included"
+say "Installing auto PA macro"
+AUTO="$CONFIG_DIR/pa_auto.cfg"
+if [ -f "$AUTO" ]; then
+  if cmp -s "$AUTO" "$REPO/klipper/pa_auto.cfg"; then
+    echo "    up to date"
+  else
+    echo "    kept your $AUTO (the latest version is $REPO/klipper/pa_auto.cfg)"
+  fi
 else
-  cp "$PCFG" "$PCFG.bak-pa_loadcell"
-  python3 - "$PCFG" <<'PY'
+  cp "$REPO/klipper/pa_auto.cfg" "$AUTO"; echo "    $AUTO"
+fi
+
+say "Adding includes to printer.cfg"
+PCFG="$CONFIG_DIR/printer.cfg"
+BACKED=0
+for INC in pa_loadcell.cfg pa_auto.cfg; do
+  if grep -qx "\[include $INC\]" "$PCFG"; then
+    echo "    [include $INC] already there"
+    continue
+  fi
+  [ "$BACKED" = 1 ] || { cp "$PCFG" "$PCFG.bak-pa_loadcell"; BACKED=1; }
+  python3 - "$PCFG" "$INC" <<'PY'
 import re, sys
-p = sys.argv[1]; lines = open(p).read().split('\n')
-inc = '[include pa_loadcell.cfg]'
+p, name = sys.argv[1], sys.argv[2]
+lines = open(p).read().split('\n')
+inc = '[include %s]' % name
 for i, l in enumerate(lines):             # never write below SAVE_CONFIG
     if re.match(r'#\*# <-+ SAVE_CONFIG', l):
         lines[i:i] = [inc, '']; break
@@ -161,7 +177,8 @@ else:
     lines += ['', inc, '']
 open(p, 'w').write('\n'.join(lines))
 PY
-fi
+  echo "    added [include $INC]"
+done
 
 say "Linking web page: $UI_DIR"
 rm -rf "$UI_DIR"
@@ -214,4 +231,5 @@ Installed. Next:
   1. Edit $CFG  (park_x/y and test_x/y for your bed)
   2. In the Mainsail console run:  PA_LOADCELL_DIAG
   3. Open the page:  http://$H.local/loadcell/   (also in the Mainsail sidebar: 'Load Cell', after a browser refresh)
+  4. Auto PA before every print: add  PA_AUTO {rawparams}  to PRINT_START, see $AUTO
 MSG

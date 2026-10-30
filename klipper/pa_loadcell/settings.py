@@ -16,7 +16,12 @@ PA_METHOD=klipper instead lets Klipper's own pressure advance and smoothing
 act: the nozzle moves back and forth on a short line along MOVE_AXIS with a
 constant amount of filament per mm, fast and slow come from the toolhead
 speed, and the PA value is set with SET_PRESSURE_ADVANCE. No conversion is
-applied to its result."""
+applied to its result.
+
+Auto PA (PA_AUTO in pa_auto.cfg, before a print): APPLY=1 sets the result as
+Klipper's PA and never stops the print (a poor result, a failure or a cancel
+applies FAIL_PA); REUSE_HOURS reuses a matching recent auto result instead of
+testing; RESTRICT=0 runs where the nozzle is (no Z check, no moves)."""
 from dataclasses import dataclass, fields
 from .errors import PAError
 
@@ -54,6 +59,10 @@ class Settings:
     move_axis: str = "Y"          # klipper method: line axis
     test_accel: float = 5000.0    # klipper method: toolhead accel, mm/s^2
     smooth_time: float = 0.0      # 0 = the extruder's pressure_advance_smooth_time
+    apply: int = 0                # 1 = set the result as Klipper's PA (auto PA)
+    fail_pa: float = 0.02         # applied when an auto run gives no usable result
+    reuse_hours: float = 0.0      # auto: reuse a matching result this recent
+    restrict: int = 1             # 0 = run where the nozzle is, no Z check
 
     @classmethod
     def from_config(cls, config):
@@ -85,7 +94,9 @@ class Settings:
             move_axis=config.getchoice('move_axis', {'X': 'X', 'Y': 'Y',
                                                      'x': 'X', 'y': 'Y'}, 'Y'),
             test_accel=g('test_accel', 5000., above=0.),
-            smooth_time=g('smooth_time', 0., minval=0., maxval=0.1))
+            smooth_time=g('smooth_time', 0., minval=0., maxval=0.1),
+            fail_pa=g('fail_pa', 0.02, minval=0., maxval=2.),
+            reuse_hours=g('reuse_hours', 0., minval=0.))
 
     def merged(self, gcmd):
         """Defaults overridden by command parameters."""
@@ -137,6 +148,12 @@ class Settings:
             raise PAError("TEST_ACCEL must be > 0")
         if self.smooth_time and not 0.01 <= self.smooth_time <= 0.1:
             raise PAError("SMOOTH_TIME must be 0 (printer value) or 0.01 to 0.1")
+        if self.apply not in (0, 1) or self.restrict not in (0, 1):
+            raise PAError("APPLY and RESTRICT must be 0 or 1")
+        if not 0 <= self.fail_pa <= 2.0:
+            raise PAError("FAIL_PA must be between 0 and 2")
+        if self.reuse_hours < 0:
+            raise PAError("REUSE_HOURS must be >= 0")
 
     # -- derived amounts (area = filament cross-section in mm^2) --------
     def leg_mm(self, area):
