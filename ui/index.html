@@ -882,7 +882,8 @@ const ADV=[
  ['Prime','fg3',[['prime_length','Prime length','mm',1,'0 disables','prime'],['prime_flow','Prime flow','mm³/s',.5,'','prime'],['prime_rest','Prime rest','s',.5,'']]],
  ['Search','fg3',[['upper_step','Upper step','',.005,'Added until the force dips'],['pa_limit','PA limit','',.01,'Fails if no dip'],['skip_first','First pulse','',[['1','Skip'],['0','Use']],'']]],
  ['Method','fg',[['pa_method','Klipper smoothing','',[['push','Off: test push, no motion'],['klipper','On: Klipper PA, short line']],''],
-   ['move_axis','Line axis','',[['Y','Y'],['X','X']],''],['test_accel','Test accel','mm/s²',100,'Capped at max_accel'],['smooth_time','Smooth time','s',.005,'0 = printer value']]],
+   ['move_axis','Line axis','',[['Y','Y'],['X','X']],''],['test_accel','Test accel','mm/s²',100,'Capped at max_accel'],['smooth_time','Smooth time','s',.005,'0 = printer value'],
+   ['line_length','Line length','mm',1,'0 = automatic'],['line_dir','Line start','',[['0','Centred on test position'],['1','At test position, towards +'],['-1','At test position, towards −']],'']]],
  ['Position and safety','fg',[['test_x','Test X','mm',1,''],['test_y','Test Y','mm',1,''],['park_x','Park X','mm',1,''],['park_y','Park Y','mm',1,''],
    ['max_filament','Max filament','mm',10,'Limit per test']]]];
 const FKEY='form.v4';
@@ -907,7 +908,8 @@ const mainVals=()=>Object.fromEntries($$('#form input,#form select').map(i=>[i.n
 const formVals=()=>{const v={};for(const k of ADVKEYS)if(DEF&&DEF[k]!=null)v[k]=typeof DEF[k]==='number'?DEF[k]:String(DEF[k]);return Object.assign(v,mainVals())};
 /* ---- Settings: test defaults + positions, saved to pa_loadcell.cfg ---- */
 function methodInfo(v){const e=$('#methodInfo');if(!e||!DEF)return;const A=area(),sm=v.smooth_time>0?v.smooth_time:smoothT(),l=lineOf(v,A,sm);
- e.innerHTML=l?`Klipper method: ${esc(v.move_axis)} line ${l.len.toFixed(1)} mm around the test position, ${l.vf.toFixed(1)} / ${l.vs.toFixed(1)} mm/s, ${l.cs.toFixed(2)} mm² line. Klipper's PA and smoothing act; no conversion.`
+ const thick=l&&DEF.extruder&&DEF.extruder.max_cross_section&&l.cs>0.95*DEF.extruder.max_cross_section;
+ e.innerHTML=l?`${thick?'<b style="color:var(--rec)">Line length too short for max_extrude_cross_section. </b>':''}Klipper method: ${esc(v.move_axis)} line ${l.len.toFixed(1)} mm ${+v.line_dir>0?'from the test position towards +':+v.line_dir<0?'from the test position towards −':'around the test position'}, ${l.vf.toFixed(1)} / ${l.vs.toFixed(1)} mm/s, ${l.cs.toFixed(2)} mm² line. Klipper's PA and smoothing act; no conversion.`
   :`Test push: extrude-only, no motion. The PA push is added by the test and the result converted to Klipper's value (smooth time ${Math.round(sm*1000)} ms).`}
 function renderSettings(only){if(!DEF)return;
  if(!only||only==='#defForm')$('#defForm').innerHTML=ADV.filter(g=>g[0]!=='Position and safety').map(([g,cls,fs])=>`<div style="margin-bottom:12px"><h4>${g}</h4><div class="setform">${fs.map(f=>fieldHTML(f,DEF[f[0]]??'')).join('')}</div></div>`).join('')+
@@ -931,7 +933,7 @@ function plan(v){const A=area(),fast=v.fast_flow/A*v.fast_time,slow=v.slow_flow/
   vf=v.fast_flow/A,vs=v.slow_flow/A,sm=v.smooth_time>0?v.smooth_time:smoothT(),charge=k=>(k*(vf-vs)+(vf+vs)*sm/2)/sm,line=lineOf(v,A,sm);
  return{A,fast,slow,per,prime,primeT,perS,vf,vs,sm,charge,line,filTyp:per*TYP+prime,filMax:per*MAXN+prime,secs:perS*TYP+primeT+(v.prime_rest||0)}}
 /* Klipper method: the back-and-forth line (same as Settings.line in settings.py) */
-function lineOf(v,A,sm){if(v.pa_method!=='klipper')return null;const ex=DEF&&DEF.extruder||{},cap=.64/A,mr=ex.max_extrude_ratio||cap,r=.85*Math.min(mr,cap);
+function lineOf(v,A,sm){if(v.pa_method!=='klipper')return null;const ex=DEF&&DEF.extruder||{},cap=.64/A,mr=ex.max_extrude_ratio||cap,L=+v.line_length||0,r=L>0?(v.fast_flow*v.fast_time+v.slow_flow*v.slow_time)/(A*L):.85*Math.min(mr,cap);
  const vf=v.fast_flow/A/r,vs=v.slow_flow/A/r;let rev=v.slow_time>=.8?.4:.5*v.slow_time;rev=Math.max(rev,Math.min(.5*v.slow_time,sm/2+.33));
  return{r,vf,vs,len:vf*v.fast_time+vs*v.slow_time,cs:r*A}}
 /* one PA value: lead-in, then fast/slow pairs; arrows = the artificial PA push and pull-back */

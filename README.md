@@ -60,7 +60,7 @@ temperature, and set. A recent result of the same filament is reused; no usable 
 OrcaSlicer, Machine start G-code (one line):
 
 ```
-print_start EXTRUDER=[first_layer_temperature] BED=[first_layer_bed_temperature] CHAMBER=[chamber_temperature] PRINT_TEMP={nozzle_temperature[initial_extruder]} PA_ON={if enable_pressure_advance[initial_extruder]}1{else}0{endif} WALL_FLOW={outer_wall_volumetric_speed} FILAMENT="{filament_settings_id[initial_extruder]}"
+print_start EXTRUDER=[first_layer_temperature] BED=[first_layer_bed_temperature] CHAMBER=[chamber_temperature] PRINT_TEMP={nozzle_temperature[initial_extruder]} PA_ON={if enable_pressure_advance[initial_extruder]}1{else}0{endif} WALL_FLOW={outer_wall_volumetric_speed} FILAMENT="{filament_settings_id[initial_extruder]}" OUTER_ACCEL={outer_wall_acceleration[initial_extruder]}
 ```
 
 PRINT_START, after the bed mesh:
@@ -69,7 +69,10 @@ PRINT_START, after the bed mesh:
 PA_AUTO {rawparams}
 ```
 
-Position, retract and flick are variables in `pa_auto.cfg`. Details:
+`pa_auto.cfg` holds four macros, each usable on its own: `PA_AUTO` (called by PRINT_START), `PA_AUTO_POSITION`,
+`PA_AUTO_RUN` (push, or Klipper's PA on a line from the PA location at the slicer's outer wall acceleration) and
+`PA_AUTO_FLICK` (retract, flick, optional push-off of the purge for printers without a bucket). Settings are
+variables at the top of each macro. Details:
 [Auto PA before every print](https://github.com/VcikeyTheCoder/piro-air-pa-calibrator/wiki/Auto-PA).
 
 ## Example

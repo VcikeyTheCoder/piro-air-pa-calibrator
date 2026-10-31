@@ -545,6 +545,39 @@ def test_restrict_klipper_line_slides_inside():
     assert ys and min(ys) >= 0 and max(ys) <= ln + 1.01, (min(ys), max(ys))
     assert abs(m['settings']['test_y'] - (ln / 2 + 0.5)) < 0.01, m['settings']['test_y']
 
+def test_klipper_line_length_and_direction():
+    """LINE_LENGTH sets the line (filament per mm follows), LINE_DIR starts it
+    at the test position and runs towards + or -"""
+    area = 3.14159265 * 0.875 ** 2
+    ln = S(pa_method='klipper', line_length=30).line(area)
+    assert abs(ln['length'] - 30) < 1e-9, ln
+    assert abs(ln['ratio'] - (12 * 0.6 + 1.8 * 1.0) / (area * 30)) < 1e-12
+    assert abs(S(pa_method='klipper').line(area)['length'] - 16.5) < 0.2
+    # starts at the nozzle (Y0) and runs towards +
+    p, bus, store, r = make(tau=0.045, z=5.0)
+    rid = r.run(Gcmd(), S(pa_method='klipper', restrict=0, line_dir=1, line_length=30))
+    m = store.get_run(rid)
+    assert m['status'] == 'complete', m.get('error')
+    ys = [float(x) for l in p.log for x in re.findall(r'G1 Y([-\d.]+) E', l)]
+    starts = [float(x) for l in p.log for x in re.findall(r'G1 X[-\d.]+ Y([-\d.]+) F6000', l)]
+    assert min(ys) >= 0.5 - 1e-6 and max(ys) <= 30.5 + 1e-3, (min(ys), max(ys))
+    assert abs(starts[0] - 0.5) < 1e-3, starts        # slid 0.5 mm off the edge
+    assert abs(m['analysis']['result']['pa'] - 0.045) < 0.005
+    # towards - from the edge: slid inside, still runs towards -
+    p, bus, store, r = make(tau=0.045, z=5.0)
+    rid = r.run(Gcmd(), S(pa_method='klipper', restrict=0, line_dir=-1, line_length=30))
+    ys = [float(x) for l in p.log for x in re.findall(r'G1 Y([-\d.]+) E', l)]
+    assert min(ys) >= 0.5 - 1e-6 and max(ys) <= 30.5 + 1e-3, (min(ys), max(ys))
+    assert ys[0] < 30.5, ys[:3]                        # first move goes towards -
+    # too short for max_extrude_cross_section
+    p, bus, store, r = make(tau=0.045)
+    p.objs['toolhead'].ext.max_extrude_ratio = 0.64 / area
+    try: r.run(Gcmd(), S(pa_method='klipper', line_length=10)); assert False
+    except PAError as e: assert 'LINE_LENGTH 10.0 mm is too short' in str(e), e
+    for bad in (dict(line_dir=2), dict(line_length=-1)):
+        try: S(**bad); assert False, bad
+        except PAError: pass
+
 def test_upper_limit_steps_up_then_fails():
     # no melt lag: the force never dips, so the search climbs by 0.02 and
     # gives up after PA_LIMIT

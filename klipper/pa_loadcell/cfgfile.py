@@ -18,6 +18,7 @@ EDITABLE = {
     'park_x': 'park_x', 'park_y': 'park_y', 'test_x': 'test_x',
     'test_y': 'test_y', 'filament': 'filament', 'pa_method': 'pa_method',
     'move_axis': 'move_axis', 'test_accel': 'test_accel',
+    'line_length': 'line_length', 'line_dir': 'line_dir',
     'smooth_time': 'smooth_time'}
 
 _SECTION = re.compile(r'^\s*\[([^\]]+)\]')

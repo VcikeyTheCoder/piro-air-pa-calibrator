@@ -162,7 +162,16 @@ class PATestRunner:
                  ('PRIME_FLOW', s.prime_flow))
         if s.pa_method == 'klipper':
             flows = flows[2:]                # only the prime is extrude-only
-            ln = s.line(area, getattr(ext, 'max_extrude_ratio', None), sm)
+            mr = getattr(ext, 'max_extrude_ratio', None)
+            ln = s.line(area, mr, sm)
+            if s.line_length > 0:
+                lim = 0.95 * (mr or 0.64 / area)
+                if ln['ratio'] > lim:
+                    raise PAError("LINE_LENGTH %.1f mm is too short: the line would "
+                                  "be %.2f mm2, above max_extrude_cross_section. "
+                                  "Use at least %.1f mm"
+                                  % (s.line_length, ln['cross_section'],
+                                     s.line_length * ln['ratio'] / lim + 0.05))
             vmx = st.get('max_velocity')
             if vmx is not None and ln['v_fast'] > vmx:
                 raise PAError("Klipper method needs %.0f mm/s toolhead speed, "
@@ -171,15 +180,16 @@ class PATestRunner:
             lo, hi = st.get('axis_minimum'), st.get('axis_maximum')
             if lo is not None:
                 i = 'XY'.index(s.move_axis)
-                c = (s.test_x, s.test_y)[i]
+                _, a, b = self._line_ends(s, ln)
                 if free:        # slide the line inside the axis limits
-                    half = ln['length'] / 2 + 0.5
-                    c = min(max(c, lo[i] + half), hi[i] - half)
+                    shift = max(0., lo[i] + 0.5 - min(a, b)) - \
+                        max(0., max(a, b) - (hi[i] - 0.5))
                     if i == 0:
-                        s.test_x = c
+                        s.test_x += shift
                     else:
-                        s.test_y = c
-                if c - ln['length'] / 2 < lo[i] or c + ln['length'] / 2 > hi[i]:
+                        s.test_y += shift
+                    a, b = a + shift, b + shift
+                if min(a, b) < lo[i] or max(a, b) > hi[i]:
                     raise PAError("Klipper method line (%.1f mm along %s) does "
                                   "not fit around the test position"
                                   % (ln['length'], s.move_axis))
@@ -549,9 +559,14 @@ class PATestRunner:
         else:
             self._g("SET_VELOCITY_LIMIT ACCEL=%.1f" % orig['max_accel'])
 
-    def _line_ends(self, s, ln):
+    @staticmethod
+    def _line_ends(s, ln):
+        """(axis, start, end) of the line: centred on the test position, or
+        (LINE_DIR = 1 / -1) starting there and running towards + / -."""
         i = 'XY'.index(s.move_axis)
         c = (s.test_x, s.test_y)[i]
+        if s.line_dir:
+            return s.move_axis, c, c + s.line_dir * ln['length']
         return s.move_axis, c - ln['length'] / 2, c + ln['length'] / 2
 
     def _line_start(self, s, ln):
@@ -590,7 +605,7 @@ class PATestRunner:
         axis, a, b = self._line_ends(s, ln)
         plan = self.plan_line(s, ln, self.accel)
         rel = lambda x: round(x, 4)
-        pos, sign, partial = a, 1., False
+        pos, sign, partial = a, (1. if b >= a else -1.), False
         self.phase = 'lead-in'
         for i, mv in enumerate(plan):
             if self.cancel_flag and mv['name'] == 'fast':

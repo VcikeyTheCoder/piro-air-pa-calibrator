@@ -58,6 +58,9 @@ class Settings:
     pa_method: str = "push"       # push = test push, klipper = Klipper's PA
     move_axis: str = "Y"          # klipper method: line axis
     test_accel: float = 5000.0    # klipper method: toolhead accel, mm/s^2
+    line_length: float = 0.0      # klipper method: line length, 0 = from max cross-section
+    line_dir: int = 0             # klipper method: 0 = centred on the test position,
+                                  # 1 / -1 = starts there, runs towards + / -
     smooth_time: float = 0.0      # 0 = the extruder's pressure_advance_smooth_time
     apply: int = 0                # 1 = set the result as Klipper's PA (auto PA)
     fail_pa: float = 0.02         # applied when an auto run gives no usable result
@@ -94,6 +97,8 @@ class Settings:
             move_axis=config.getchoice('move_axis', {'X': 'X', 'Y': 'Y',
                                                      'x': 'X', 'y': 'Y'}, 'Y'),
             test_accel=g('test_accel', 5000., above=0.),
+            line_length=g('line_length', 0., minval=0.),
+            line_dir=config.getint('line_dir', 0, minval=-1, maxval=1),
             smooth_time=g('smooth_time', 0., minval=0., maxval=0.1),
             fail_pa=g('fail_pa', 0.02, minval=0., maxval=2.),
             reuse_hours=g('reuse_hours', 0., minval=0.))
@@ -146,6 +151,10 @@ class Settings:
             raise PAError("MOVE_AXIS must be X or Y")
         if self.test_accel <= 0:
             raise PAError("TEST_ACCEL must be > 0")
+        if self.line_length < 0:
+            raise PAError("LINE_LENGTH must be >= 0 (0 = automatic)")
+        if self.line_dir not in (-1, 0, 1):
+            raise PAError("LINE_DIR must be -1, 0 or 1")
         if self.smooth_time and not 0.01 <= self.smooth_time <= 0.1:
             raise PAError("SMOOTH_TIME must be 0 (printer value) or 0.01 to 0.1")
         if self.apply not in (0, 1) or self.restrict not in (0, 1):
@@ -185,9 +194,13 @@ class Settings:
         max_extrude_ratio (max_extrude_cross_section / filament area). The
         line is 85 % of that cross-section, capped at the 0.4 mm nozzle
         default (0.64 mm2) so a raised limit does not shrink the motion to
-        nothing. -> dict"""
+        nothing. LINE_LENGTH > 0 sets the length instead: the filament per mm
+        follows from it (one fast + one slow leg = one length). -> dict"""
         cap = 0.64 / area                    # Klipper default, 0.4 mm nozzle
         r = 0.85 * min(max_ratio or cap, cap)   # filament mm per toolhead mm
+        if self.line_length > 0:
+            r = (self.fast_flow * self.fast_time + self.slow_flow *
+                 self.slow_time) / (area * self.line_length)
         vf, vs = self.fast_flow / area / r, self.slow_flow / area / r
         h = (self.smooth_time or smooth) / 2.
         # turn around inside the slow leg: after the dip window (ends
