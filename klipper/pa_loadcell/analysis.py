@@ -311,6 +311,9 @@ def edge_score(t, f, markers, smooth=0.04, skip_first=True):
            'fall_curve': [round(fc[k], 4) for k in range(0, len(fc), stp)],
            'rise_curve': [round(rc[k], 4) for k in range(0, len(rc), stp)],
            'dt': round(stp / sps, 5), 'start': round(h + 0.005, 4)}
+    sh = shape_error(t, f, markers, skip_first, start=h + 0.005)
+    if sh:
+        out['shape'] = sh
     return out
 
 
@@ -463,6 +466,211 @@ def predict(pts, floor=0.):
     return round(p['pa'] - (-p['dip']) / SLOPE_PRIOR, 5)
 
 
+# -- PIRO-FIT: the PA whose response is closest to a square wave ----------
+SHAPE_WIN = 0.35        # s scored after every speed change
+SHAPE_BIN = 0.006       # s, bins of the overlaid step shape (page graph)
+
+
+def _median_between(t, f, a, b):
+    lo, hi = bisect.bisect_left(t, a), bisect.bisect_right(t, b)
+    return _median(f[lo:hi]) if hi - lo >= 3 else None
+
+
+def shape_error(t, f, markers, skip_first=True, win=SHAPE_WIN, start=0.025):
+    """How far one PA value's force is from a perfect square wave.
+    Every pulse: the settled fast level and the settled slow levels before
+    and after it (each pulse its own levels, so slow drift cancels); after
+    the speed-up the force should sit at the fast level, after the slow-down
+    at the next slow level. Residuals as a fraction of the step, over `win`
+    seconds after each change, from `start` (half the smoothing window +
+    5 ms: inside the window the speed is still changing). -> dict (ms = mean square, per pulse too) or
+    None. Too little PA: lag error; too much: overshoot / undershoot error."""
+    if len(t) < 50:
+        return None
+    fasts = sorted((m for m in markers if m.get('name') == 'fast'),
+                   key=lambda m: m['t0'])
+    slows = sorted((m for m in markers if m.get('name') == 'slow'),
+                   key=lambda m: m['t0'])
+    if skip_first and len(fasts) > 1:
+        fasts = fasts[1:]
+    nb = int(round((win + 0.05) / SHAPE_BIN))
+    up_b, dn_b = [[0., 0] for _ in range(nb)], [[0., 0] for _ in range(nb)]
+    pulses, ss, n, bal_u, bal_d, steps = [], 0., 0, 0., 0., []
+    for m in fasts:
+        tu, td = m['t0'], m['t1']
+        ps = [x for x in slows if x['t0'] < tu - 0.05]       # the one before
+        ns = [x for x in slows if abs(x['t0'] - td) < 0.02]  # the one after
+        if not ps or not ns:
+            continue
+        ps, ns = ps[-1], ns[0]
+        t_f, t_p, t_n = td - tu, ps['t1'] - ps['t0'], ns['t1'] - ns['t0']
+        w = min(win, 0.6 * t_f, 0.6 * t_n)
+        if w < 0.1:
+            continue
+        hi = _median_between(t, f, td - min(0.2, 0.35 * t_f), td - 0.02)
+        lo_p = _median_between(t, f, tu - min(0.25, 0.3 * t_p), tu - 0.02)
+        lo_n = _median_between(t, f, ns['t1'] - min(0.25, 0.3 * t_n),
+                               ns['t1'] - 0.02)
+        if None in (hi, lo_p, lo_n):
+            continue
+        step = hi - 0.5 * (lo_p + lo_n)
+        if abs(step) < 1e-9:
+            continue
+        p_ss, p_n = 0., 0
+        for t0, target, base, up in ((tu, hi, lo_p, True), (td, lo_n, hi, False)):
+            a = bisect.bisect_left(t, t0 - 0.05)
+            b = bisect.bisect_right(t, t0 + w)
+            span = target - base
+            for i in range(a, b):
+                x = t[i] - t0
+                if abs(span) > 1e-9:            # overlaid shape, 0 -> 1
+                    k = int((x + 0.05) / SHAPE_BIN)
+                    if 0 <= k < nb:
+                        bb = (up_b if up else dn_b)[k]
+                        bb[0] += (f[i] - base) / span
+                        bb[1] += 1
+                if x < start:
+                    continue
+                r = (f[i] - target) / step
+                p_ss += r * r
+                p_n += 1
+                if up:
+                    bal_u += r
+                else:
+                    bal_d += r
+        if p_n:
+            pulses.append(p_ss / p_n)
+            ss += p_ss
+            n += p_n
+            steps.append(step)
+    if not n:
+        return None
+    cur = lambda bins: [round(v / c, 4) if c else None for v, c in bins]
+    return {'ms': round(ss / n, 6), 'n': n, 'pulses': [round(x, 6) for x in pulses],
+            'balance': round((bal_u - bal_d) / n, 5),
+            'up': cur(up_b), 'down': cur(dn_b), 'bin': SHAPE_BIN, 't0': -0.05,
+            'win': round(win, 3), 'start': round(start, 4)}
+
+
+def _quad_fit(xs, ys, ws):
+    """Weighted least squares y = a x^2 + b x + c -> (a, b, c) or None."""
+    S = [[0.] * 3 for _ in range(3)]
+    v = [0.] * 3
+    for x, y, w in zip(xs, ys, ws):
+        p = (x * x, x, 1.)
+        for i in range(3):
+            v[i] += w * p[i] * y
+            for j in range(3):
+                S[i][j] += w * p[i] * p[j]
+    # Gaussian elimination
+    M = [S[i] + [v[i]] for i in range(3)]
+    for c in range(3):
+        piv = max(range(c, 3), key=lambda r: abs(M[r][c]))
+        if abs(M[piv][c]) < 1e-18:
+            return None
+        M[c], M[piv] = M[piv], M[c]
+        for r in range(3):
+            if r != c:
+                k = M[r][c] / M[c][c]
+                M[r] = [M[r][j] - k * M[c][j] for j in range(4)]
+    return tuple(M[i][3] / M[i][i] for i in range(3))
+
+
+def piro_fit(segments):
+    """PIRO-FIT: the PA with the least shape error. The force is linear in
+    PA, so the mean square error is exactly a parabola in PA: it is fitted
+    through every PA value tested (PA 0 left out when 3 or more others
+    exist) and its lowest point is the answer. Uncertainty: jackknife over
+    the PA values. -> dict (k None when there is no minimum)."""
+    by = {}
+    for sgm in segments:
+        sh = (sgm.get('piro') or {}).get('shape')
+        if sh and not sgm.get('partial') and sgm.get('pa') is not None:
+            e = by.setdefault(round(sgm['pa'], 6), [0., 0])
+            e[0] += sh['ms'] * sh['n']
+            e[1] += sh['n']
+    pts = [(pa, v / c, c) for pa, (v, c) in sorted(by.items()) if c]
+    out = {'k': None, 'points': [[pa, round(math.sqrt(ms), 4)] for pa, ms, _ in pts]}
+    use = [p for p in pts if p[0] > 0]
+    if len(use) < 3:
+        use = pts
+    if len(use) < 3:
+        out['why'] = 'Not enough PA values for the fit'
+        return out
+
+    def solve(rows):
+        q = _quad_fit([r[0] for r in rows], [r[1] for r in rows],
+                      [1.] * len(rows))
+        if not q or q[0] <= 0:
+            return None
+        return q
+    q = solve(use)
+    if q is None:
+        out['why'] = 'Shape error has no minimum in the tested range'
+        return out
+    a, b, c = q
+    k = -b / (2. * a)
+    ks = []
+    if len(use) >= 4:
+        for i in range(len(use)):
+            qi = solve(use[:i] + use[i + 1:])
+            if qi:
+                ks.append(-qi[1] / (2. * qi[0]))
+    if len(ks) >= 3:
+        mk = sum(ks) / len(ks)
+        se = math.sqrt((len(ks) - 1) / float(len(ks)) *
+                       sum((x - mk) ** 2 for x in ks))
+    else:
+        se = 0.25 * (max(p[0] for p in use) - min(p[0] for p in use))
+    se = max(se, 0.0003)
+    lo, hi = min(p[0] for p in use), max(p[0] for p in use)
+    out.update(k=round(k, 5), se=round(se, 5), a=a, b=b, c=c,
+               rms_min=round(math.sqrt(max(c - b * b / (4. * a), 0.)), 4),
+               used=[p[0] for p in use],
+               above=sum(1 for p in use if p[0] > k),
+               below=sum(1 for p in use if p[0] < k),
+               # a little beyond the tested values is fine: the error is
+               # exactly a parabola, the extrapolation is short
+               inside=lo - max(0.003, 0.05 * k) <= k <= hi + max(0.003, 0.05 * k))
+    return out
+
+
+def run_result(segments, pick='fit'):
+    """The run's answer from one rule: PIRO-FIT (default) or PIRO-EDGE.
+    Both are always computed and kept ('fit', 'edge_result'); the result
+    comes from the chosen rule only."""
+    out = piro_pick(segments)
+    ft = piro_fit(segments)
+    out['fit'] = {k: ft.get(k) for k in ('k', 'se', 'rms_min', 'points',
+                                         'used', 'above', 'below', 'inside',
+                                         'why', 'a', 'b', 'c')}
+    out['edge_result'] = {k: out.get(k) for k in ('pa', 'unc', 'grade', 'why')}
+    if pick != 'fit':
+        return out
+    out.update(method='PIRO-FIT', pa=None, unc=None, grade=None, warnings=[])
+    if ft.get('k') is None:
+        out['why'] = ft.get('why') or 'No fit'
+        return out
+    k, se = ft['k'], ft['se']
+    if not ft.get('inside'):
+        out['why'] = 'Shape error minimum %.4f outside the tested values' % k
+        return out
+    if k <= 0:
+        out['why'] = 'Shape error minimum at or below 0'
+        return out
+    W = out['warnings']
+    if ft['above'] < 1 or ft['below'] < 1:
+        W.append('Fit not bracketed by tested values')
+    lvl = 0 if se <= max(0.0015, 0.04 * k) else \
+        1 if se <= max(0.003, 0.08 * k) else 2
+    lvl = min(2, lvl + len(W))
+    out.update(pa=round(k, 4), unc=round(se, 4),
+               grade=('good', 'fair', 'poor')[lvl],
+               why='Shape error lowest at %.4f (parabola through %d PA values)'
+               % (k, len(ft['used'])))
+    return out
+
+
 def klipper_k(k_art, smooth):
     """Artificial PA (charge spread evenly over the smoothing window while
     the speed jumps to the middle flow) needs a slightly larger K than
@@ -480,8 +688,8 @@ def klipper_k(k_art, smooth):
 
 
 def piro_pick(segments, smooth=None):
-    """`smooth`: the charge window when the run used artificial PA (its
-    answer is then converted to Klipper's K, see klipper_k)."""
+    """PIRO-EDGE: the highest PA without a dip after the slow-down, as
+    measured (`smooth` is accepted for older callers and ignored)."""
     """The run's answer. Dict with pa, unc, grade, why, warnings, edges and
     the points used (for the History graphs)."""
     pts = pool(segments)
@@ -542,12 +750,7 @@ def piro_pick(segments, smooth=None):
     lvl = 0 if se <= max(0.0015, 0.04 * k) else \
         1 if se <= max(0.003, 0.08 * k) else 2
     lvl = min(2, lvl + len(W))
-    if smooth and k > 0:
-        kk = klipper_k(k, smooth)
-        out['measured'] = round(k, 4)
-        out['smooth'] = smooth
-        se *= kk / k
-        k = kk
+    # no smooth time conversion: the value is reported as measured
     out.update(pa=round(k, 4), unc=round(se, 4),
                grade=('good', 'fair', 'poor')[lvl])
     out['why'] = ('Edge between %.4f and %.4f; %s gives %.4f%s'

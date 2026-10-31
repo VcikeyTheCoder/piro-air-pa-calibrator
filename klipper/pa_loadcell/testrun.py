@@ -19,7 +19,7 @@ Search (_search):
      needs it, and a second measurement of values close to their limit
   5. the answer: analysis.piro_pick over everything measured
 
-PA_METHOD=klipper: Klipper's own PA and smoothing act instead. The nozzle
+METHOD=klipper (default): Klipper's own PA and smoothing act instead. The nozzle
 runs back and forth on a short line along MOVE_AXIS with a constant amount
 of filament per mm (85 % of max_extrude_cross_section); fast and slow come
 from the toolhead speed, the PA value from SET_PRESSURE_ADVANCE. The turn of
@@ -160,7 +160,7 @@ class PATestRunner:
         sm = self.window(ext, s)
         flows = (('FAST_FLOW', s.fast_flow), ('SLOW_FLOW', s.slow_flow),
                  ('PRIME_FLOW', s.prime_flow))
-        if s.pa_method == 'klipper':
+        if s.method == 'klipper':
             flows = flows[2:]                # only the prime is extrude-only
             mr = getattr(ext, 'max_extrude_ratio', None)
             ln = s.line(area, mr, sm)
@@ -199,7 +199,7 @@ class PATestRunner:
                               "max_extrude_only_velocity %.1f"
                               % (name, flow, flow / area, vmax))
         v = s.charge_speed(s.pa_max, area, s.fast_flow, s.slow_flow, sm)
-        if s.pa_method == 'push' and vmax is not None and v > vmax:
+        if s.method == 'push' and vmax is not None and v > vmax:
             raise PAError("PA_MAX %.3f needs a %.0f mm/s charge move, above "
                           "max_extrude_only_velocity %.1f. Lower PA_MAX "
                           "or FAST_FLOW" % (s.pa_max, v, vmax))
@@ -238,7 +238,7 @@ class PATestRunner:
         orig_sm = est.get('smooth_time')
         fast_mm, slow_mm = s.leg_mm(area)
         sm = self.window(ext, s)
-        klip = s.pa_method == 'klipper'
+        klip = s.method == 'klipper'
         ln = s.line(area, getattr(ext, 'max_extrude_ratio', None), sm) \
             if klip else None
         tst = self.toolhead.get_status(now)
@@ -251,7 +251,7 @@ class PATestRunner:
             'filament_area': round(area, 4),
             'leg_mm': {'fast': round(fast_mm, 4), 'slow': round(slow_mm, 4)},
             'filament_mm': round(s.filament_mm(area), 1),
-            'smooth_time': sm, 'pa_method': s.pa_method,
+            'smooth_time': sm, 'pa_method': s.method,
             'line': ({k: round(v, 4) for k, v in ln.items()}
                      if ln else None),
             'analysis': {'skip_first': bool(s.skip_first)}})
@@ -292,8 +292,9 @@ class PATestRunner:
         gcmd.respond_info("Run %d %s: %d PA values%s"
                           % (self.run_id, status,
                              len(self.store.get_run(self.run_id)['segments']),
-                             (", PIRO-EDGE PA %.4f +- %.4f (%s)"
-                              % (res['pa'], res['unc'], res['grade']))
+                             (", %s PA %.4f +- %.4f (%s)"
+                              % (res.get('method', 'PIRO-EDGE'), res['pa'],
+                                 res['unc'], res['grade']))
                              if res.get('pa') is not None else ''))
         if status == 'error':
             raise PAError(err)
@@ -360,7 +361,8 @@ class PATestRunner:
                     'applied': round(value, 4), 'fallback': not good,
                     'reason': reason, 'time': time.time(),
                     'filament': s.filament, 'target_temp': round(target, 1),
-                    'wall_flow': round(s.fast_flow, 3), 'pa_method': s.pa_method,
+                    'wall_flow': round(s.fast_flow, 3), 'pa_method': s.method,
+                    'mode': s.mode,
                     'smooth': round(sm, 4), 'reused': 0})
             except Exception:
                 pass
@@ -405,7 +407,7 @@ class PATestRunner:
         wf = float(a.get('wall_flow', 0))
         if abs(wf - s.fast_flow) > 0.05 * s.fast_flow:
             return None
-        if a.get('pa_method') != s.pa_method or \
+        if a.get('pa_method') != s.method or a.get('mode', 'edge') != s.mode or \
                 abs(float(a.get('smooth', 0)) - sm) > 1e-4:
             return None
         return rid, a
@@ -795,16 +797,36 @@ class PATestRunner:
                 if x <= k_ok or tested(x):
                     break
                 measure(x, 'confirm')
+            # 6. PIRO-FIT: a tested value on both sides of the shape minimum
+            if s.mode == 'fit':
+                for _ in range(2):
+                    ft = analysis.piro_fit(segs)
+                    if ft.get('k') is None:
+                        break
+                    k = ft['k']
+                    above = [g for g in segs if k < g['pa'] <= k + 0.015]
+                    below = [g for g in segs if k - 0.015 <= g['pa'] < k]
+                    if above and below:
+                        break
+                    x = snap(k + 0.005 if not above else k - 0.005)
+                    if tested(x) or x <= 0 or x > s.pa_limit:
+                        break
+                    say("fit %.4f, checking %.4f" % (k, x))
+                    measure(x, 'fit')
         except _Cancelled:
             return
         except _Budget:
             say("search limit reached (%d PA values)" % SEARCH_MAX_TRAINS)
-        res = analysis.piro_pick(segs, None if ln else sm)
+        res = analysis.run_result(segs, s.mode)
         self.search.update(result=res.get('pa'), unc=res.get('unc'),
                            grade=res.get('grade'))
         if res.get('pa') is not None:
-            say("PA %.4f +- %.4f (%s)" % (res['pa'], res['unc'],
-                                          res['grade']))
+            say("%s PA %.4f +- %.4f (%s)%s"
+                % (res.get('method', 'PIRO-EDGE'), res['pa'], res['unc'],
+                   res['grade'],
+                   ", edge %.4f" % res['edge_result']['pa']
+                   if res.get('method') == 'PIRO-FIT' and
+                   (res.get('edge_result') or {}).get('pa') is not None else ''))
         else:
             say("no result: %s" % res.get('why', ''))
 
@@ -826,7 +848,7 @@ class PATestRunner:
                                     if s.smooth_time and orig_sm else ""))]
         if orig_lim:
             steps.append(lambda: self._restore_limits(orig_lim))
-        if s.restrict or s.pa_method == 'klipper':   # free + klipper: back to the start
+        if s.restrict or s.method == 'klipper':   # free + klipper: back to the start
             steps.append(lambda: self._g("G1 X%.2f Y%.2f F6000"
                                          % (s.park_x, s.park_y)))
         if saved:

@@ -1,8 +1,9 @@
 # PIRO-EDGE
 
 Pressure advance calibration for Klipper using the load cell on the **PIRO-AIR** toolhead (HX717, 320 Hz).
-The nozzle extrudes fast and slow pulses into the air while the load cell measures the force. PA is raised until
-the force dips after the slow-down; the result is where the dip begins, with an uncertainty and a grade.
+The nozzle extrudes fast and slow pulses into the air while the load cell measures the force. The result,
+**PIRO-FIT**, is the PA whose force response is closest to a perfect square wave, with an uncertainty and a grade.
+**PIRO-EDGE**, the highest PA before the force dips after the slow-down, is shown beside it.
 
 Tested on printers with more than 200 runs across several filaments.
 
@@ -16,8 +17,8 @@ Tested on printers with more than 200 runs across several filaments.
 ## Features
 
 - Adaptive search: usually 6 to 8 PA values instead of a fixed sweep, about 1 to 2 minutes per filament
-- Result with ± uncertainty and a *good / fair / poor* grade, converted to Klipper's smoothed PA
-- Two methods: test push (no motion) or Klipper's own PA on a short line, to compare them on your printer
+- PIRO-FIT result (the PA closest to a square-wave response) with ± uncertainty and a *good / fair / poor* grade; PIRO-EDGE (no-overshoot edge) shown beside it
+- Mode and method, chosen separately: **mode** = the algorithm judging the curve (`fit` PIRO-FIT, default, or `edge` PIRO-EDGE); **method** = how each PA value is applied (`klipper`, default: Klipper's own PA on a short XY line, or `push`: pulses with no XY)
 - Auto PA before every print at the slicer's outer wall flow (OrcaSlicer), set as Klipper's PA, no copying
 - Graphs that show how the value was chosen, from the raw pulse to the final line fit
 - Live load cell graph, manual recordings, compare across runs, export and import of runs
@@ -45,7 +46,8 @@ appears in the sidebar. Details: [Installation](https://github.com/VcikeyTheCode
 | Command | Description |
 |---|---|
 | `PA_LOADCELL_TEST` | Run the test. Parameters override `[pa_loadcell]`, e.g. `PA_LOADCELL_TEST FILAMENT="PETG black" FAST_FLOW=10` |
-| `PA_LOADCELL_TEST PA_METHOD=klipper` | The same test with Klipper's own PA and smoothing (short back-and-forth line) |
+| `PA_LOADCELL_TEST MODE=edge` | Judge the curve with PIRO-EDGE for this run (default `mode: fit`) |
+| `PA_LOADCELL_TEST METHOD=push` | Apply PA with pulses and no XY motion for this run (default `method: klipper`) |
 | `PA_LOADCELL_DIAG` | Check the load cell stream: expect about 320 samples/s |
 | `PA_AUTO {rawparams}` | In PRINT_START: auto PA before every print (`pa_auto.cfg`) |
 
@@ -70,7 +72,7 @@ PA_AUTO {rawparams}
 ```
 
 `pa_auto.cfg` holds four macros, each usable on its own: `PA_AUTO` (called by PRINT_START), `PA_AUTO_POSITION`,
-`PA_AUTO_RUN` (push, or Klipper's PA on a line from the PA location at the slicer's outer wall acceleration) and
+`PA_AUTO_RUN` (Klipper's PA on a line from the PA location at the slicer's outer wall acceleration, or push) and
 `PA_AUTO_FLICK` (retract, flick, optional push-off of the purge for printers without a bucket). Settings are
 variables at the top of each macro. Details:
 [Auto PA before every print](https://github.com/VcikeyTheCoder/piro-air-pa-calibrator/wiki/Auto-PA).

@@ -104,17 +104,24 @@ import re, sys
 cfg, new = sys.argv[1], sys.argv[2]
 lines = open(cfg).read().split('\n')
 OBSOLETE = ('sweeps', 'extrude_len', 'slow_speed', 'fast_speed', 'settle', 'warmup',
-            'method', 'pa_mode', 'pa_start', 'pa_end', 'pa_step', 'wobble',
+            'pa_mode', 'pa_start', 'pa_end', 'pa_step', 'wobble',
             'wobble_axis', 'accel', 'model')
 # earlier defaults: a value nobody changed moves to the PIRO-EDGE default
 OLD_DEFAULTS = {'cycles': ('3', '4'), 'fast_flow': ('19.24',), 'fast_time': ('0.25',),
                 'slow_flow': ('1.92',), 'prime_length': ('40',), 'prime_flow': ('5',),
-                'prime_rest': ('0',), 'rest_time': ('0',), 'pa_max': ('0.08',)}
+                'prime_rest': ('0',), 'rest_time': ('0',), 'pa_max': ('0.08',),
+                'method': ('push',)}
 key = lambda l: (re.match(r'^([a-z_]+)\s*:', l) or [None, None])[1]
+RENAMED = {'pa_method': 'method', 'pick': 'mode'}   # older option names
+for i, l in enumerate(lines):
+    k = key(l)
+    if k in RENAMED and not any(key(x) == RENAMED[k] for x in lines):
+        lines[i] = RENAMED[k] + l[len(k):]
 have = set()
 for i, l in enumerate(lines):
     k = key(l)
-    if k in OBSOLETE:
+    if k in OBSOLETE or (k == 'method' and not re.match(
+            r'^method\s*:\s*(push|klipper)\b', l)):     # 'method' of old versions
         lines[i] = '# no longer used: ' + l
     elif k:
         have.add(k)

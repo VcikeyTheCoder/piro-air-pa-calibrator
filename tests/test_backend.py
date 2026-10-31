@@ -201,7 +201,7 @@ def make(temp=210.0, z=20.0, tau=None):
     return p, bus, store, PATestRunner(p, bus, store, lim)
 
 def S(**kw):
-    d = dict(cycles=3, test_x=100, test_y=100, park_x=10, park_y=10)
+    d = dict(cycles=3, test_x=100, test_y=100, park_x=10, park_y=10, method='push')
     d.update(kw); s = Settings(**d); s.validate(); return s
 
 
@@ -419,13 +419,13 @@ def test_full_search_finds_pa():
     assert abs(f['t1'] - f['t0'] - 0.6) < 0.002, f        # nominal step times
     e = m['segments'][1]
     assert e['piro']['n'] == 2 and e['cmd']['gain'] > 0   # first pulse skipped
-    assert 'PIRO-EDGE PA' in g.out[-1], g.out[-1]
+    assert 'PIRO-FIT PA' in g.out[-1], g.out[-1]
 
 def test_klipper_method_finds_pa():
     """PA_METHOD=klipper: back-and-forth line, Klipper's own PA, no conversion"""
     p, bus, store, r = make(tau=0.045)
     p.windows.sort()
-    rid = r.run(Gcmd(), S(pa_method='klipper'))
+    rid = r.run(Gcmd(), S(method='klipper'))
     m = store.get_run(rid)
     assert m['status'] == 'complete' and m['pa_method'] == 'klipper', m['status']
     res = m['analysis']['result']
@@ -450,14 +450,14 @@ def test_klipper_method_finds_pa():
 
 def test_klipper_method_checks():
     p, bus, store, r = make(tau=0.045)
-    try: r.run(Gcmd(), S(pa_method='klipper', test_y=3)); assert False
+    try: r.run(Gcmd(), S(method='klipper', test_y=3)); assert False
     except PAError as e: assert 'does not fit' in str(e), e
     p, bus, store, r = make(tau=0.045)
     p.objs['toolhead'].get_status = lambda now: {'homed_axes': 'xyz', 'axis_minimum': [0, 0, 0],
         'axis_maximum': [250, 250, 250], 'max_accel': 4000, 'max_velocity': 10}
-    try: r.run(Gcmd(), S(pa_method='klipper')); assert False
+    try: r.run(Gcmd(), S(method='klipper')); assert False
     except PAError as e: assert 'max_velocity' in str(e), e
-    for bad in (dict(pa_method='wobble'), dict(move_axis='Z'), dict(smooth_time=0.5)):
+    for bad in (dict(method='wobble'), dict(move_axis='Z'), dict(smooth_time=0.5)):
         try: S(**bad); assert False, bad
         except PAError: pass
 
@@ -488,7 +488,7 @@ def test_auto_apply_and_reuse():
     assert store.last_auto()[1]['auto']['reused'] == 1
     # anything different, too old, or REUSE_HOURS=0: a new test
     tgt, sm = 210.0, 0.04
-    for kw in (dict(filament='PETG'), dict(fast_flow=16), dict(pa_method='klipper'),
+    for kw in (dict(filament='PETG'), dict(fast_flow=16), dict(method='klipper'),
                dict(filament='')):
         d = dict(apply=1, restrict=0, reuse_hours=1, filament='Fibreel red', fast_flow=14)
         d.update(kw)
@@ -537,7 +537,7 @@ def test_restrict_klipper_line_slides_inside():
     """RESTRICT=0 + klipper method next to the axis edge: the line is moved
     inside the limits, centred as close to the nozzle as possible"""
     p, bus, store, r = make(tau=0.045, z=5.0)       # nozzle at X0 Y0
-    rid = r.run(Gcmd(), S(pa_method='klipper', restrict=0))
+    rid = r.run(Gcmd(), S(method='klipper', restrict=0))
     m = store.get_run(rid)
     assert m['status'] == 'complete', m.get('error')
     ln = m['line']['length']
@@ -549,13 +549,13 @@ def test_klipper_line_length_and_direction():
     """LINE_LENGTH sets the line (filament per mm follows), LINE_DIR starts it
     at the test position and runs towards + or -"""
     area = 3.14159265 * 0.875 ** 2
-    ln = S(pa_method='klipper', line_length=30).line(area)
+    ln = S(method='klipper', line_length=30).line(area)
     assert abs(ln['length'] - 30) < 1e-9, ln
     assert abs(ln['ratio'] - (12 * 0.6 + 1.8 * 1.0) / (area * 30)) < 1e-12
-    assert abs(S(pa_method='klipper').line(area)['length'] - 16.5) < 0.2
+    assert abs(S(method='klipper').line(area)['length'] - 16.5) < 0.2
     # starts at the nozzle (Y0) and runs towards +
     p, bus, store, r = make(tau=0.045, z=5.0)
-    rid = r.run(Gcmd(), S(pa_method='klipper', restrict=0, line_dir=1, line_length=30))
+    rid = r.run(Gcmd(), S(method='klipper', restrict=0, line_dir=1, line_length=30))
     m = store.get_run(rid)
     assert m['status'] == 'complete', m.get('error')
     ys = [float(x) for l in p.log for x in re.findall(r'G1 Y([-\d.]+) E', l)]
@@ -565,18 +565,86 @@ def test_klipper_line_length_and_direction():
     assert abs(m['analysis']['result']['pa'] - 0.045) < 0.005
     # towards - from the edge: slid inside, still runs towards -
     p, bus, store, r = make(tau=0.045, z=5.0)
-    rid = r.run(Gcmd(), S(pa_method='klipper', restrict=0, line_dir=-1, line_length=30))
+    rid = r.run(Gcmd(), S(method='klipper', restrict=0, line_dir=-1, line_length=30))
     ys = [float(x) for l in p.log for x in re.findall(r'G1 Y([-\d.]+) E', l)]
     assert min(ys) >= 0.5 - 1e-6 and max(ys) <= 30.5 + 1e-3, (min(ys), max(ys))
     assert ys[0] < 30.5, ys[:3]                        # first move goes towards -
     # too short for max_extrude_cross_section
     p, bus, store, r = make(tau=0.045)
     p.objs['toolhead'].ext.max_extrude_ratio = 0.64 / area
-    try: r.run(Gcmd(), S(pa_method='klipper', line_length=10)); assert False
+    try: r.run(Gcmd(), S(method='klipper', line_length=10)); assert False
     except PAError as e: assert 'LINE_LENGTH 10.0 mm is too short' in str(e), e
     for bad in (dict(line_dir=2), dict(line_length=-1)):
         try: S(**bad); assert False, bad
         except PAError: pass
+
+def test_piro_fit_single_delay():
+    """PIRO-FIT on a one-delay nozzle: Klipper's own PA -> exactly tau; the
+    test push (no conversion) a little above, next to the edge"""
+    for meth, lo, hi in (('klipper', 0.0445, 0.0455), ('push', 0.046, 0.050)):
+        p, bus, store, r = make(tau=0.045)
+        g = Gcmd()
+        m = store.get_run(r.run(g, S(method=meth)))
+        res = m['analysis']['result']
+        assert res['method'] == 'PIRO-FIT' and lo <= res['pa'] <= hi, (meth, res['pa'])
+        assert res['grade'] == 'good' and res['fit']['inside'], res['fit']
+        assert res['edge_result']['pa'] is not None and 'measured' not in res
+        ft = res['fit']
+        assert ft['above'] >= 1 and ft['below'] >= 1, ft
+        assert 'PIRO-FIT PA' in g.out[-1] and ', edge ' in g.out[-2], g.out[-2:]
+        seg = m['segments'][2]['piro']['shape']
+        assert seg['up'] and seg['down'] and seg['start'] > 0.02
+
+def test_piro_fit_parabola():
+    from pa_loadcell.analysis import piro_fit, _quad_fit
+    a, b, c = _quad_fit([1, 2, 3, 4], [1 + 2 * x + 3 * x * x for x in (1, 2, 3, 4)], [1] * 4)
+    assert abs(a - 3) < 1e-9 and abs(b - 2) < 1e-9 and abs(c - 1) < 1e-9
+    mk = lambda pa, ms: {'pa': pa, 'idx': 0, 'piro': {'shape': {'ms': ms, 'n': 100}}}
+    curve = lambda k: 0.004 + 40. * (k - 0.07) ** 2
+    segs = [mk(0., 0.1)] + [mk(k, curve(k)) for k in (0.055, 0.062, 0.068, 0.075, 0.1)]
+    ft = piro_fit(segs)
+    assert abs(ft['k'] - 0.07) < 1e-6 and ft['inside'] and ft['used'][0] == 0.055, ft
+    segs[3] = mk(0.068, curve(0.068) * 1.15)                # one noisy value
+    assert abs(piro_fit(segs)['k'] - 0.07) < 0.002
+    assert piro_fit(segs[:2])['k'] is None                  # two values only
+    flat = [mk(k, 0.01 - k * 0.05) for k in (0.05, 0.06, 0.07)]
+    assert piro_fit(flat)['k'] is None
+
+def test_mode_setting_and_reanalyse():
+    p, bus, store, r = make(tau=0.045)
+    rid = r.run(Gcmd(), S(method='klipper', mode='edge'))
+    res = store.get_run(rid)['analysis']['result']
+    assert res['method'] == 'PIRO-EDGE' and res['fit']['k'] is not None
+    assert not any(x['stage'] == 'fit' for x in store.get_run(rid)['search']['steps'])
+    m = store.reanalyze(rid, mode='fit')
+    assert m['analysis']['result']['method'] == 'PIRO-FIT' and m['settings']['mode'] == 'fit'
+    # a run made before PIRO-FIT (no mode stored) keeps its edge result
+    meta = store.get_run(rid)
+    meta['settings'].pop('mode')
+    import json, os
+    json.dump(meta, open(os.path.join(store.root, 'run_%04d' % rid, 'meta.json'), 'w'))
+    assert store.reanalyze(rid)['analysis']['result']['method'] == 'PIRO-EDGE'
+    assert Settings().mode == 'fit' and Settings().method == 'klipper'   # defaults
+    class G:                                    # older parameter names still work
+        def __init__(s, p): s.p = p
+        def get(s, k, d=None): return s.p.get(k, d)
+        def get_float(s, k, d=None): return float(s.p[k]) if k in s.p else d
+        def get_int(s, k, d=None): return int(s.p[k]) if k in s.p else d
+    base = Settings(test_x=1, test_y=1, park_x=1, park_y=1)
+    m2 = base.merged(G({'PA_METHOD': 'push', 'PICK': 'edge'}))
+    assert m2.method == 'push' and m2.mode == 'edge'
+    m3 = base.merged(G({'PA_METHOD': 'push', 'METHOD': 'klipper', 'MODE': 'FIT'}))
+    assert m3.method == 'klipper' and m3.mode == 'fit'
+    try: S(mode='best'); assert False
+    except PAError: pass
+    # the two rules stay separate: no fit -> no PIRO-FIT result, edge untouched
+    from pa_loadcell.analysis import run_result
+    segs = [dict(e, piro={k: v for k, v in e['piro'].items() if k != 'shape'})
+            for e in store.get_run(rid)['segments']]
+    res = run_result(segs, 'fit')
+    assert res['method'] == 'PIRO-FIT' and res['pa'] is None and res['why'], res['why']
+    assert res['edge_result']['pa'] is not None
+    assert run_result(segs, 'edge')['pa'] == res['edge_result']['pa']
 
 def test_upper_limit_steps_up_then_fails():
     # no melt lag: the force never dips, so the search climbs by 0.02 and

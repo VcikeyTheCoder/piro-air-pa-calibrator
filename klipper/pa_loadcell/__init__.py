@@ -230,7 +230,11 @@ class PALoadCell:
         if self.runner.state != 'idle' and rid == self.runner.run_id:
             raise PAError("Run still recording")
         skip = req.get('skip_first', None)
-        return self.store.reanalyze(rid, None if skip is None else bool(skip))
+        mode = req.get('mode', None) or req.get('pick', None)
+        if mode not in (None, 'fit', 'edge'):
+            raise PAError("mode must be fit or edge")
+        return self.store.reanalyze(rid, None if skip is None else bool(skip),
+                                    mode)
 
     def _printer_status(self):
         """Nozzle temperature (current / set) and Z for the status chips."""

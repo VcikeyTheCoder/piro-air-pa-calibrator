@@ -134,12 +134,10 @@ class RunStore:
                     'stale'):
             a.pop(old, None)
         if meta.get('kind') == 'test':
-            art = (meta.get('method') in ('PIRO-EDGE', 'artificial') or
-                   (meta.get('settings') or {}).get('method') == 'artificial') \
-                and meta.get('pa_method', 'push') != 'klipper'
-            a['result'] = analysis.piro_pick(
-                meta['segments'],
-                (meta.get('smooth_time') or 0.04) if art else None)
+            # runs made before PIRO-FIT keep the edge unless re-analysed
+            st = meta.get('settings') or {}
+            a['result'] = analysis.run_result(meta['segments'],
+                                              st.get('mode') or st.get('pick') or 'edge')
         a['offset'] = analysis.timing_offset(meta['segments'])
         meta['analysis'] = a
         if meta.get('kind') == 'test' and meta.get('settings'):
@@ -188,7 +186,7 @@ class RunStore:
         self._summarize(meta)
         _atomic(self._meta_path(rid), meta)
 
-    def reanalyze(self, rid, skip_first=None):
+    def reanalyze(self, rid, skip_first=None, mode=None):
         """Recompute every per-PA summary and the PIRO-EDGE answer from the
         raw samples. Raw data is left untouched."""
         meta = _load(self._meta_path(rid))
@@ -196,6 +194,8 @@ class RunStore:
         if skip_first is not None:
             a['skip_first'] = bool(skip_first)
         meta['analysis'] = a
+        if mode:
+            meta['settings'] = dict(meta.get('settings') or {}, mode=mode)
         segs = []
         for e in meta.get('segments', []):
             seg = _load(os.path.join(self._dir(rid), 'seg_%03d.json'
@@ -253,13 +253,21 @@ class RunStore:
             raise
         return rid
 
+    @staticmethod
+    def _stale(meta):
+        """Analysed by a version without the PIRO-FIT shape data."""
+        return meta.get('status') != 'running' and any(
+            'piro' in e and 'shape' not in e['piro']
+            for e in meta.get('segments', []) if not e.get('partial'))
+
     def list_runs(self):
         out = []
         for rid in reversed(self._ids()):
             try:
                 m = _load(self._meta_path(rid))
-                if m.get('kind') == 'test' and 'result' not in \
-                        (m.get('analysis') or {}) and m.get('segments'):
+                if m.get('kind') == 'test' and m.get('segments') and (
+                        'result' not in (m.get('analysis') or {})
+                        or self._stale(m)):
                     m = self.get_run(rid)        # older version: analyse once
             except (OSError, ValueError):
                 continue
@@ -276,8 +284,8 @@ class RunStore:
     def get_run(self, rid):
         meta = _load(self._meta_path(rid))
         if meta.get('kind') == 'test' and meta.get('status') != 'running' \
-                and any('piro' not in e for e in meta.get('segments', [])
-                        if not e.get('partial')):
+                and (any('piro' not in e for e in meta.get('segments', [])
+                         if not e.get('partial')) or self._stale(meta)):
             # a run from an older version: re-analyse it once with
             # PIRO-EDGE (raw samples are not changed)
             try:

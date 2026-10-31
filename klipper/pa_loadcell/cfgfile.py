@@ -16,9 +16,9 @@ EDITABLE = {
     'prime_rest': 'prime_rest', 'rest_time': 'rest_time',
     'max_filament': 'max_filament', 'skip_first': 'skip_first_pulse',
     'park_x': 'park_x', 'park_y': 'park_y', 'test_x': 'test_x',
-    'test_y': 'test_y', 'filament': 'filament', 'pa_method': 'pa_method',
+    'test_y': 'test_y', 'filament': 'filament', 'method': 'method',
     'move_axis': 'move_axis', 'test_accel': 'test_accel',
-    'line_length': 'line_length', 'line_dir': 'line_dir',
+    'line_length': 'line_length', 'line_dir': 'line_dir', 'mode': 'mode',
     'smooth_time': 'smooth_time'}
 
 _SECTION = re.compile(r'^\s*\[([^\]]+)\]')
