@@ -2,8 +2,8 @@
 
 Pressure advance calibration for Klipper using the load cell on the **PIRO-AIR** toolhead (HX717, 320 Hz).
 The nozzle extrudes fast and slow pulses into the air while the load cell measures the force. The result,
-**PIRO-FIT**, is the PA whose force response is closest to a perfect square wave, with an uncertainty and a grade.
-**PIRO-EDGE**, the highest PA before the force dips after the slow-down, is shown beside it.
+**PIRO-AREA**, is the PA where the gap after every speed change and the overshoot have the same area, with an
+uncertainty and a grade. **PIRO-EDGE**, the highest PA before the force dips after the slow-down, is shown beside it.
 
 Tested on printers with more than 200 runs across several filaments.
 
@@ -16,11 +16,11 @@ Tested on printers with more than 200 runs across several filaments.
 
 ## Features
 
-- Adaptive search: usually 6 to 8 PA values instead of a fixed sweep, about 1 to 2 minutes per filament
-- PIRO-FIT result (the PA closest to a square-wave response) with ± uncertainty and a *good / fair / poor* grade; PIRO-EDGE (no-overshoot edge) shown beside it
-- Mode and method, chosen separately: **mode** = the algorithm judging the curve (`fit` PIRO-FIT, default, or `edge` PIRO-EDGE); **method** = how each PA value is applied (`klipper`, default: Klipper's own PA on a short XY line, or `push`: pulses with no XY)
+- Adaptive search: up to 7 PA values (`max_values`) placed around the answer, about 1 to 2 minutes per filament
+- PIRO-AREA result with ± uncertainty, a *good / fair / poor* grade and a graph of how the ± narrows with every value; PIRO-EDGE (no-dip edge) shown beside it
+- Mode and method, chosen separately: **mode** = the algorithm judging the curve (`area` PIRO-AREA, default, or `edge` PIRO-EDGE); **method** = how each PA value is applied (`push`, default: exactly Klipper's own PA with no XY motion, or `klipper`: Klipper's own PA on a short XY line). No conversion either way
 - Auto PA before every print at the slicer's outer wall flow (OrcaSlicer), set as Klipper's PA, no copying
-- Graphs that show how the value was chosen, from the raw pulse to the final line fit
+- Graphs that show how the value was chosen, from the raw pulse to the final line
 - Live load cell graph, manual recordings, compare across runs, export and import of runs
 - Settings saved to `pa_loadcell.cfg`, six themes (including a tmux + Neovim style Terminal theme) plus custom theme files
 - Works with `[load_cell]` and `[load_cell_probe]`
@@ -46,8 +46,8 @@ appears in the sidebar. Details: [Installation](https://github.com/VcikeyTheCode
 | Command | Description |
 |---|---|
 | `PA_LOADCELL_TEST` | Run the test. Parameters override `[pa_loadcell]`, e.g. `PA_LOADCELL_TEST FILAMENT="PETG black" FAST_FLOW=10` |
-| `PA_LOADCELL_TEST MODE=edge` | Judge the curve with PIRO-EDGE for this run (default `mode: fit`) |
-| `PA_LOADCELL_TEST METHOD=push` | Apply PA with pulses and no XY motion for this run (default `method: klipper`) |
+| `PA_LOADCELL_TEST MODE=edge` | Judge the curve with PIRO-EDGE for this run (default `mode: area`) |
+| `PA_LOADCELL_TEST METHOD=klipper` | Apply PA on a short XY line for this run (default `method: push`) |
 | `PA_LOADCELL_DIAG` | Check the load cell stream: expect about 320 samples/s |
 | `PA_AUTO {rawparams}` | In PRINT_START: auto PA before every print (`pa_auto.cfg`) |
 
@@ -79,7 +79,7 @@ variables at the top of each macro. Details:
 
 ## Example
 
-Fibreel red PLA at 220 °C: 6 PA values, 1:05, 159 mm of filament.
+Run 42 at 240 °C, analysed as PIRO-AREA: 0.0657 ± 0.0007, good. The no-dip edge is 0.0596.
 
 ![Result](docs/images/answer.png)
 

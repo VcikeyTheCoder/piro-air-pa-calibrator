@@ -1,6 +1,6 @@
 """Offline tests with a fake printer: no Klipper needed.
 Run: python3 tests/test_backend.py"""
-import os, re, sys, tempfile
+import math, os, re, sys, tempfile
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'klipper'))
 from pa_loadcell.feed import SampleBus
 from pa_loadcell.recorder import ManualRecorder
@@ -15,7 +15,8 @@ class Printer:
     def __init__(self, temp=210.0, z=20.0):
         self.now = 1000.0
         self.pt = 1000.5           # toolhead print_time
-        self.windows = []          # (t0, t1) of E moves -> force
+        self.windows = []          # (t0, t1[, rate]) of XY+E moves -> force
+        self.emoves, self.eends = [], []   # extrude-only moves (a, b, d, h)
         self.log, self.hooks = [], []
         self.temp, self.z = temp, z
         self.sent = 1000.0
@@ -28,9 +29,41 @@ class Printer:
         self.now = max(t, self.now)
         for h in self.hooks: h()
     def lookup_object(self, n, d=None): return self.objs.get(n, d)
+    # extrude-only moves, each at constant speed over its Klipper duration,
+    # smoothed like Klipper does (triangle over smooth_time) while PA != 0
+    @staticmethod
+    def _R(x, h):                   # triangle-smoothed max(x, 0)
+        if h <= 0: return max(x, 0.)
+        if x <= -h: return 0.
+        if x >= h: return x
+        if x <= 0: return (x + h) ** 3 / (6 * h * h)
+        return x + (h - x) ** 3 / (6 * h * h)
+    @staticmethod
+    def _F(x, h):                   # its slope
+        if h <= 0: return 1. if x > 0 else 0.
+        if x <= -h: return 0.
+        if x >= h: return 1.
+        if x <= 0: return (x + h) ** 2 / (2 * h * h)
+        return 1 - (h - x) ** 2 / (2 * h * h)
+    def _near(self, t0, t1):
+        import bisect
+        i = bisect.bisect_right(self.eends, t0 - 0.11)
+        while i < len(self.emoves) and self.emoves[i][0] - 0.11 < t1:
+            yield self.emoves[i]; i += 1
+    def e_delta(self, t0, t1):
+        """filament pushed by extrude-only moves over [t0, t1)"""
+        out = 0.
+        for a, b, d, h in self._near(t0, t1):
+            k = d / (b - a)
+            out += k * (self._R(t1 - a, h) - self._R(t1 - b, h)
+                        - self._R(t0 - a, h) + self._R(t0 - b, h))
+        return out
+    def e_rate(self, t):
+        return sum(d / (b - a) * (self._F(t - a, h) - self._F(t - b, h))
+                   for a, b, d, h in self._near(t, t))
 
 class Extruder:
-    max_e_velocity, max_e_accel = 100.0, 5000.0
+    max_e_velocity, max_e_accel, max_e_dist = 100.0, 5000.0, 50.0
     filament_area = 3.14159265 * 0.875 ** 2
     max_extrude_ratio = 120.0 / filament_area     # max_extrude_cross_section 120
     def __init__(s, p): s.p = p
@@ -56,12 +89,13 @@ class Gcode:
     distance, an extrude-only move at F over the E distance. XY+E moves are
     planned like Klipper's lookahead (same direction: the lower speed at the
     junction, a turn: 0, accel from SET_VELOCITY_LIMIT) and get Klipper's
-    pressure advance: filament rate r + K * dr/dt, smoothed with Klipper's
-    triangle weighting over smooth_time (kin_extruder.c)."""
-    DT = 0.001
+    pressure advance: position x + K * dx/dt, smoothed with Klipper's
+    triangle weighting over smooth_time (kin_extruder.c) while PA != 0.
+    Extrude-only moves get the smoothing but no PA term, as in Klipper."""
+    PIECE = 0.0002
     def __init__(s, p):
         s.p, s.n_e, s.pos = p, 0, {'X': 0.0, 'Y': 0.0}
-        s.pa, s.sm, s.accel, s.pending = 0.0, 0.04, 4000.0, []
+        s.pa, s.sm, s.accel, s.mcr, s.pending = 0.0, 0.04, 4000.0, 0.5, []
     def flush(s):
         mv, s.pending = s.pending, []
         if not mv: return
@@ -77,26 +111,22 @@ class Gcode:
             ta, td = (vc - v0) / a, (vc - v1) / a
             tc = max(0., m['d'] - (vc * vc - v0 * v0) / (2 * a) - (vc * vc - v1 * v1) / (2 * a)) / vc
             segs.append((t, ta, tc, td, v0, vc, v1, m['r'])); t += ta + tc + td
-        t0, t1, h, dt = s.p.pt, t, s.sm / 2., s.DT
-        def rate(x):                        # nominal filament rate
-            for (ts, ta, tc, td, v0, vc, v1, r) in segs:
-                if ts <= x < ts + ta + tc + td:
-                    u = x - ts
-                    if u < ta: return r * (v0 + a * u)
-                    if u < ta + tc: return r * vc
-                    return r * (vc - a * (u - ta - tc))
-            return 0.
-        g0 = t0 - h - dt
-        N = int((t1 + h + dt - g0) / dt) + 2
-        r = [rate(g0 + (i + .5) * dt) for i in range(N)]
-        pa = [r[i] + s.pa * ((r[i + 1] - r[i - 1]) / (2 * dt) if 0 < i < N - 1 else 0.) for i in range(N)]
-        k = max(1, int(round(h / dt)))
-        w = [(k - abs(j)) for j in range(-k + 1, k)]; ws = float(sum(w))
-        for i in range(N):
-            acc = 0.
-            for j in range(-k + 1, k):
-                if 0 <= i + j < N: acc += pa[i + j] * w[j + k - 1]
-            s.p.windows.append((g0 + i * dt, g0 + (i + 1) * dt, acc / ws))
+        # extruder target x(t) + K * u(t) (u = filament speed), cut into
+        # short linear pieces through the ramps; Klipper's triangle
+        # smoothing (on while PA != 0) is then applied exactly per piece
+        h, K, P = (s.sm / 2. if s.pa else 0.), s.pa, s.PIECE
+        for (ts, ta, tc, td, v0, vc, v1, r) in segs:
+            for t_a, dur, ua, acc in ((ts, ta, v0, a), (ts + ta, tc, vc, 0.),
+                                      (ts + ta + tc, td, vc, -a)):
+                if dur <= 1e-12: continue
+                n = max(1, int(dur / P + 0.999)) if acc else 1
+                for i in range(n):
+                    x0, x1 = dur * i / n, dur * (i + 1) / n
+                    dx = r * (ua * (x1 - x0) + 0.5 * acc * (x1 * x1 - x0 * x0))
+                    dv = r * acc * (x1 - x0)
+                    s.p.emoves.append((t_a + x0, t_a + x1, dx + K * dv, h))
+                    s.p.eends.append(t_a + x1)
+        t1 = t
         s.p.pt = t1
     def run_script_from_command(s, script):
         for line in script.split('\n'):
@@ -105,8 +135,10 @@ class Gcode:
             if m:
                 s.pa = float(m.group(1))
                 if m.group(2): s.sm = float(m.group(2))
-            m = re.match(r'SET_VELOCITY_LIMIT ACCEL=([\d.]+)', line)
-            if m: s.accel = float(m.group(1))
+            m = re.match(r'SET_VELOCITY_LIMIT ACCEL=([\d.]+)(?: MINIMUM_CRUISE_RATIO=([\d.]+))?', line)
+            if m:
+                s.accel = float(m.group(1))
+                if m.group(2) is not None: s.mcr = float(m.group(2))
             w = dict((k, float(v)) for k, v in re.findall(r'([XYEF])([-\d.]+)', line)) if line.startswith('G1') else {}
             xy = [(a, w[a] - s.pos[a]) for a in 'XY' if a in w and abs(w[a] - s.pos[a]) > 0]
             if 'E' in w and 'F' in w and xy and w['E'] > 0:
@@ -117,11 +149,26 @@ class Gcode:
                 continue
             s.flush()
             if 'E' in w and 'F' in w:
+                # extrude-only, as Klipper's lookahead plans it: from and to
+                # rest at max_extrude_only_accel, cruise at F (<= max_e_velocity)
+                # and <= what max_accel x (1 - minimum_cruise_ratio) reaches
+                ext = s.p.objs['toolhead'].ext
                 d = abs(w['E'])
-                dur = d / (w['F'] / 60)
-                s.p.windows.append((s.p.pt, s.p.pt + dur, w['E'] / dur))
+                if d > ext.max_e_dist:
+                    raise PAError("Extrude only move too long (%.3fmm vs %.3fmm)"
+                                  % (d, ext.max_e_dist))
+                ea = ext.max_e_accel
+                v2 = min(min(w['F'] / 60., ext.max_e_velocity) ** 2, d * ea,
+                         d * s.accel * (1 - s.mcr))
+                v = v2 ** .5
+                dur = 2 * v / ea + (d - v2 / ea) / v
+                h = s.sm / 2. if s.pa else 0.
+                s.p.emoves.append((s.p.pt, s.p.pt + dur, w['E'], h))
+                s.p.eends.append(s.p.pt + dur)
                 s.p.pt += dur
                 s.n_e += 1
+            m = re.match(r'G4 P([\d.]+)', line)
+            if m: s.p.pt += float(m.group(1)) / 1000.
             for a in 'XY':
                 if a in w: s.pos[a] = w[a]
 
@@ -143,7 +190,7 @@ class LoadCell:
         for i in range(n0, n1):
             t = 1000 + i / 320.0
             v = sum((w[2] if len(w) > 2 else 10.0)
-                    for w in p.windows if w[0] <= t < w[1])
+                    for w in p.windows if w[0] <= t < w[1]) + p.e_rate(t)
             counts = v * 1000.0          # 8 mm/s fast leg -> 80 g
             data.append((t, counts / 100.0, counts, 0))
         p.sent = 1000 + n1 / 320.0
@@ -167,7 +214,7 @@ class LagCell(LoadCell):
             a, b = max(w[i][0], t0), min(w[i][1], t1)
             if b > a: e += (w[i][2] if len(w[i]) > 2 else 10.0) * (b - a)
             i += 1
-        return e / (t1 - t0)
+        return (e + s.p.e_delta(t0, t1)) / (t1 - t0)
     def pump(s):
         p = s.p
         if not p.client: return
@@ -192,9 +239,9 @@ class Gcmd:
 from pa_loadcell import analysis
 
 
-def make(temp=210.0, z=20.0, tau=None):
+def make(temp=210.0, z=20.0, tau=None, noise=0.15):
     p = Printer(temp, z)
-    if tau: p.objs['load_cell'] = LagCell(p, tau)
+    if tau: p.objs['load_cell'] = LagCell(p, tau, noise)
     bus = SampleBus(p, 'load_cell', 60000, 15.0)
     store = RunStore(tempfile.mkdtemp())
     lim = {'min_temp': 200, 'required_z': 20, 'z_tol': 0.5, 'timeout': 3}
@@ -210,7 +257,7 @@ def test_cancel_saves_partial():
     g = p.objs['gcode']; orig = g.run_script_from_command
     def hook(script):
         orig(script)
-        if g.n_e == 12: r.cancel()
+        if g.n_e >= 60 and r.state == 'running': r.cancel()
     g.run_script_from_command = hook
     rid = r.run(Gcmd(), S())
     m = store.get_run(rid)
@@ -387,45 +434,61 @@ def _synth_b2b(tau, ring=0.0, loops=6, fast=0.6, slow=1.0, rate=320.0):
 # ---------------------------------------------------------------------
 # PIRO-EDGE
 def test_full_search_finds_pa():
+    """Defaults: push method, PIRO-AREA. With Klipper's smoothing the equal
+    area PA sits a little above the melt lag (0.045 here)"""
     p, bus, store, r = make(tau=0.045)
     g = Gcmd()
     rid = r.run(g, S())
     m = store.get_run(rid)
-    assert m['status'] == 'complete', m
+    assert m['status'] == 'complete', m.get('error')
     res = m['analysis']['result']
-    assert res['pa'] is not None and abs(res['pa'] - 0.045) < 0.005, res
-    assert res['grade'] in ('good', 'fair', 'poor') and res['unc'] > 0
+    assert res['method'] == 'PIRO-AREA' and abs(res['pa'] - 0.049) < 0.003, res['pa']
+    assert res['grade'] == 'good' and res['unc'] > 0, (res['grade'], res['warnings'])
     pas = [x['pa'] for x in m['segments']]
-    assert pas[:2] == [0.0, 0.1], pas                      # reference, upper
-    assert 4 <= len(pas) <= SEARCH_MAX_TRAINS, pas
+    assert pas[:2] == [0.0, 0.1] and len(pas) <= 7, pas          # MAX_VALUES
     st = [x['stage'] for x in m['search']['steps']]
-    assert st[0] == 'reference' and st[1] == 'upper' and 'bracket' in st, st
+    assert st[:2] == ['reference', 'upper'] and set(st[2:]) == {'area'}, st
+    k = res['pa']
+    assert sum(1 for x in pas if k < x <= k + 0.015) >= 2 and \
+        sum(1 for x in pas if k - 0.015 <= x < k) >= 2, pas
     assert m['search']['result'] == res['pa']
-    assert 0.03 < m['search']['prediction'] < 0.07, m['search']
-    # Klipper PA held at 0, restored after; no XY moves during the pulses
+    assert m['search']['steps'][1]['balance'] > 0 > m['search']['steps'][0]['balance']
+    ar = res['area']
+    assert ar['r2'] > 0.99 and [n['n'] for n in ar['narrow']] == list(range(2, len(pas) + 1))
+    assert res['edge_result']['pa'] is not None                   # both kept
+    # Klipper PA tiny (smoothing on) during the test, restored after; no XY
     assert [l for l in p.log if l.startswith('SET_PRESSURE_ADVANCE')] == [
-        'SET_PRESSURE_ADVANCE ADVANCE=0.00000',
+        'SET_PRESSURE_ADVANCE ADVANCE=0.000001',
         'SET_PRESSURE_ADVANCE ADVANCE=0.05000']
     xy = [l for l in p.log if re.match(r'G1 [XY]', l)]
     assert xy == ['G1 X100.00 Y100.00 F6000', 'G1 X10.00 Y10.00 F6000'], xy
-    assert not any('SET_VELOCITY_LIMIT' in l for l in p.log)
+    # accel and cruise ratio lifted for every train only (no XY then)
+    vl = [l for l in p.log if l.startswith('SET_VELOCITY_LIMIT') or re.match(r'G1 [XY]', l)]
+    up, back = ('SET_VELOCITY_LIMIT ACCEL=10000000 MINIMUM_CRUISE_RATIO=0',
+                'SET_VELOCITY_LIMIT ACCEL=4000.0 MINIMUM_CRUISE_RATIO=0.500')
+    assert vl == [xy[0]] + [up, back] * len(pas) + [back, xy[1]], vl
+    assert p.objs['gcode'].accel == 4000 and p.objs['gcode'].mcr == 0.5
+    ext = p.objs['toolhead'].ext                                  # limits put back
+    assert (ext.max_e_velocity, ext.max_e_accel) == (100.0, 5000.0)
     # prime: extrude-only moves totalling 20 mm before the first pulses
-    i_pa = p.log.index('SET_PRESSURE_ADVANCE ADVANCE=0.00000')
+    i_pa = p.log.index('SET_PRESSURE_ADVANCE ADVANCE=0.000001')
     assert p.log[i_pa + 1].startswith('G1 E20.00000 F'), p.log[i_pa + 1]
     seg = store.get_segment(rid, 1)
+    assert seg['method'] == 'push'
     names = [k['name'] for k in seg['markers']]
     assert names == ['slow'] + ['fast', 'slow'] * 3, names
     f = [k for k in seg['markers'] if k['name'] == 'fast'][0]
-    assert abs(f['t1'] - f['t0'] - 0.6) < 0.002, f        # nominal step times
+    assert abs(f['t1'] - f['t0'] - 0.6) < 0.0002, f              # FAST_TIME
     e = m['segments'][1]
-    assert e['piro']['n'] == 2 and e['cmd']['gain'] > 0   # first pulse skipped
-    assert 'PIRO-FIT PA' in g.out[-1], g.out[-1]
+    assert e['piro']['n'] == 2 and e['piro']['area']['n'] == 2    # first pulse skipped
+    assert 'PIRO-AREA PA' in g.out[-1], g.out[-1]
+    assert m['push']['accel'] == 4000 and abs(m['push']['ramp'] - 0.00469) < 1e-4
 
 def test_klipper_method_finds_pa():
     """PA_METHOD=klipper: back-and-forth line, Klipper's own PA, no conversion"""
     p, bus, store, r = make(tau=0.045)
     p.windows.sort()
-    rid = r.run(Gcmd(), S(method='klipper'))
+    rid = r.run(Gcmd(), S(method='klipper', mode='edge'))
     m = store.get_run(rid)
     assert m['status'] == 'complete' and m['pa_method'] == 'klipper', m['status']
     res = m['analysis']['result']
@@ -438,7 +501,7 @@ def test_klipper_method_finds_pa():
     assert ys and min(ys) >= 100 - ln['length'] / 2 - 1e-3 and max(ys) <= 100 + ln['length'] / 2 + 1e-3
     # PA set by Klipper for every value, accel limits set and restored
     pas = [l for l in p.log if l.startswith('SET_PRESSURE_ADVANCE')]
-    assert pas[0] == 'SET_PRESSURE_ADVANCE ADVANCE=0.00000' and pas[-1] == 'SET_PRESSURE_ADVANCE ADVANCE=0.05000', pas
+    assert pas[0] == 'SET_PRESSURE_ADVANCE ADVANCE=0.000000' and pas[-1] == 'SET_PRESSURE_ADVANCE ADVANCE=0.05000', pas
     assert len(pas) == len(m['segments']) + 2, (len(pas), len(m['segments']))
     vl = [l for l in p.log if l.startswith('SET_VELOCITY_LIMIT')]
     assert vl == ['SET_VELOCITY_LIMIT ACCEL=4000.0 MINIMUM_CRUISE_RATIO=0',
@@ -468,7 +531,7 @@ def test_auto_apply_and_reuse():
     g = Gcmd()
     s = S(apply=1, restrict=0, reuse_hours=1, filament='Fibreel red', fast_flow=14)
     v = r.auto(g, s)
-    assert abs(v - 0.045) < 0.005, (v, g.out)
+    assert abs(v - 0.049) < 0.004, (v, g.out)
     assert not [l for l in p.log if re.match(r'G1 [XY]', l)], 'no XY moves'
     pas = [l for l in p.log if l.startswith('SET_PRESSURE_ADVANCE')]
     assert pas[-1] == 'SET_PRESSURE_ADVANCE ADVANCE=%.5f' % v, pas
@@ -508,17 +571,18 @@ def test_auto_fallback_never_raises():
     # no pressure response at all: the run ends in an error -> FAIL_PA, recorded
     p, bus, store, r = make(z=5.0)
     g = Gcmd()
-    assert r.auto(g, S(apply=1, restrict=0, fail_pa=0.03, filament='x', reuse_hours=1)) == 0.03
+    assert r.auto(g, S(apply=1, restrict=0, fail_pa=0.03, filament='x', reuse_hours=1,
+                       mode='edge')) == 0.03
     rid, m = store.last_auto()
     assert m['status'] == 'error' and m['auto']['fallback'] and m['auto']['applied'] == 0.03
     assert p.log[-1] == 'SET_PRESSURE_ADVANCE ADVANCE=0.03000', p.log[-3:]
-    assert r._reuse(S(apply=1, filament='x', reuse_hours=1), 210.0, 0.04) is None
+    assert r._reuse(S(apply=1, filament='x', reuse_hours=1, mode='edge'), 210.0, 0.04) is None
     # cancelled from the page: FAIL_PA, the print goes on
     p, bus, store, r = make(tau=0.045, z=5.0)
     gc = p.objs['gcode']; orig = gc.run_script_from_command
     def hook(script):
         orig(script)
-        if gc.n_e == 30: r.cancel()
+        if gc.n_e >= 100 and r.state == 'running': r.cancel()
     gc.run_script_from_command = hook
     g = Gcmd()
     assert r.auto(g, S(apply=1, restrict=0)) == 0.02
@@ -555,7 +619,7 @@ def test_klipper_line_length_and_direction():
     assert abs(S(method='klipper').line(area)['length'] - 16.5) < 0.2
     # starts at the nozzle (Y0) and runs towards +
     p, bus, store, r = make(tau=0.045, z=5.0)
-    rid = r.run(Gcmd(), S(method='klipper', restrict=0, line_dir=1, line_length=30))
+    rid = r.run(Gcmd(), S(method='klipper', restrict=0, line_dir=1, line_length=30, mode='edge'))
     m = store.get_run(rid)
     assert m['status'] == 'complete', m.get('error')
     ys = [float(x) for l in p.log for x in re.findall(r'G1 Y([-\d.]+) E', l)]
@@ -578,71 +642,236 @@ def test_klipper_line_length_and_direction():
         try: S(**bad); assert False, bad
         except PAError: pass
 
-def test_piro_fit_single_delay():
-    """PIRO-FIT on a one-delay nozzle: Klipper's own PA -> exactly tau; the
-    test push (no conversion) a little above, next to the edge"""
-    for meth, lo, hi in (('klipper', 0.0445, 0.0455), ('push', 0.046, 0.050)):
-        p, bus, store, r = make(tau=0.045)
-        g = Gcmd()
-        m = store.get_run(r.run(g, S(method=meth)))
-        res = m['analysis']['result']
-        assert res['method'] == 'PIRO-FIT' and lo <= res['pa'] <= hi, (meth, res['pa'])
-        assert res['grade'] == 'good' and res['fit']['inside'], res['fit']
-        assert res['edge_result']['pa'] is not None and 'measured' not in res
-        ft = res['fit']
-        assert ft['above'] >= 1 and ft['below'] >= 1, ft
-        assert 'PIRO-FIT PA' in g.out[-1] and ', edge ' in g.out[-2], g.out[-2:]
-        seg = m['segments'][2]['piro']['shape']
-        assert seg['up'] and seg['down'] and seg['start'] > 0.02
+def _straight_klipper(r):
+    """Klipper's own PA on an endless straight line (no turns): what the
+    push method copies, without the XY motion"""
+    def train(s, ln, area, t_base):
+        vf, vs, a = ln['v_fast'], ln['v_slow'], r.accel
+        seq = [(vs * s.slow_time, vs, 0., vs)]
+        for k in range(s.cycles):
+            seq += [(vf * s.fast_time, vf, vs, vs),
+                    (vs * s.slow_time, vs, vs, vs if k < s.cycles - 1 else 0.)]
+        y, t, mk, ups = s.test_y, 0., [], []
+        for i, (d, vc, v0, v1) in enumerate(seq):
+            y += d
+            r._g("G1 Y%.4f E%.5f F%.2f" % (y, d * ln['ratio'], vc * 60.))
+            ta, td = (vc - v0) / a, (vc - v1) / a
+            tc = (d - (vc * vc - v0 * v0) / (2 * a) - (vc * vc - v1 * v1) / (2 * a)) / vc
+            if i % 2:                              # fast
+                ups.append((t + ta / 2, t + ta + tc + td / 2))
+            t += ta + tc + td
+        mk.append({'name': 'slow', 'sweep': -1, 't0': 0., 't1': ups[0][0]})
+        for k, (u, dn) in enumerate(ups):
+            nxt = ups[k + 1][0] if k + 1 < len(ups) else t
+            mk += [{'name': 'fast', 'sweep': k, 't0': u, 't1': dn},
+                   {'name': 'slow', 'sweep': k, 't0': dn, 't1': nxt}]
+        return mk, False
+    r._train_klipper = train
+    r._line_start = lambda s, ln: r._g("G1 X%.3f Y%.3f F6000" % (s.test_x, s.test_y))
+    r._motion_check = lambda *a: None
 
-def test_piro_fit_parabola():
-    from pa_loadcell.analysis import piro_fit, _quad_fit
-    a, b, c = _quad_fit([1, 2, 3, 4], [1 + 2 * x + 3 * x * x for x in (1, 2, 3, 4)], [1] * 4)
-    assert abs(a - 3) < 1e-9 and abs(b - 2) < 1e-9 and abs(c - 1) < 1e-9
-    mk = lambda pa, ms: {'pa': pa, 'idx': 0, 'piro': {'shape': {'ms': ms, 'n': 100}}}
-    curve = lambda k: 0.004 + 40. * (k - 0.07) ** 2
-    segs = [mk(0., 0.1)] + [mk(k, curve(k)) for k in (0.055, 0.062, 0.068, 0.075, 0.1)]
-    ft = piro_fit(segs)
-    assert abs(ft['k'] - 0.07) < 1e-6 and ft['inside'] and ft['used'][0] == 0.055, ft
-    segs[3] = mk(0.068, curve(0.068) * 1.15)                # one noisy value
-    assert abs(piro_fit(segs)['k'] - 0.07) < 0.002
-    assert piro_fit(segs[:2])['k'] is None                  # two values only
-    flat = [mk(k, 0.01 - k * 0.05) for k in (0.05, 0.06, 0.07)]
-    assert piro_fit(flat)['k'] is None
+
+def _fixed_values(meth, pas, straight=False, **kw):
+    """One run measuring exactly `pas` (no search) -> result"""
+    p, bus, store, r = make(tau=0.045, noise=0.)
+    if straight:
+        _straight_klipper(r)
+    def search(ctx, gcmd):
+        for k in pas: r._measure(ctx, k)
+    r._search = search
+    rid = r.run(Gcmd(), S(method=meth, test_y=20, **kw))
+    return store.get_run(rid)['analysis']['result']
+
+def test_push_equals_klipper_pa():
+    """The push method gives what Klipper's own PA gives on a straight line
+    with the same filament per mm, at every accel and smooth time: no
+    conversion"""
+    pas = [0., 0.035, 0.045, 0.055, 0.065, 0.08, 0.1]
+    seen = []
+    for kw in (dict(), dict(test_accel=1500), dict(smooth_time=0.025),
+               dict(test_accel=800, smooth_time=0.06)):
+        a = _fixed_values('push', pas, **kw)
+        b = _fixed_values('klipper', pas, straight=True, **kw)
+        assert abs(a['area']['k'] - b['area']['k']) < 0.0002, (kw, a['area']['k'], b['area']['k'])
+        assert abs(a['edge_result']['pa'] - b['edge_result']['pa']) < 0.0006, kw
+        assert abs(a['edge_result']['pa'] - 0.045) < 0.001, kw   # edge: the lag
+        seen.append(a['area']['k'])
+    assert max(seen) - min(seen) > 0.002          # area moves with smoothing
+
+def test_push_train_moves():
+    """Klipper-exact push: E total = the planned filament, legs FAST_TIME /
+    SLOW_TIME long, pieces through the ramps carry K * a * dt (negative =
+    pulled back at high PA), every move inside max_extrude_only_distance,
+    limits raised for the train only"""
+    p, bus, store, r = make()
+    A = Extruder.filament_area
+    s = S(cycles=2)
+    ext = p.objs['toolhead'].ext
+    r.pp = r.push_plan(s, A, ext)
+    r.e_lim = (ext.max_e_velocity, ext.max_e_accel)
+    r.orig_lim = {'max_accel': 4000., 'minimum_cruise_ratio': 0.5}
+    for pa in (0.0, 0.15):
+        n0 = len(p.log)
+        r._e_limits(ext, True); r._push_accel(True)
+        mk, partial = r._train_push(pa, s, r.pp, p.pt)
+        r._push_accel(False); r._e_limits(ext, False)
+        es = [float(re.search(r'E([-\d.]+)', l).group(1)) for l in p.log[n0:] if l.startswith('G1 E')]
+        assert abs(sum(es) - s.per_pa_mm(A)) < 0.003, (sum(es), s.per_pa_mm(A))   # ramps
+        assert max(abs(e) for e in es) <= 0.9 * ext.max_e_dist + 1e-9
+        assert (min(es) < 0) == (pa > 0.1), min(es)   # fall ramp pulls back
+        f = [x for x in mk if x['name'] == 'fast']
+        sl = [x for x in mk if x['name'] == 'slow']
+        assert all(abs(x['t1'] - x['t0'] - 0.6) < 2e-4 for x in f), f
+        assert abs(sl[1]['t1'] - sl[1]['t0'] - 1.0) < 2e-4, sl
+        ramps = [l for l in p.log[n0:] if l.startswith('G1 E')]
+        assert len(ramps) > 4 * 2 * 2, len(ramps)    # pieces through every ramp
+    assert (ext.max_e_velocity, ext.max_e_accel) == (100.0, 5000.0)
+    # without lifting max_accel / minimum_cruise_ratio Klipper would stretch
+    # every piece (the cap above): the legs would come out too long
+    t0 = p.pt; r._e_limits(ext, True)
+    mk2, _ = r._train_push(0.15, s, r.pp, p.pt)
+    r._e_limits(ext, False)
+    f2 = [x for x in mk2 if x['name'] == 'fast'][0]
+    assert f2['t1'] - f2['t0'] > 0.61, f2
+    # one ramp, piece by piece: x(t) + K * v(t), cruise speed picked so the
+    # piece (from and to rest at the raised accel) lasts exactly its time
+    vs, vf, ea = r.pp['v_slow'], r.pp['v_fast'], r.pp['e_accel']
+    dur = (vf - vs) / ea
+    n = max(2, int(math.ceil(dur / 0.001)))
+    lines = [l for l in p.log[n0:] if l.startswith('G1 E')]
+    lead = 2 + max(1, int(math.ceil(vs * (s.slow_time - dur / 2) / 45.)))
+    up = lines[lead:lead + n]
+    dt = dur / n
+    for i, l in enumerate(up):
+        e = float(re.search(r'E([-\d.]+)', l).group(1))
+        want = vs * dt + 0.5 * ea * ((i + 1) ** 2 - i ** 2) * dt * dt + 0.15 * ea * dt
+        assert abs(e - want) < 2e-5, (i, e, want)
+        v = float(re.search(r'F([-\d.]+)', l).group(1)) / 60.
+        assert abs(abs(e) / v + v / 1e7 - dt) < 1e-7
+
+def test_area_pulse_first_order():
+    """A plain lag (no PA): the force lags tau behind every speed change, so
+    each edge leaves a gap of tau (in ms of step)"""
+    tau = 0.03
+    t, f, m = _synth_b2b(tau)
+    ar = analysis.pulse_area(t, f, m, True, 0.15)
+    dt = 1 / 320.                    # _synth_b2b: Euler lag, one sample ahead
+    te = -dt / math.log(1 - dt / tau)
+    want = -1000 * (te * (1 - math.exp(-0.15 / te)) - dt)
+    assert ar['n'] == 5 and abs(ar['rise'] - want) < 0.6 and abs(ar['fall'] - want) < 0.6, (ar['rise'], ar['fall'], want)
+    assert abs(ar['balance'] - (ar['rise'] + ar['fall'])) < 0.01
+    assert ar['up'][-1] > 0.99 and ar['down'][-1] > 0.99      # 0 -> 1 shape
+    # ring: overshoot after both changes makes both areas positive
+    t, f, m = _synth_b2b(tau, ring=1.5)
+    ar2 = analysis.pulse_area(t, f, m, True, 0.15)
+    assert ar2['rise'] > 0 and ar2['fall'] > 0, ar2
+    # the window: shorter window, smaller gap
+    ar3 = analysis.pulse_area(*_synth_b2b(0.06), True, 0.06)
+    assert ar3['win'] == 0.06 and ar3['rise'] > -60 * (1 - math.exp(-1)) - 0.8
+
+def _area_segs(rows, noise=0.):
+    """rows (pa, mean balance) -> segments with 5 pulses each"""
+    import random
+    rng = random.Random(4)
+    out = []
+    for i, (pa, b) in enumerate(rows):
+        pul = [[0.5 * b + rng.gauss(0, noise), 0.5 * b + rng.gauss(0, noise)] for _ in range(5)]
+        out.append({'idx': i, 'pa': pa, 'partial': False,
+                    'piro': {'area': {'pulses': pul}, 'dip': 0.0, 'dip_se': 0.01,
+                             'limit': 0.03, 'n': 5, 'snr': 60.0, 'spread': 1.0,
+                             'drift': 0.0, 'pulse_dips': [0.0] * 5,
+                             'over': None, 'over_se': None}})
+    return out
+
+def test_piro_area_rule():
+    line = lambda pa: 1100. * (pa - 0.062)
+    order = (0.0, 0.1, 0.066, 0.058, 0.07, 0.054)
+    ar = analysis.piro_area(_area_segs([(pa, line(pa)) for pa in order], noise=0.3))
+    assert abs(ar['k'] - 0.062) < 0.0005 and ar['r2'] > 0.999, ar
+    assert ar['used'][0] == 0.054 and 0.0 not in ar['used']      # PA 0 left out
+    assert ar['above'] == 2 and ar['below'] == 2 and not ar['warnings'], ar
+    assert ar['se'] >= 0.0003 and ar['se'] == max(ar['jackknife'], ar['bootstrap'], 0.0003)
+    nar = ar['narrow']
+    assert [x['n'] for x in nar] == [2, 3, 4, 5, 6] and [x['pa'] for x in nar] == list(order[1:])
+    assert nar[0]['k'] is not None and abs(nar[-1]['k'] - ar['k']) < 1e-4
+    res = analysis.run_result(_area_segs([(pa, line(pa)) for pa in order], 0.3))
+    assert res['method'] == 'PIRO-AREA' and res['grade'] == 'good' and res['pa'] == round(ar['k'], 4)
+    # PA 0 is used while there are fewer than 3 others
+    ar = analysis.piro_area(_area_segs([(pa, line(pa)) for pa in (0.0, 0.1, 0.066)]))
+    assert ar['used'] == [0.0, 0.066, 0.1] and abs(ar['k'] - 0.062) < 1e-4
+    assert ar['warnings'] == ['Fewer than 2 values within 0.015 on each side of the result'], ar['warnings']
+    # no result: two values only, a flat / falling line, a crossing far outside
+    assert analysis.piro_area(_area_segs([(0.0, -40), (0.1, 30)]))['k'] is None
+    assert analysis.piro_area(_area_segs([(0.05, 5), (0.06, 4), (0.07, 3)]))['k'] is None
+    far = analysis.piro_area(_area_segs([(0.01, -50), (0.02, -40), (0.03, -30)]))
+    assert far['k'] is None and 'outside' in far['why'], far
+    res = analysis.run_result(_area_segs([(0.01, -50), (0.02, -40), (0.03, -30)]))
+    assert res['pa'] is None and res['why'] and res['method'] == 'PIRO-AREA'
+    # bent line: a warning, the grade drops
+    bent = [(pa, line(pa) * (4 if pa < 0.062 else 1))
+            for pa in (0.05, 0.055, 0.058, 0.066, 0.07, 0.1)]
+    ar = analysis.piro_area(_area_segs(bent))
+    assert any('not straight' in w for w in ar['warnings']), ar
+    # the two edges on their own disagreeing: a warning
+    segs = _area_segs([(pa, line(pa)) for pa in order])
+    for sg in segs:
+        sg['piro']['area']['pulses'] = [[r + 300 * (sg['pa'] - 0.062) + 3, d - 300 * (sg['pa'] - 0.062) - 3]
+                                        for r, d in sg['piro']['area']['pulses']]
+    assert any('disagree' in w for w in analysis.piro_area(segs)['warnings'])
+
+def test_area_search_stops_at_max_values():
+    p, bus, store, r = make(tau=0.045)
+    m = store.get_run(r.run(Gcmd(), S(max_values=4)))
+    assert len(m['segments']) == 4, [x['pa'] for x in m['segments']]
+    res = m['analysis']['result']
+    assert res['pa'] is not None and res['warnings'], res      # not 2 per side
+    assert res['grade'] in ('fair', 'poor')
+    for bad in (dict(max_values=2), dict(max_values=15), dict(area_window=0.01)):
+        try: S(**bad); assert False, bad
+        except PAError: pass
+
+def test_area_upper_limit_fails():
+    # a very slow melt: still lagging at PA_LIMIT
+    p, bus, store, r = make(tau=0.3)
+    try: r.run(Gcmd(), S(prime_length=0, pa_limit=0.14)); assert False
+    except PAError as e: assert 'Area balance below 0 up to PA 0.140' in str(e), e
+    assert [x['pa'] for x in store.get_run(1)['segments']] == [0.0, 0.1, 0.12, 0.14]
 
 def test_mode_setting_and_reanalyse():
     p, bus, store, r = make(tau=0.045)
     rid = r.run(Gcmd(), S(method='klipper', mode='edge'))
     res = store.get_run(rid)['analysis']['result']
-    assert res['method'] == 'PIRO-EDGE' and res['fit']['k'] is not None
-    assert not any(x['stage'] == 'fit' for x in store.get_run(rid)['search']['steps'])
-    m = store.reanalyze(rid, mode='fit')
-    assert m['analysis']['result']['method'] == 'PIRO-FIT' and m['settings']['mode'] == 'fit'
-    # a run made before PIRO-FIT (no mode stored) keeps its edge result
+    assert res['method'] == 'PIRO-EDGE' and res['area']['k'] is not None
+    assert not any(x['stage'] == 'area' for x in store.get_run(rid)['search']['steps'])
+    m = store.reanalyze(rid, mode='area')
+    assert m['analysis']['result']['method'] == 'PIRO-AREA' and m['settings']['mode'] == 'area'
+    assert store.reanalyze(rid, mode='fit')['settings']['mode'] == 'area'     # older name
+    # a run made before the mode setting (no mode stored) keeps its edge result
     meta = store.get_run(rid)
     meta['settings'].pop('mode')
     import json, os
     json.dump(meta, open(os.path.join(store.root, 'run_%04d' % rid, 'meta.json'), 'w'))
     assert store.reanalyze(rid)['analysis']['result']['method'] == 'PIRO-EDGE'
-    assert Settings().mode == 'fit' and Settings().method == 'klipper'   # defaults
+    d = Settings()
+    assert (d.mode, d.method, d.max_values, d.area_window) == ('area', 'push', 7, 0.15)
     class G:                                    # older parameter names still work
         def __init__(s, p): s.p = p
         def get(s, k, d=None): return s.p.get(k, d)
         def get_float(s, k, d=None): return float(s.p[k]) if k in s.p else d
         def get_int(s, k, d=None): return int(s.p[k]) if k in s.p else d
     base = Settings(test_x=1, test_y=1, park_x=1, park_y=1)
-    m2 = base.merged(G({'PA_METHOD': 'push', 'PICK': 'edge'}))
-    assert m2.method == 'push' and m2.mode == 'edge'
-    m3 = base.merged(G({'PA_METHOD': 'push', 'METHOD': 'klipper', 'MODE': 'FIT'}))
-    assert m3.method == 'klipper' and m3.mode == 'fit'
+    m2 = base.merged(G({'PA_METHOD': 'klipper', 'PICK': 'edge'}))
+    assert m2.method == 'klipper' and m2.mode == 'edge'
+    m3 = base.merged(G({'PA_METHOD': 'klipper', 'METHOD': 'push', 'MODE': 'FIT'}))
+    assert m3.method == 'push' and m3.mode == 'area'
     try: S(mode='best'); assert False
     except PAError: pass
-    # the two rules stay separate: no fit -> no PIRO-FIT result, edge untouched
+    # the two rules stay separate: no area data -> no PIRO-AREA result, edge untouched
     from pa_loadcell.analysis import run_result
-    segs = [dict(e, piro={k: v for k, v in e['piro'].items() if k != 'shape'})
+    segs = [dict(e, piro={k: v for k, v in e['piro'].items() if k != 'area'})
             for e in store.get_run(rid)['segments']]
-    res = run_result(segs, 'fit')
-    assert res['method'] == 'PIRO-FIT' and res['pa'] is None and res['why'], res['why']
+    res = run_result(segs, 'area')
+    assert res['method'] == 'PIRO-AREA' and res['pa'] is None and res['why'], res['why']
     assert res['edge_result']['pa'] is not None
     assert run_result(segs, 'edge')['pa'] == res['edge_result']['pa']
 
@@ -650,7 +879,7 @@ def test_upper_limit_steps_up_then_fails():
     # no melt lag: the force never dips, so the search climbs by 0.02 and
     # gives up after PA_LIMIT
     p, bus, store, r = make()
-    try: r.run(Gcmd(), S(prime_length=0)); assert False
+    try: r.run(Gcmd(), S(prime_length=0, mode='edge')); assert False
     except PAError as e: assert 'No dip up to PA 0.200' in str(e), e
     m = store.get_run(1)
     assert m['status'] == 'error'
@@ -660,7 +889,7 @@ def test_upper_limit_steps_up_then_fails():
 
 def test_upper_limit_raised_until_dip():
     p, bus, store, r = make(tau=0.13)
-    rid = r.run(Gcmd(), S(prime_length=0))
+    rid = r.run(Gcmd(), S(prime_length=0, mode='edge'))
     m = store.get_run(rid)
     up = [x['pa'] for x in m['search']['steps'] if x['stage'] == 'upper']
     assert up[0] == 0.1 and len(up) >= 2 and up[-1] <= 0.2, up
@@ -677,13 +906,13 @@ def test_safety():
     p, bus, store, r = make(); p.objs.pop('load_cell')
     try: r.run(Gcmd(), S()); assert False
     except PAError as e: assert 'load cell' in str(e).lower()
-    # artificial PA needs no max_extrude_cross_section ...
+    # push needs no max_extrude_cross_section ...
     p, bus, store, r = make(tau=0.045); p.objs['toolhead'].ext.max_extrude_ratio = 0.3
     assert store.get_run(r.run(Gcmd(), S()))['status'] == 'complete'
-    # ... but the charge move must fit max_extrude_only_velocity
-    p, bus, store, r = make(); p.objs['toolhead'].ext.max_e_velocity = 10.
-    try: r.run(Gcmd(), S()); assert False
-    except PAError as e: assert 'charge' in str(e), e
+    # ... but a speed change must be short next to the legs
+    p, bus, store, r = make(tau=0.045)
+    try: r.run(Gcmd(), S(test_accel=50)); assert False
+    except PAError as e: assert 'TEST_ACCEL 50' in str(e) and 'too long' in str(e), e
     for bad in (dict(pa_max=0.3), dict(cycles=1), dict(fast_time=0.1),
                 dict(slow_flow=20)):
         try: S(**bad); assert False, bad
@@ -706,7 +935,7 @@ def test_prime_limits():
     except PAError as e: assert 'FLOW' in str(e), e
     p, bus, store, r = make(tau=0.045)
     r.run(Gcmd(), S(prime_length=0))
-    i = p.log.index('SET_PRESSURE_ADVANCE ADVANCE=0.00000')
+    i = p.log.index('SET_PRESSURE_ADVANCE ADVANCE=0.000001')
     assert not p.log[i + 1].startswith('G1 E20')
 
 def test_live_leg_schedule():
@@ -719,20 +948,6 @@ def test_live_leg_schedule():
     assert r.legs_since(legs[-1][0]) == []
     fl = {x[4]: x[3] for x in legs}
     assert fl['fast'] == 12 and fl['slow'] == 1.8 and fl['prime'] == 12
-
-def test_artificial_train_amounts():
-    p, bus, store, r = make()
-    A = Extruder.filament_area
-    n0 = len(p.log)
-    mk, partial = r._train_artificial(0.04, S(cycles=2), A, 0.04, p.pt)
-    es = [float(l.split()[1][1:]) for l in p.log[n0:]]
-    assert len(es) == 9, es                 # lead, (charge, fast, pull, slow) x 2
-    vs, vf, h = 1.8 / A, 12 / A, 0.02
-    charge, pull = 0.04 * (vf - vs) + (vs + vf) * h, -0.04 * (vf - vs) + (vs + vf) * h
-    assert abs(es[1] - charge) < 1e-4 and abs(es[3] - pull) < 1e-4, (es, charge, pull)
-    assert abs(es[2] - vf * (0.6 - 0.04)) < 1e-4
-    f = [x for x in mk if x['name'] == 'fast'][0]
-    assert abs(f['t1'] - f['t0'] - 0.6) < 0.002, f
 
 def test_export_import_reanalyze():
     p, bus, store, r = make(tau=0.045)

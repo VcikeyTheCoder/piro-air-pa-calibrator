@@ -231,8 +231,10 @@ class PALoadCell:
             raise PAError("Run still recording")
         skip = req.get('skip_first', None)
         mode = req.get('mode', None) or req.get('pick', None)
-        if mode not in (None, 'fit', 'edge'):
-            raise PAError("mode must be fit or edge")
+        if mode == 'fit':                    # older name
+            mode = 'area'
+        if mode not in (None, 'area', 'edge'):
+            raise PAError("mode must be area or edge")
         return self.store.reanalyze(rid, None if skip is None else bool(skip),
                                     mode)
 

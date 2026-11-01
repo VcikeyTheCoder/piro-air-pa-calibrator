@@ -3,13 +3,33 @@ PRIME_FLOW, extrude-only, so the melt is steady), then an adaptive search.
 Every PA value is one slow lead-in leg and CYCLES fast/slow pulses, saved as
 its own segment.
 
-Pulses use artificial PA (as in OznLab sensor, github.com/ozancs/oznlab-
-sensor, GPL-3.0): extrude-only moves; Klipper's PA is held at 0 and the PA
-charge K*(fast-slow) mm is put in by hand over the smoothing window centred
-on every speed-up (and taken back around every slow-down), the way Klipper's
-own smoothed PA would. Needs no XY motion.
+METHOD=push (default): the nozzle stays still and the pulses are
+extrude-only moves that follow exactly what Klipper's own pressure advance
+does on a print move, just without XY. Klipper's PA is set to a tiny value
+(0.000001) so its smoothing stays on; it applies the PA term only to moves
+with XY, so the extrude-only moves carry it themselves: they follow the
+unsmoothed target position x(t) + K * v(t) of a line with the same filament
+per mm (from LINE_LENGTH) and TEST_ACCEL. Constant speed is one move; each
+speed change is cut into pieces of at most PUSH_PIECE s, each carrying the
+filament plus the K * a * dt of its part of the ramp. Klipper starts and
+ends every extrude-only move at 0 speed, so each piece's cruise speed is
+picked to cover its distance in exactly its time at the (raised) extruder
+accel. Klipper then smooths it all over the smoothing window, as it would a
+print move. max_extrude_only_velocity / _accel, max_accel and
+minimum_cruise_ratio (Klipper's lookahead caps extrude-only moves with it
+too) are lifted while a train is queued, with no XY motion, and put back
+right after; the motor only sees the smoothed motion.
+Markers sit at the middle of each ramp, as with the klipper method.
 
-Search (_search):
+Search (_search), MODE=area (default):
+  1. PA 0: reference
+  2. PA_MAX, then +UPPER_STEP until the area balance is above 0; still
+     below 0 at PA_LIMIT -> the test fails
+  3. the crossing of the area line so far, then values beside it on the
+     side that has fewer (higher one first), max(0.003, 5 %) apart, until
+     2 values sit within 0.015 on each side or MAX_VALUES are tested
+  4. the answer: analysis.run_result over everything measured
+MODE=edge:
   1. PA 0: reference (noise floor, pressure step size)
   2. upper limit: PA_MAX, then +UPPER_STEP until the force dips after the
      slow-down; no dip at PA_LIMIT -> the test fails
@@ -19,7 +39,7 @@ Search (_search):
      needs it, and a second measurement of values close to their limit
   5. the answer: analysis.piro_pick over everything measured
 
-METHOD=klipper (default): Klipper's own PA and smoothing act instead. The nozzle
+METHOD=klipper: Klipper's own PA acts on a real line. The nozzle
 runs back and forth on a short line along MOVE_AXIS with a constant amount
 of filament per mm (85 % of max_extrude_cross_section); fast and slow come
 from the toolhead speed, the PA value from SET_PRESSURE_ADVANCE. The turn of
@@ -42,6 +62,10 @@ from . import analysis
 from .settings import SEARCH_MAX_TRAINS, SEARCH_TYPICAL
 
 DEFAULT_AREA = math.pi * 0.875 ** 2      # 1.75 mm filament
+PUSH_TINY = 0.000001        # Klipper PA during push: keeps its smoothing on
+PUSH_PIECE = 0.001          # s, longest piece of a push ramp
+PUSH_E_ACCEL = 1e7          # mm/s^2, extruder and toolhead limit while a push train is queued
+PUSH_E_VELOCITY = 1e4       # mm/s, same (Klipper smooths what the motor sees)
 
 
 def filament_area(ext):
@@ -92,6 +116,10 @@ class _Cancelled(Exception):
 
 
 class _Budget(Exception):
+    pass
+
+
+class _Done(Exception):
     pass
 
 
@@ -198,11 +226,13 @@ class PATestRunner:
                 raise PAError("%s %.1f mm3/s needs %.1f mm/s, above "
                               "max_extrude_only_velocity %.1f"
                               % (name, flow, flow / area, vmax))
-        v = s.charge_speed(s.pa_max, area, s.fast_flow, s.slow_flow, sm)
-        if s.method == 'push' and vmax is not None and v > vmax:
-            raise PAError("PA_MAX %.3f needs a %.0f mm/s charge move, above "
-                          "max_extrude_only_velocity %.1f. Lower PA_MAX "
-                          "or FAST_FLOW" % (s.pa_max, v, vmax))
+        if s.method == 'push':
+            pp = self.push_plan(s, area, ext, st)
+            if pp['ramp'] > 0.3 * min(s.fast_time, s.slow_time):
+                raise PAError("Push: a speed change at TEST_ACCEL %.0f takes "
+                              "%.0f ms, too long for FAST_TIME / SLOW_TIME. "
+                              "Raise TEST_ACCEL or shorten LINE_LENGTH"
+                              % (pp['accel'], 1000. * pp['ramp']))
         lo, hi = st.get('axis_minimum'), st.get('axis_maximum')
         if lo is not None and not free:
             for name, (x, y) in (("park", (s.park_x, s.park_y)),
@@ -210,6 +240,14 @@ class PATestRunner:
                 if not (lo[0] <= x <= hi[0] and lo[1] <= y <= hi[1]):
                     raise PAError("%s position outside axis limits" % name)
         return temp, area
+
+    def push_plan(self, s, area, ext, st=None):
+        """The line the push method copies: accel = TEST_ACCEL, never above
+        the printer's max_accel."""
+        st = st or self.toolhead.get_status(self.reactor.monotonic())
+        acc = min(s.test_accel, st.get('max_accel') or s.test_accel)
+        return s.push_plan(area, getattr(ext, 'max_extrude_ratio', None),
+                           self.window(ext, s), acc)
 
     @staticmethod
     def window(ext, s=None):
@@ -242,9 +280,13 @@ class PATestRunner:
         ln = s.line(area, getattr(ext, 'max_extrude_ratio', None), sm) \
             if klip else None
         tst = self.toolhead.get_status(now)
+        self.pp = None if klip else self.push_plan(s, area, ext, tst)
+        self.e_lim = (getattr(ext, 'max_e_velocity', None),
+                      getattr(ext, 'max_e_accel', None))
         orig_lim = {k: tst.get(k) for k in ('max_accel', 'minimum_cruise_ratio',
                                             'max_accel_to_decel')}
         self.note, self.used, self.search = '', 0.0, None
+        self.orig_lim = orig_lim
         self.run_id = self.store.new_run('test', {
             'filament': s.filament, 'nozzle_temp': round(temp, 1),
             'settings': asdict(s), 'method': 'PIRO-EDGE',
@@ -254,6 +296,8 @@ class PATestRunner:
             'smooth_time': sm, 'pa_method': s.method,
             'line': ({k: round(v, 4) for k, v in ln.items()}
                      if ln else None),
+            'push': ({k: round(v, 5) for k, v in self.pp.items()}
+                     if self.pp else None),
             'analysis': {'skip_first': bool(s.skip_first)}})
         col = SegmentCollector()
         status, err, saved = 'complete', '', False
@@ -264,9 +308,11 @@ class PATestRunner:
             saved = True
             if s.restrict:
                 self._g("G1 X%.2f Y%.2f F6000" % (s.test_x, s.test_y))
+            k0 = 0. if klip else PUSH_TINY   # push: smoothing on, PA by hand
             if s.smooth_time:
-                self._g("SET_PRESSURE_ADVANCE ADVANCE=0 SMOOTH_TIME=%.4f" % sm)
-            self._set_klipper_pa(0.)         # push: the charge is put in by hand
+                self._g("SET_PRESSURE_ADVANCE ADVANCE=%.6f SMOOTH_TIME=%.4f"
+                        % (k0, sm))
+            self._set_klipper_pa(k0)
             if klip:
                 self._set_limits(s, orig_lim)
             self._prime(s, area, ext)
@@ -281,7 +327,7 @@ class PATestRunner:
             status, err = 'error', str(e)
             gcmd.respond_info("PA_LOADCELL_TEST aborted: %s" % err)
         finally:
-            self._cleanup(s, orig_pa, saved, col, orig_sm, orig_lim if klip else None)
+            self._cleanup(s, orig_pa, saved, col, orig_sm, orig_lim)
             self.store.finalize(self.run_id, status, err)
             self.state, self.current_pa, self.phase = 'idle', None, ''
             self.pa_t, self.note = None, ''
@@ -440,18 +486,33 @@ class PATestRunner:
             left -= e
 
     def _set_klipper_pa(self, value):
-        self._g("SET_PRESSURE_ADVANCE ADVANCE=%.5f" % value)
+        self._g("SET_PRESSURE_ADVANCE ADVANCE=%.6f" % value)
 
-    def _emove(self, e, dur, vmax=None):
-        """Artificial PA charge / pull-back window: E move lasting `dur`.
-        Klipper refuses F0, so an almost empty window becomes a dwell."""
-        if abs(e) < 0.002:
-            self.toolhead.dwell(dur)
+    def _push_accel(self, raised):
+        """Klipper's lookahead caps every move, extrude-only ones too, at
+        the speed a move of that length reaches at max_accel x (1 -
+        minimum_cruise_ratio). While a push train is queued (no XY motion)
+        both are lifted so each piece lasts exactly its time."""
+        orig = self.orig_lim or {}
+        if orig.get('max_accel') is None:
             return
-        v = abs(e) / dur
-        if vmax:
-            v = min(v, vmax)
-        self._g("G1 E%.5f F%.4f" % (e, v * 60.))
+        if not raised:
+            self._restore_limits(orig)
+        elif orig.get('minimum_cruise_ratio') is not None:
+            self._g("SET_VELOCITY_LIMIT ACCEL=%.0f MINIMUM_CRUISE_RATIO=0"
+                    % PUSH_E_ACCEL)
+        else:
+            self._g("SET_VELOCITY_LIMIT ACCEL=%.0f ACCEL_TO_DECEL=%.0f"
+                    % (PUSH_E_ACCEL, PUSH_E_ACCEL))
+
+    def _e_limits(self, ext, raised):
+        """Raise max_extrude_only_velocity / _accel for a push train (the
+        motor sees Klipper's smoothed motion) or put them back."""
+        v, a = (PUSH_E_VELOCITY, PUSH_E_ACCEL) if raised else self.e_lim
+        if v is not None and hasattr(ext, 'max_e_velocity'):
+            ext.max_e_velocity = v
+        if a is not None and hasattr(ext, 'max_e_accel'):
+            ext.max_e_accel = a
 
     def _measure(self, ctx, pa, stage=None, repeat=False):
         """Run one PA value and save it. Returns (segment index, score)."""
@@ -473,7 +534,14 @@ class PATestRunner:
         if ln:
             markers, partial = self._train_klipper(s, ln, area, t_base)
         else:
-            markers, partial = self._train_artificial(pa, s, area, sm, t_base)
+            ext = th.get_extruder()
+            self._e_limits(ext, True)
+            self._push_accel(True)
+            try:
+                markers, partial = self._train_push(pa, s, self.pp, t_base)
+            finally:
+                self._push_accel(False)
+                self._e_limits(ext, False)
         th.wait_moves()
         t_end = th.get_last_move_time()
         samples = self._collect(col, t_base, t_end)
@@ -482,7 +550,7 @@ class PATestRunner:
         seg = {'pa': pa, 'unit': self.bus.unit,
                'rate': round(self.bus.rate, 1), 'markers': markers,
                'partial': partial,
-               'method': 'klipper' if ln else 'artificial',
+               'method': 'klipper' if ln else 'push',
                'flows': {'fast': s.fast_flow, 'slow': s.slow_flow},
                't': [round(t - t_base, 4) for t, _ in samples],
                'f': [round(v, 3) for _, v in samples]}
@@ -494,47 +562,87 @@ class PATestRunner:
         if partial:
             return idx, None
         return idx, analysis.edge_score(seg['t'], seg['f'], markers, sm,
-                                        skip_first=bool(s.skip_first))
+                                        skip_first=bool(s.skip_first),
+                                        area_window=s.area_window)
 
-    def _train_artificial(self, pa, s, area, sm, t_base):
-        """OznLab's pulse train: slow, then (charge, fast, pull-back, slow)
-        x CYCLES, all extrude-only. The charge window is sm long and centred
-        on the nominal speed change; it carries the flow of that window plus
-        PA * (fast - slow) mm. Markers are the nominal step times."""
+    def _train_push(self, pa, s, pp, t_base):
+        """One push train: a ramp from rest to slow, a slow lead-in, then
+        (ramp up, fast, ramp down, slow) x CYCLES and a ramp back to rest,
+        all extrude-only, following x(t) + pa * v(t) (see the top of this
+        file). Fast and slow legs last FAST_TIME / SLOW_TIME from the middle
+        of one ramp to the middle of the next."""
         th = self.toolhead
-        vs, vf = s.slow_flow / area, s.fast_flow / area
-        dv, h = vf - vs, sm / 2.
-        vmax = getattr(th.get_extruder(), 'max_e_velocity', None)
-        markers, partial = [], False
+        ext = th.get_extruder()
+        e_max = 0.9 * (getattr(ext, 'max_e_dist', None) or 50.)
+        ea = PUSH_E_ACCEL
+        vs, vf, r = pp['v_slow'], pp['v_fast'], pp['ramp']
+        acc = pp['e_accel']
+        pos = {'want': 0., 'sent': 0.}       # filament mm: target / commanded
         rel = lambda x: round(x - t_base, 4)
+
+        def piece(d, T, out):
+            """d mm in exactly T s; Klipper ramps it from and to 0 speed."""
+            pos['want'] += d
+            e = round(pos['want'] - pos['sent'], 5)
+            if abs(e) < 1e-5:
+                out.append("G4 P%.4f" % (T * 1000.))
+                return
+            disc = ea * ea * T * T - 4. * ea * abs(e)
+            if disc <= 0:
+                raise PAError("Push piece too fast (%.3f mm in %.1f ms)"
+                              % (e, T * 1000.))
+            vc = (ea * T - math.sqrt(disc)) / 2.
+            pos['sent'] += e
+            out.append("G1 E%.5f F%.5f" % (e, vc * 60.))
+
+        def flat(v, T):
+            out, n = [], max(1, int(math.ceil(v * T / e_max)))
+            for _ in range(n):
+                piece(v * T / n, T / n, out)
+            self._g("\n".join(out))
+
+        def ramp(v0, v1):
+            """v0 -> v1 at the line's filament accel; returns its middle."""
+            dur = abs(v1 - v0) / acc
+            a = (v1 - v0) / dur
+            n = max(2, int(math.ceil(dur / PUSH_PIECE)))
+            dt, out = dur / n, []
+            for i in range(n):
+                t0, t1 = i * dt, (i + 1) * dt
+                piece(v0 * dt + 0.5 * a * (t1 * t1 - t0 * t0) + pa * a * dt,
+                      dt, out)
+            t_a = th.get_last_move_time()
+            self._g("\n".join(out))
+            return t_a + dur / 2.
+
+        markers, partial = [], False
         self.phase = 'lead-in'
         t0 = th.get_last_move_time()
-        self._g("G1 E%.5f F%.4f" % (vs * (s.slow_time - h), vs * 60.))
-        t_prev = th.get_last_move_time() + h       # nominal first speed-up
-        markers.append({'name': 'slow', 'sweep': -1, 't0': rel(t0),
-                        't1': rel(t_prev)})
-        self._log_leg(t0, t_prev, s.slow_flow, 'slow')
+        ramp(0., vs)
+        flat(vs, s.slow_time - r / 2.)
         for k in range(s.cycles):
             if self.cancel_flag:
                 partial = True
                 break
             self.phase = 'fast'
-            c0 = th.get_last_move_time()
-            self._emove(pa * dv + (vs + vf) * h, sm, vmax)
-            up = 0.5 * (c0 + th.get_last_move_time())
-            self._g("G1 E%.5f F%.4f" % (vf * (s.fast_time - sm), vf * 60.))
+            up = ramp(vs, vf)
+            if k == 0:
+                markers.append({'name': 'slow', 'sweep': -1, 't0': rel(t0),
+                                't1': rel(up)})
+                self._log_leg(t0, up, s.slow_flow, 'slow')
+            flat(vf, s.fast_time - r)
             self.phase = 'slow'
-            d0 = th.get_last_move_time()
-            self._emove(-pa * dv + (vs + vf) * h, sm, vmax)
-            down = 0.5 * (d0 + th.get_last_move_time())
-            self._g("G1 E%.5f F%.4f" % (vs * (s.slow_time - sm), vs * 60.))
-            end = th.get_last_move_time() + (h if k < s.cycles - 1 else 0.)
+            down = ramp(vf, vs)
+            last = k == s.cycles - 1
+            flat(vs, s.slow_time - (r / 2. if last else r))
+            end = th.get_last_move_time() + (0. if last else r / 2.)
             markers.append({'name': 'fast', 'sweep': k, 't0': rel(up),
                             't1': rel(down)})
             markers.append({'name': 'slow', 'sweep': k, 't0': rel(down),
                             't1': rel(end)})
             self._log_leg(up, down, s.fast_flow, 'fast')
             self._log_leg(down, end, s.slow_flow, 'slow')
+        ramp(vs, 0.)                          # back to rest, PA charge out
         return markers, partial
 
     # -- klipper method -------------------------------------------------
@@ -667,7 +775,8 @@ class PATestRunner:
         col, s, area, sm, ln = ctx
         steps, segs = [], []
         self.search = {'steps': steps, 'result': None}
-        vmax = getattr(self.toolhead.get_extruder(), 'max_e_velocity', None)
+        area_mode = s.mode == 'area'
+        typical = s.max_values if area_mode else SEARCH_TYPICAL
         snap = lambda x: max(0.0005, round(x * 2000.) / 2000.)
         st = {'floor': 0.}
 
@@ -688,11 +797,6 @@ class PATestRunner:
             if len(segs) >= SEARCH_MAX_TRAINS:
                 raise _Budget()
             k = round(k, 5)
-            if not ln and vmax is not None and s.charge_speed(
-                    k, area, s.fast_flow, s.slow_flow, sm) > vmax:
-                raise PAError("PA %.3f charge move exceeds "
-                              "max_extrude_only_velocity %.1f. "
-                              "Lower FAST_FLOW" % (k, vmax))
             idx, sc = self._measure(ctx, k, stage, repeat)
             if sc is None:
                 if self.cancel_flag:
@@ -703,15 +807,29 @@ class PATestRunner:
             p = point(k)
             lim = max(p['limit'], st['floor'])
             dips = too_high(p)
+            bal = balance(k)
             steps.append({'pa': k, 'stage': stage, 'idx': idx,
                           'dip': p['dip'], 'limit': round(lim, 4),
-                          'verdict': 'dips' if dips else 'ok',
+                          'balance': bal,
+                          'verdict': ('over' if (bal or 0) > 0 else 'under')
+                          if area_mode else ('dips' if dips else 'ok'),
                           'prediction': pred})
-            say("PA %.4f %s: %s (dip %+.0f%%, limit %.0f%%)"
-                % (k, stage, "too high" if dips else "no dip",
-                   100. * p['dip'], 100. * lim))
-            self.progress = min(0.95, len(segs) / float(SEARCH_TYPICAL + 1))
+            if area_mode:
+                say("PA %.4f %s: area %s"
+                    % (k, stage, "-" if bal is None else "%+.1f ms" % bal))
+            else:
+                say("PA %.4f %s: %s (dip %+.0f%%, limit %.0f%%)"
+                    % (k, stage, "too high" if dips else "no dip",
+                       100. * p['dip'], 100. * lim))
+            self.progress = min(0.95, len(segs) / float(typical + 1))
             return dips
+
+        def balance(k):
+            """Mean area balance (ms) of all pulses at PA k, or None."""
+            v = [r + d for g in segs if abs(g['pa'] - k) < 1e-6
+                 for r, d in ((g['piro'] or {}).get('area') or {})
+                 .get('pulses', [])]
+            return round(sum(v) / len(v), 2) if v else None
 
         def bracket():
             pts = analysis.pool(segs)
@@ -733,6 +851,9 @@ class PATestRunner:
                 say("pressure step not settled, repeating reference")
             st['floor'] = analysis.floor_from_zero(point(0.)['dip'])
             self.search['floor'] = round(st['floor'], 4)
+            if area_mode:
+                self._area_search(s, segs, measure, balance, tested, snap, say)
+                raise _Done()
             # 2. upper limit
             k = s.pa_max
             while not measure(k, 'upper'):
@@ -797,22 +918,8 @@ class PATestRunner:
                 if x <= k_ok or tested(x):
                     break
                 measure(x, 'confirm')
-            # 6. PIRO-FIT: a tested value on both sides of the shape minimum
-            if s.mode == 'fit':
-                for _ in range(2):
-                    ft = analysis.piro_fit(segs)
-                    if ft.get('k') is None:
-                        break
-                    k = ft['k']
-                    above = [g for g in segs if k < g['pa'] <= k + 0.015]
-                    below = [g for g in segs if k - 0.015 <= g['pa'] < k]
-                    if above and below:
-                        break
-                    x = snap(k + 0.005 if not above else k - 0.005)
-                    if tested(x) or x <= 0 or x > s.pa_limit:
-                        break
-                    say("fit %.4f, checking %.4f" % (k, x))
-                    measure(x, 'fit')
+        except _Done:
+            pass
         except _Cancelled:
             return
         except _Budget:
@@ -821,14 +928,58 @@ class PATestRunner:
         self.search.update(result=res.get('pa'), unc=res.get('unc'),
                            grade=res.get('grade'))
         if res.get('pa') is not None:
-            say("%s PA %.4f +- %.4f (%s)%s"
+            say("%s PA %.4f +- %.4f (%s)"
                 % (res.get('method', 'PIRO-EDGE'), res['pa'], res['unc'],
-                   res['grade'],
-                   ", edge %.4f" % res['edge_result']['pa']
-                   if res.get('method') == 'PIRO-FIT' and
-                   (res.get('edge_result') or {}).get('pa') is not None else ''))
+                   res['grade']))
         else:
             say("no result: %s" % res.get('why', ''))
+
+    def _area_search(self, s, segs, measure, balance, tested, snap, say):
+        """MODE=area after the reference: PA_MAX (+UPPER_STEP) until the
+        area balance is above 0, then values beside the crossing of the
+        line so far (see the top of this file)."""
+        k = s.pa_max
+        while True:
+            measure(k, 'upper')
+            b = balance(k)
+            if b is not None and b > 0:
+                break
+            k = round(k + s.upper_step, 5)
+            if k > s.pa_limit + 1e-9:
+                raise PAError("Area balance below 0 up to PA %.3f. Check the "
+                              "filament path or raise PA_LIMIT"
+                              % (k - s.upper_step))
+        top = k
+        near = analysis.AREA_NEAR
+        while len(segs) < s.max_values:
+            est = analysis.area_estimate(segs)
+            if est is None:
+                break
+            est = min(max(est, 0.0005), top)
+            self.search['prediction'] = round(est, 5)
+            pas = sorted({round(g['pa'], 6) for g in segs})
+            above = sum(1 for p in pas if est < p <= est + near)
+            below = sum(1 for p in pas if est - near <= p < est)
+            if above >= 2 and below >= 2:
+                break
+            sides = [x for x, n in ((1, above), (-1, below)) if n < 2]
+            if len(sides) == 2 and below < above:
+                sides.reverse()
+            d = max(0.003, 0.05 * est)
+            x = None
+            for sg in sides:
+                for j in (1, 2, 3, 4):
+                    c = snap(est + sg * j * d)
+                    if 0 < c <= s.pa_limit and abs(c - est) <= near \
+                            and not tested(c):
+                        x = c
+                        break
+                if x is not None:
+                    break
+            if x is None:
+                break
+            say("estimate %.4f" % est)
+            measure(x, 'area', pred=round(est, 5))
 
     def _collect(self, col, t0, t1):
         deadline = self.reactor.monotonic() + self.limits['timeout']
@@ -848,6 +999,9 @@ class PATestRunner:
                                     if s.smooth_time and orig_sm else ""))]
         if orig_lim:
             steps.append(lambda: self._restore_limits(orig_lim))
+        if getattr(self, 'e_lim', None):
+            steps.append(lambda: self._e_limits(self.toolhead.get_extruder(),
+                                                False))
         if s.restrict or s.method == 'klipper':   # free + klipper: back to the start
             steps.append(lambda: self._g("G1 X%.2f Y%.2f F6000"
                                          % (s.park_x, s.park_y)))

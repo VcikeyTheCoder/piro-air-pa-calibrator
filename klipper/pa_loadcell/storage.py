@@ -116,8 +116,9 @@ class RunStore:
             if fit:
                 entry['cmd'] = fit
             sm = meta.get('smooth_time')
+            aw = (meta.get('settings') or {}).get('area_window')
             sc = analysis.edge_score(t, f, mk, sm if sm else 0.04,
-                                     opts['skip_first'])
+                                     opts['skip_first'], area_window=aw)
             if sc:
                 entry['piro'] = sc
         if seg.get('search_note') and not seg.get('stage'):
@@ -134,10 +135,12 @@ class RunStore:
                     'stale'):
             a.pop(old, None)
         if meta.get('kind') == 'test':
-            # runs made before PIRO-FIT keep the edge unless re-analysed
+            # runs made before the mode setting keep the edge unless
+            # re-analysed with another mode
             st = meta.get('settings') or {}
-            a['result'] = analysis.run_result(meta['segments'],
-                                              st.get('mode') or st.get('pick') or 'edge')
+            mode = st.get('mode') or st.get('pick') or 'edge'
+            a['result'] = analysis.run_result(
+                meta['segments'], 'area' if mode == 'fit' else mode)
         a['offset'] = analysis.timing_offset(meta['segments'])
         meta['analysis'] = a
         if meta.get('kind') == 'test' and meta.get('settings'):
@@ -195,6 +198,7 @@ class RunStore:
             a['skip_first'] = bool(skip_first)
         meta['analysis'] = a
         if mode:
+            mode = 'area' if mode == 'fit' else mode
             meta['settings'] = dict(meta.get('settings') or {}, mode=mode)
         segs = []
         for e in meta.get('segments', []):
@@ -255,9 +259,9 @@ class RunStore:
 
     @staticmethod
     def _stale(meta):
-        """Analysed by a version without the PIRO-FIT shape data."""
+        """Analysed by a version without the PIRO-AREA pulse data."""
         return meta.get('status') != 'running' and any(
-            'piro' in e and 'shape' not in e['piro']
+            'piro' in e and 'area' not in e['piro']
             for e in meta.get('segments', []) if not e.get('partial'))
 
     def list_runs(self):

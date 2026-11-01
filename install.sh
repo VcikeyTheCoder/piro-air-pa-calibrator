@@ -110,7 +110,7 @@ OBSOLETE = ('sweeps', 'extrude_len', 'slow_speed', 'fast_speed', 'settle', 'warm
 OLD_DEFAULTS = {'cycles': ('3', '4'), 'fast_flow': ('19.24',), 'fast_time': ('0.25',),
                 'slow_flow': ('1.92',), 'prime_length': ('40',), 'prime_flow': ('5',),
                 'prime_rest': ('0',), 'rest_time': ('0',), 'pa_max': ('0.08',),
-                'method': ('push',)}
+                'method': ('klipper',), 'mode': ('fit',)}
 key = lambda l: (re.match(r'^([a-z_]+)\s*:', l) or [None, None])[1]
 RENAMED = {'pa_method': 'method', 'pick': 'mode'}   # older option names
 for i, l in enumerate(lines):
@@ -130,7 +130,7 @@ moved = []
 for k, olds in OLD_DEFAULTS.items():              # untouched old default -> new
     for i, l in enumerate(lines):
         m = re.match(r'^%s\s*:\s*([^\s#]+)' % k, l)
-        if key(l) == k and m and m.group(1) in olds and k in newl:
+        if key(l) == k and m and m.group(1) in olds and k in newl and newl[k] != l:
             lines[i] = newl[k]; moved.append(k)
 add = [newl[k] for k in newl if k not in have]
 if add:

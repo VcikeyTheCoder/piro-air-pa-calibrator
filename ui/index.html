@@ -420,14 +420,14 @@ html[data-theme=cat] #tabs .lbl{display:none}}
    <div class="card runhead">
     <div class="rh-top">
      <div><h2>PA test</h2>
-      <p class="lede">Extrudes fast and slow pulses into the air. PA is raised until the force dips after the slow-down; the result is where the dip begins.</p></div>
+      <p class="lede">Extrudes fast and slow pulses into the air at a few PA values. The result is the PA where the gap after every speed change and the overshoot have the same area.</p></div>
      <div class="row"><button id="tstart" class="primary go">Start test</button><button id="tcancel" class="danger" hidden>Cancel test</button></div>
     </div>
     <ol class="track" id="track">
      <li data-s="0"><b>Reference</b>PA 0</li>
-     <li data-s="1"><b>Upper limit</b>first dip</li>
-     <li data-s="2"><b>Estimate</b>from dip depth</li>
-     <li data-s="3"><b>Refine</b>narrow the edge</li>
+     <li data-s="1"><b>Upper limit</b>above the answer</li>
+     <li data-s="2"><b>Estimate</b>where it crosses</li>
+     <li data-s="3"><b>Refine</b>values beside it</li>
      <li data-s="4"><b>Result</b>PA &plusmn; error</li>
     </ol>
     <div class="prog" id="tprog" hidden><i></i></div>
@@ -875,15 +875,16 @@ const TI={list:'<path d="M8 6h13M8 12h13M8 18h13M3 6h1M3 12h1M3 18h1"/>',clock:'
  spool:'<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3"/>',drop:'<path d="M12 3c4 5 6 8 6 11a6 6 0 0 1-12 0c0-3 2-6 6-11z"/>'};
 /* [name, label, unit, step | options, hint, colour key] */
 const MAINF=[['filament','Filament','','text','Stored with the run'],
- ['pa_max','PA max','',.005,'First upper value. Raised by upper step until the force dips.']];
+ ['pa_max','PA max','',.005,'First upper value. Raised by upper step until it is above the answer.']];
 const ADV=[
  ['Pulses','fg',[['fast_flow','Fast flow','mm³/s',.1,'','fast'],['fast_time','Fast time','s',.05,'','fast'],['slow_flow','Slow flow','mm³/s',.1,'','slow'],
    ['slow_time','Slow time','s',.1,'','slow'],['cycles','Cycles','',1,''],['rest_time','Rest time','s',.1,'']]],
  ['Prime','fg3',[['prime_length','Prime length','mm',1,'0 disables','prime'],['prime_flow','Prime flow','mm³/s',.5,'','prime'],['prime_rest','Prime rest','s',.5,'']]],
- ['Search','fg3',[['upper_step','Upper step','',.005,'Added until the force dips'],['pa_limit','PA limit','',.01,'Fails if no dip'],['skip_first','First pulse','',[['1','Skip'],['0','Use']],'']]],
- ['Mode and method','fg',[['mode','Mode','',[['fit','Fit: closest to a square wave'],['edge','Edge: no overshoot']],'Algorithm that judges the curve'],['method','Method','',[['klipper','Klipper: Klipper PA, XY line'],['push','Push: pulses, no XY']],'How each PA value is applied'],
-   ['move_axis','Line axis','',[['Y','Y'],['X','X']],''],['test_accel','Test accel','mm/s²',100,'Capped at max_accel'],['smooth_time','Smooth time','s',.005,'0 = printer value'],
-   ['line_length','Line length','mm',1,'0 = automatic'],['line_dir','Line start','',[['0','Centred on test position'],['1','At test position, towards +'],['-1','At test position, towards −']],'']]],
+ ['Search','fg3',[['upper_step','Upper step','',.005,'Added until above the answer'],['pa_limit','PA limit','',.01,'Fails if still below'],['skip_first','First pulse','',[['1','Skip'],['0','Use']],'']]],
+ ['Mode and method','fg',[['mode','Mode','',[['area','Area: gap and overshoot equal'],['edge','Edge: no dip after slow-down']],'Algorithm that judges the curve'],['method','Method','',[['push','Push: Klipper PA, no XY'],['klipper','Klipper: Klipper PA, XY line']],'How each PA value is applied'],
+   ['area_window','Area window','s',.01,'Force summed after each speed change'],['max_values','Max values','',1,'Area: most PA values per test'],
+   ['move_axis','Line axis','',[['Y','Y'],['X','X']],'Klipper method'],['test_accel','Test accel','mm/s²',100,'Capped at max_accel. Push copies it'],['smooth_time','Smooth time','s',.005,'0 = printer value'],
+   ['line_length','Line length','mm',1,'0 = automatic. Sets filament per mm'],['line_dir','Line start','',[['0','Centred on test position'],['1','At test position, towards +'],['-1','At test position, towards −']],'']]],
  ['Position and safety','fg',[['test_x','Test X','mm',1,''],['test_y','Test Y','mm',1,''],['park_x','Park X','mm',1,''],['park_y','Park Y','mm',1,''],
    ['max_filament','Max filament','mm',10,'Limit per test']]]];
 const FKEY='form.v4';
@@ -900,17 +901,17 @@ async function loadDefaults(){try{const d=await api('defaults');DEF=d;const save
   $$('#form input,#form select').forEach(i=>i.addEventListener('input',()=>{store.set(FKEY,mainVals());summary()}));
   renderSettings();summary();
   const L=d.limits||{};if(L.required_z!=null){const fx=$('#fixed');fx.hidden=false;
-   fx.innerHTML=`Requires: extruder &ge; <b>${fmt(L.min_temp,0)} &deg;C</b>, all axes homed, <b>Z ${fmt(L.required_z,1)} mm</b>. Pressure advance is set to 0 during the test and restored after.`}}
+   fx.innerHTML=`Requires: extruder &ge; <b>${fmt(L.min_temp,0)} &deg;C</b>, all axes homed, <b>Z ${fmt(L.required_z,1)} mm</b>. Your pressure advance is put back after the test.`}}
  catch(e){$('#form').innerHTML='<div class="card empty">Defaults unavailable: '+esc(e.message)+'</div>'}}
 const numv=i=>i.type==='number'?parseFloat(i.value):i.value;
 const mainVals=()=>Object.fromEntries($$('#form input,#form select').map(i=>[i.name,numv(i)]));
 /* everything a test needs: the two main fields + the saved defaults */
 const formVals=()=>{const v={};for(const k of ADVKEYS)if(DEF&&DEF[k]!=null)v[k]=typeof DEF[k]==='number'?DEF[k]:String(DEF[k]);return Object.assign(v,mainVals())};
 /* ---- Settings: test defaults + positions, saved to pa_loadcell.cfg ---- */
-function methodInfo(v){const e=$('#methodInfo');if(!e||!DEF)return;const A=area(),sm=v.smooth_time>0?v.smooth_time:smoothT(),l=lineOf(v,A,sm);
+function methodInfo(v){const e=$('#methodInfo');if(!e||!DEF)return;const A=area(),sm=v.smooth_time>0?v.smooth_time:smoothT(),l=lineOf(v,A,sm),pp=pushOf(v,A);
  const thick=l&&DEF.extruder&&DEF.extruder.max_cross_section&&l.cs>0.95*DEF.extruder.max_cross_section;
  e.innerHTML=l?`${thick?'<b style="color:var(--rec)">Line length too short for max_extrude_cross_section. </b>':''}Klipper method: ${esc(v.move_axis)} line ${l.len.toFixed(1)} mm ${+v.line_dir>0?'from the test position towards +':+v.line_dir<0?'from the test position towards −':'around the test position'}, ${l.vf.toFixed(1)} / ${l.vs.toFixed(1)} mm/s, ${l.cs.toFixed(2)} mm² line. Klipper's PA and smoothing act; no conversion.`
-  :`Test push: extrude-only, no motion. Klipper's PA is held at 0 and the test adds the PA push over the smooth time (${Math.round(sm*1000)} ms). No conversion.`}
+  :`Push: no motion. Extrude-only moves follow Klipper's own PA on a ${pp.cs.toFixed(2)} mm² line at ${fmt(pp.acc,0)} mm/s² (speed change ${(pp.ramp*1000).toFixed(1)} ms), and Klipper's smoothing (${Math.round(sm*1000)} ms) acts on them. No conversion.`}
 function renderSettings(only){if(!DEF)return;
  if(!only||only==='#defForm')$('#defForm').innerHTML=ADV.filter(g=>g[0]!=='Position and safety').map(([g,cls,fs])=>`<div style="margin-bottom:12px"><h4>${g}</h4><div class="setform">${fs.map(f=>fieldHTML(f,DEF[f[0]]??'')).join('')}</div></div>`).join('')+
   `<div class="small dim" id="methodInfo" style="margin:-4px 0 12px"></div><div><h4>Run</h4><div class="setform">${fieldHTML(['max_filament','Max filament','mm',10,'Limit per test'],DEF.max_filament)}${fieldHTML(['pa_max','PA max','',.005,''],DEF.pa_max)}</div></div>`;
@@ -918,7 +919,7 @@ function renderSettings(only){if(!DEF)return;
  const L=DEF.limits||{};$('#safeForm').innerHTML=[['Min temp',L.min_temp,'°C'],['Required Z',L.required_z,'mm'],['Z tolerance',L.z_tol,'mm'],['Sample timeout',L.timeout,'s']].map(([l,v,u])=>`<label class="f">${l}<div class="inp"><input value="${esc(v??'')}" disabled><em>${u}</em></div></label>`).join('');
  if(!only||only==='#defForm'){$$('#defForm input,#defForm select').forEach(i=>i.addEventListener('input',()=>{const v=Object.assign({},DEF,setVals('#defForm'));drawPulse(v);methodInfo(v);$('#defMsg').textContent='Unsaved changes'}));
  drawPulse(DEF);methodInfo(DEF);$('#defMsg').textContent=''}
- $('#advLine').innerHTML=`Fast ${fmt(DEF.fast_flow,1)} mm³/s, ${fmt(DEF.fast_time,2)} s. Slow ${fmt(DEF.slow_flow,1)} mm³/s. ${DEF.cycles} cycles, ${DEF.mode==='edge'?'PIRO-EDGE':'PIRO-FIT'}, ${DEF.method==='push'?'push':'Klipper PA'} at X${fmt(DEF.test_x,0)} Y${fmt(DEF.test_y,0)}. <a href="#" id="advEdit" style="color:var(--amber)">Edit in Settings</a>`;
+ $('#advLine').innerHTML=`Fast ${fmt(DEF.fast_flow,1)} mm³/s, ${fmt(DEF.fast_time,2)} s. Slow ${fmt(DEF.slow_flow,1)} mm³/s. ${DEF.cycles} cycles, ${DEF.mode==='edge'?'PIRO-EDGE':'PIRO-AREA'}, ${DEF.method==='klipper'?'Klipper PA on a line':'push'} at X${fmt(DEF.test_x,0)} Y${fmt(DEF.test_y,0)}. <a href="#" id="advEdit" style="color:var(--amber)">Edit in Settings</a>`;
  $('#advEdit').onclick=e=>{e.preventDefault();setTab('set');$('#setDef').scrollIntoView({block:'start',behavior:'smooth'})}}
 const setVals=sel=>Object.fromEntries($$(sel+' input,'+sel+' select').map(i=>[i.name,i.name==='skip_first'?parseInt(i.value):numv(i)]));
 async function saveDefaults(sel){if(!DEF)return;const v=setVals(sel),ch={};for(const[k,x]of Object.entries(v))if(String(x)!==String(DEF[k]))ch[k]=x;
@@ -927,13 +928,18 @@ async function saveDefaults(sel){if(!DEF)return;const v=setVals(sel),ch={};for(c
  catch(e){toast('Not saved: '+e.message,8000)}}
 $('#defSave').onclick=()=>saveDefaults('#defForm');$('#posSave').onclick=()=>saveDefaults('#posForm');$('#defReset').onclick=()=>renderSettings('#defForm');
 $$('#setnav button').forEach(b=>b.onclick=()=>{$$('#setnav button').forEach(x=>x.classList.toggle('on',x===b));$('#'+b.dataset.to).scrollIntoView({block:'start',behavior:'smooth'})});
-const TYP=7,MAXN=14;
-function plan(v){const A=area(),fast=v.fast_flow/A*v.fast_time,slow=v.slow_flow/A*v.slow_time,per=slow+v.cycles*(fast+slow),
+const MAXN=14,typOf=v=>v.mode==='edge'?7:Math.min(+v.max_values||7,MAXN);
+function plan(v){const A=area(),TYP=typOf(v),fast=v.fast_flow/A*v.fast_time,slow=v.slow_flow/A*v.slow_time,per=slow+v.cycles*(fast+slow),
   prime=v.prime_length>0?v.prime_length:0,primeT=prime&&v.prime_flow>0?prime*A/v.prime_flow:0,perS=v.rest_time+v.slow_time+v.cycles*(v.fast_time+v.slow_time),
-  vf=v.fast_flow/A,vs=v.slow_flow/A,sm=v.smooth_time>0?v.smooth_time:smoothT(),charge=k=>(k*(vf-vs)+(vf+vs)*sm/2)/sm,line=lineOf(v,A,sm);
- return{A,fast,slow,per,prime,primeT,perS,vf,vs,sm,charge,line,filTyp:per*TYP+prime,filMax:per*MAXN+prime,secs:perS*TYP+primeT+(v.prime_rest||0)}}
-/* Klipper method: the back-and-forth line (same as Settings.line in settings.py) */
-function lineOf(v,A,sm){if(v.method!=='klipper')return null;const ex=DEF&&DEF.extruder||{},cap=.64/A,mr=ex.max_extrude_ratio||cap,L=+v.line_length||0,r=L>0?(v.fast_flow*v.fast_time+v.slow_flow*v.slow_time)/(A*L):.85*Math.min(mr,cap);
+  vf=v.fast_flow/A,vs=v.slow_flow/A,sm=v.smooth_time>0?v.smooth_time:smoothT(),line=lineOf(v,A,sm),push=line?null:pushOf(v,A);
+ return{A,TYP,fast,slow,per,prime,primeT,perS,vf,vs,sm,line,push,filTyp:per*TYP+prime,filMax:per*MAXN+prime,secs:perS*TYP+primeT+(v.prime_rest||0)}}
+/* filament mm per toolhead mm of the line (Settings.line in settings.py) */
+function ratioOf(v,A){const ex=DEF&&DEF.extruder||{},cap=.64/A,mr=ex.max_extrude_ratio||cap,L=+v.line_length||0;return L>0?(v.fast_flow*v.fast_time+v.slow_flow*v.slow_time)/(A*L):.85*Math.min(mr,cap)}
+/* push method: the line it copies (Settings.push_plan) */
+function pushOf(v,A){const r=ratioOf(v,A),mx=(DEF&&DEF.toolhead||{}).max_accel,acc=Math.min(+v.test_accel||5000,mx||Infinity);
+ return{r,acc,cs:r*A,ramp:(v.fast_flow-v.slow_flow)/A/(acc*r)}}
+/* Klipper method: the back-and-forth line */
+function lineOf(v,A,sm){if(v.method!=='klipper')return null;const r=ratioOf(v,A);
  const vf=v.fast_flow/A/r,vs=v.slow_flow/A/r;let rev=v.slow_time>=.8?.4:.5*v.slow_time;rev=Math.max(rev,Math.min(.5*v.slow_time,sm/2+.33));
  return{r,vf,vs,len:vf*v.fast_time+vs*v.slow_time,cs:r*A}}
 /* one PA value: lead-in, then fast/slow pairs; arrows = the artificial PA push and pull-back */
@@ -965,20 +971,18 @@ function summary(){if(!$('#form input')||!DEF)return;const v=formVals(),p=plan(v
  if(!(v.prime_flow>0)){bad.push('Prime flow must be above 0');mark('prime_flow')}
  const vm=ex.max_e_velocity;
  if(vm!=null){if(p.vf>vm){bad.push(`Fast flow needs ${p.vf.toFixed(1)} mm/s, above max_extrude_only_velocity ${fmt(vm,1)}`);mark('fast_flow')}
-  if(v.prime_length>0&&v.prime_flow/p.A>vm){bad.push(`Prime flow needs ${(v.prime_flow/p.A).toFixed(1)} mm/s, above max_extrude_only_velocity ${fmt(vm,1)}`);mark('prime_flow')}
-  if(!p.line&&p.charge(v.pa_max)>vm){bad.push(`PA max ${fmt(v.pa_max,3)} needs a ${p.charge(v.pa_max).toFixed(0)} mm/s push, above max_extrude_only_velocity ${fmt(vm,1)}. Lower fast flow.`);mark('pa_max')}
-  else if(!p.line&&p.charge(v.pa_limit)>vm){let k=v.pa_max;while(k+v.upper_step<=v.pa_limit&&p.charge(k+v.upper_step)<=vm)k+=v.upper_step;
-   warn.push(`Upper search limited to PA ~${fmt(k,2)} by max_extrude_only_velocity`)}}
+  if(v.prime_length>0&&v.prime_flow/p.A>vm){bad.push(`Prime flow needs ${(v.prime_flow/p.A).toFixed(1)} mm/s, above max_extrude_only_velocity ${fmt(vm,1)}`);mark('prime_flow')}}
+ if(p.push&&p.push.ramp>.3*Math.min(v.fast_time,v.slow_time))bad.push(`Push: a speed change at test accel ${fmt(p.push.acc,0)} takes ${(p.push.ramp*1000).toFixed(0)} ms, too long for the fast and slow times. Raise test accel or shorten the line.`);
  const tv_=DEF&&DEF.toolhead||{};if(p.line&&tv_.max_velocity&&p.line.vf>tv_.max_velocity){bad.push(`Klipper method needs ${p.line.vf.toFixed(0)} mm/s toolhead speed, above max_velocity ${fmt(tv_.max_velocity,0)}. Lower fast flow.`);mark('fast_flow')}
  if(p.filMax>v.max_filament){bad.push(`Search may need ${p.filMax.toFixed(0)} mm, above max filament ${fmt(v.max_filament,0)} mm`);mark('max_filament')}
  if(v.fast_flow>30)warn.push(`Fast flow ${fmt(v.fast_flow,1)} mm³/s exceeds most hotends`);
  if(v.fast_time<.4)warn.push('Fast time under 0.4 s weakens the rise check');
  const m=Math.floor(p.secs/60),sc=Math.round(p.secs%60),pct=Math.min(100,p.filMax/v.max_filament*100);
- $('#sum').innerHTML=`${SI(TI.list)}<div>PA values <b>~${TYP}</b> <span class="sub">max ${MAXN}</span></div>
+ $('#sum').innerHTML=`${SI(TI.list)}<div>PA values <b>${v.mode==='edge'?'~'+p.TYP:'up to '+p.TYP}</b> <span class="sub">${v.mode==='edge'?'max '+MAXN:'PIRO-AREA'}</span></div>
   ${SI(TI.clock)}<div>Duration <b>~${m}:${String(sc).padStart(2,'0')}</b> <span class="sub">${fmt(p.perS,1)} s per PA value</span></div>
   ${SI(TI.spool)}<div>Filament <b>~${p.filTyp.toFixed(0)} mm</b> <span class="sub">max ${p.filMax.toFixed(0)} / ${fmt(v.max_filament,0)}</span><div class="meter ${pct>=100?'bad':pct>80?'warn':''}"><i style="width:${pct}%"></i></div></div>
   ${SI(TI.drop)}<div>Fast pulse <b>${p.fast.toFixed(2)} mm</b> at ${p.vf.toFixed(1)} mm/s <span class="sub">Smooth time ${Math.round(p.sm*1000)} ms</span></div>
-  ${SI(TI.list)}<div>Method <b>${p.line?'Klipper PA':'Test push'}</b> <span class="sub">${p.line?`${v.move_axis} line ${p.line.len.toFixed(1)} mm, ${p.line.vf.toFixed(0)} / ${p.line.vs.toFixed(1)} mm/s`:'no motion, Klipper PA at 0'}</span></div>`;
+  ${SI(TI.list)}<div>Method <b>${p.line?'Klipper PA, line':'Push'}</b> <span class="sub">${p.line?`${v.move_axis} line ${p.line.len.toFixed(1)} mm, ${p.line.vf.toFixed(0)} / ${p.line.vs.toFixed(1)} mm/s`:`Klipper PA without XY, ${p.push.cs.toFixed(2)} mm² at ${fmt(p.push.acc,0)} mm/s²`}</span></div>`;
  $('#checks').innerHTML=bad.length||warn.length?`<div class="alert ${bad.length?'bad':''}">${bad.concat(warn).map(esc).join('<br>')}</div>`:'';
  $('#tstart').dataset.ok=bad.length?'0':'1'}
 $('#tstart').onclick=async()=>{if($('#tstart').dataset.ok==='0'){toast('Invalid values');return}
@@ -989,9 +993,9 @@ $('#tstart').onclick=async()=>{if($('#tstart').dataset.ok==='0'){toast('Invalid 
  try{await gcode(script,0);toast('Test complete',7000)}catch(e){toast('Test stopped: '+e.message,9000)}after()};
 $('#tcancel').onclick=()=>api('cancel').then(()=>toast('Stopping after this pulse')).catch(e=>toast(e.message));
 /* tracker + live search chart */
-const STAGE_I={reference:0,upper:1,bracket:2,refine:3,confirm:3,repeat:3};
+const STAGE_I={reference:0,upper:1,bracket:2,refine:3,confirm:3,repeat:3,area:3};
 let lastSearch=null;
-function paintTrack(sr,running,failed){const steps=(sr&&sr.steps)||[],cur=failed&&!running?Math.max(0,...steps.map(x=>STAGE_I[x.stage]??0)):steps.length?STAGE_I[steps[steps.length-1].stage]??0:-1,done=sr&&sr.result!=null&&!running;
+function paintTrack(sr,running,failed){const steps=((sr&&sr.steps)||[]).map((x,i,a)=>x.stage==='area'&&a.findIndex(y=>y.stage==='area')===i?Object.assign({},x,{stage:'bracket'}):x),cur=failed&&!running?Math.max(0,...steps.map(x=>STAGE_I[x.stage]??0)):steps.length?STAGE_I[steps[steps.length-1].stage]??0:-1,done=sr&&sr.result!=null&&!running;
  $$('#track li').forEach((li,i)=>{li.className='';if(done||i<cur)li.classList.add('done');else if(i===cur&&running)li.classList.add('now');else if(i===cur)li.classList.add(failed?'fail':'done');
   if(done&&i===4)li.classList.add('done')})}
 function liveSearch(T){const running=T.state&&T.state!=='idle';if(running&&T.search)lastSearch=T.search;const sr=lastSearch;
@@ -1069,7 +1073,7 @@ function vline(c,F,v,col,dash){const x=Math.round(F.X(v))+.5;c.strokeStyle=col;c
 const pct=v=>(v>0?'+':'')+Math.round(v*100)+'%';
 /* 0.05 -> 0.050, 0.0555 -> 0.0555 */
 const fpa=v=>{let t=(+v).toFixed(4);while(t.endsWith('0')&&t.split('.')[1].length>3)t=t.slice(0,-1);return t};
-const SHORT={reference:'PA 0',upper:'upper',bracket:'estimate',refine:'refine',confirm:'check',repeat:'repeat',fit:'fit'};
+const SHORT={reference:'PA 0',upper:'upper',bracket:'estimate',refine:'refine',confirm:'check',repeat:'repeat',area:'area'};
 
 /* A: the search path. x = order tested, y = PA. Grey band = where the answer can still be. */
 function emptyFig(cv,msg){const w=cv.clientWidth,h=cv.clientHeight;if(!w||!h)return;const dpr=devicePixelRatio||1;cv.width=Math.round(w*dpr);cv.height=Math.round(h*dpr);
@@ -1078,17 +1082,18 @@ function figPath(cv,sr,res,o={}){const steps=(sr&&sr.steps)||[];
  if(!steps.length){emptyFig(cv,o.live?'Search path appears during a test':'Fixed list (pre PIRO-EDGE run)');return}
  const n=steps.length,top=Math.max(...steps.map(s=>s.pa))*1.08;
  const F=fig(cv,{x0:.4,x1:n+.6,y0:0,y1:top,T:16,xticks:steps.map((s,i)=>({v:i+1,label:SHORT[s.stage]||s.stage})),yt:v=>v.toFixed(2),L:40,B:20});if(!F)return;const c=F.c;
- /* band: last clean below the lowest dip, after each step */
- let ok=0,bad=null;const band=[];for(const s of steps){if(s.verdict==='dips')bad=bad==null?s.pa:Math.min(bad,s.pa);else if(s.pa>ok&&(bad==null||s.pa<bad))ok=s.pa;
+ const areaM=steps.some(s=>s.verdict==='over'||s.verdict==='under'),hot=s=>s.verdict==='dips'||s.verdict==='over';
+ /* band (edge): last clean below the lowest dip, after each step */
+ let ok=0,bad=null;const band=[];if(!areaM)for(const s of steps){if(s.verdict==='dips')bad=bad==null?s.pa:Math.min(bad,s.pa);else if(s.pa>ok&&(bad==null||s.pa<bad))ok=s.pa;
   if(bad!=null&&ok>=bad)ok=Math.max(0,...steps.filter(x=>x.verdict!=='dips'&&x.pa<bad).map(x=>x.pa));band.push([ok,bad])}
  c.fillStyle=css('--text');c.globalAlpha=.07;band.forEach(([a,b],i)=>{if(b==null)return;const x0=F.X(i+.5),x1=F.X(i+1.5);c.fillRect(x0,F.Y(b),x1-x0,F.Y(a)-F.Y(b))});c.globalAlpha=1;
  const ans=res&&res.pa!=null?(res.measured??res.pa):(sr.result!=null&&!res?null:null);
  if(ans!=null){hline(c,F,ans,css('--amber'),[5,4]);label(c,'result',F.L+4,F.Y(ans)-5,css('--amber'),'left')}
  steps.forEach((s,i)=>{if(s.prediction!=null){const y=F.Y(s.prediction),x=F.X(i+1);c.strokeStyle=css('--amber');c.lineWidth=1.5;c.beginPath();c.moveTo(x-9,y);c.lineTo(x+9,y);c.stroke()}});
  c.strokeStyle=F.dim;c.globalAlpha=.5;c.lineWidth=1;c.beginPath();steps.forEach((s,i)=>{const x=F.X(i+1),y=F.Y(s.pa);i?c.lineTo(x,y):c.moveTo(x,y)});c.stroke();c.globalAlpha=1;
- steps.forEach((s,i)=>{const col=s.verdict==='dips'?css('--rec'):css('--trace'),x=F.X(i+1),y=F.Y(s.pa);
+ steps.forEach((s,i)=>{const col=hot(s)?css('--rec'):css('--trace'),x=F.X(i+1),y=F.Y(s.pa);
   s.stage==='repeat'?dot(c,x,y,4.5,css('--panel2'),col):dot(c,x,y,4.5,col);
-  if(s.stage!=='repeat'){const below=s.verdict!=='dips'&&y+16<F.T+F.ph-2;label(c,fpa(s.pa),x,below?y+16:y-9,F.dim,'center')}})}
+  if(s.stage!=='repeat'){const below=!hot(s)&&y+16<F.T+F.ph-2;label(c,fpa(s.pa),x,below?y+16:y-9,F.dim,'center')}})}
 
 /* D: dip after the slow-down against PA, the line and where it crosses zero */
 function figDips(cv,res,full){const P0=(res&&res.points)||[];
@@ -1160,26 +1165,31 @@ async function figPulse(cv,m,res,cap){const fe=(res&&res.fall)||{};let e=null;
  const bv=best?best.v:0;
  if(cap)cap.innerHTML=`PA <b>${fpa(seg.pa)}</b>, pulse 2. Baseline joins the slow levels. `+(bv<0?`Dip <b>${Math.round(-bv*100)}%</b> of step.`:`No dip, <b>${Math.round(bv*100)}%</b> above baseline.`)}
 
-function stepsHTML(m,res){const sr=m.search,P=res.points||[],fe=res.fall||{},L=[];const lim0=P.length?Math.round(Math.max(P[0].limit,res.floor||0)*100):3;
- if(sr&&sr.steps&&sr.steps.length){const S=sr.steps,ref=S.filter(s=>s.stage==='reference'),up=S.filter(s=>s.stage==='upper');
-  if(ref.length){const d0=ref[ref.length-1].dip;L.push(`<b>Reference (PA 0).</b> ${d0<-.005?'Dip '+Math.round(-d0*100)+'% (noise)':'Min '+Math.round(Math.max(0,d0)*100)+'% above baseline'}. Noise limit ${lim0}%${res.floor?', floor '+Math.round(res.floor*100)+'%':''}.`)}
-  if(up.length)L.push(`<b>Upper limit.</b> ${up.map(s=>`PA ${s.pa} ${s.verdict==='dips'?'dips '+pct(s.dip).replace('-',''):'no dip'}`).join(', ')}.`);
-  const pr=S.find(s=>s.prediction!=null);if(pr)L.push(`<b>Estimate.</b> ${(+pr.prediction).toFixed(4)} from dip depth.`);
-  const rest=S.filter(s=>['bracket','refine','confirm','repeat','fit'].includes(s.stage));if(rest.length)L.push(`<b>Refine.</b> ${rest.map(s=>`${s.pa}${s.stage==='repeat'?' (repeat)':''} ${s.verdict==='dips'?'dip':'clean'}`).join(', ')}.`)}
+function stepsHTML(m,res){const sr=m.search,P=res.points||[],fe=res.fall||{},ar=res.area||{},L=[];const lim0=P.length?Math.round(Math.max(P[0].limit,res.floor||0)*100):3;
+ const ms=v=>v==null?'-':(v>0?'+':'')+(+v).toFixed(1)+' ms';
+ if(sr&&sr.steps&&sr.steps.length){const S=sr.steps,ref=S.filter(s=>s.stage==='reference'),up=S.filter(s=>s.stage==='upper'),areaS=S.some(s=>s.verdict==='over'||s.verdict==='under');
+  if(areaS){if(ref.length)L.push(`<b>Reference (PA 0).</b> Area ${ms(ref[ref.length-1].balance)}.`);
+   if(up.length)L.push(`<b>Upper limit.</b> ${up.map(s=>`PA ${s.pa} area ${ms(s.balance)}`).join(', ')}.`);
+   const rest=S.filter(s=>s.stage==='area');if(rest.length)L.push(`<b>Beside the crossing.</b> ${rest.map(s=>`${s.pa} ${ms(s.balance)}`).join(', ')}.`)}
+  else{if(ref.length){const d0=ref[ref.length-1].dip;L.push(`<b>Reference (PA 0).</b> ${d0<-.005?'Dip '+Math.round(-d0*100)+'% (noise)':'Min '+Math.round(Math.max(0,d0)*100)+'% above baseline'}. Noise limit ${lim0}%${res.floor?', floor '+Math.round(res.floor*100)+'%':''}.`)}
+   if(up.length)L.push(`<b>Upper limit.</b> ${up.map(s=>`PA ${s.pa} ${s.verdict==='dips'?'dips '+pct(s.dip).replace('-',''):'no dip'}`).join(', ')}.`);
+   const pr=S.find(s=>s.prediction!=null);if(pr)L.push(`<b>Estimate.</b> ${(+pr.prediction).toFixed(4)} from dip depth.`);
+   const rest=S.filter(s=>['bracket','refine','confirm','repeat'].includes(s.stage));if(rest.length)L.push(`<b>Refine.</b> ${rest.map(s=>`${s.pa}${s.stage==='repeat'?' (repeat)':''} ${s.verdict==='dips'?'dip':'clean'}`).join(', ')}.`)}}
  else L.push(`<b>Fixed list.</b> ${m.segments.length} values, ${Math.min(...m.segments.map(s=>s.pa))} to ${Math.max(...m.segments.map(s=>s.pa))}.`);
- if(m.pa_method==='klipper')L.push(`<b>Method.</b> Klipper PA on a ${m.line?fmt(m.line.length,1)+' mm ':''}line, no conversion.`);
- if(fe.k!=null)L.push(`<b>Edge.</b> Clean ${fe.k_ok}, dip ${fe.k_bad}. Line fit (${fe.line?fe.used.length:2} values): <b>${fe.k.toFixed(4)}</b>.`);
+ const pu=m.push;if(m.pa_method==='klipper')L.push(`<b>Method.</b> Klipper PA on a ${m.line?fmt(m.line.length,1)+' mm ':''}line, no conversion.`);
+ else if(pu)L.push(`<b>Method.</b> Push: Klipper PA without XY, as on a ${fmt(pu.ratio*(m.filament_area||2.405),2)} mm² line at ${fmt(pu.accel,0)} mm/s². No conversion.`);
+ if(ar.k!=null)L.push(`<b>Area line.</b> Crosses 0 at <b>${(+ar.k).toFixed(4)}</b> &plusmn; ${(+ar.se).toFixed(4)} (${(ar.used||[]).length} values, R² ${(+ar.r2).toFixed(3)})${res.method==='PIRO-AREA'?'':'. Not used: the result rule is PIRO-EDGE'}.`);
+ else if(ar.why)L.push(`<b>Area line.</b> ${esc(ar.why)}.`);
+ if(fe.k!=null)L.push(`<b>Edge.</b> Clean ${fe.k_ok}, dip ${fe.k_bad}. Line fit (${fe.line?fe.used.length:2} values): <b>${fe.k.toFixed(4)}</b>${res.method==='PIRO-AREA'?'. Not used: the result rule is PIRO-AREA':''}.`);
  if(res.measured!=null&&res.pa!=null)L.push(`<b>Smooth time correction (${Math.round((res.smooth||.04)*1000)} ms).</b> ${res.measured} &rarr; <b>${res.pa}</b>.`);
- const ft=res.fit||{};if(ft.k!=null)L.push(`<b>Square-wave fit.</b> Shape error lowest at <b>${(+ft.k).toFixed(4)}</b> &plusmn; ${(+ft.se).toFixed(4)} (parabola through ${(ft.used||[]).length} values, ${Math.round((ft.rms_min||0)*100)}% rms left)${res.method==='PIRO-FIT'?'':', not used: result rule is PIRO-EDGE'}.`);
- else if(ft.why)L.push(`<b>Square-wave fit.</b> ${esc(ft.why)}.`);
- const re=res.rise||{};if(re.k!=null)L.push(`<b>Rise check.</b> Overshoot from ${re.k.toFixed(4)}, ${res.check==='lower'?'<span style="color:var(--amber)">below the edge</span>':res.check==='agrees'?'agrees':'above the edge'}.`);
- else if(fe.k!=null)L.push('<b>Rise check.</b> No overshoot in range.');
+ const re=res.rise||{};if(res.method!=='PIRO-AREA'){if(re.k!=null)L.push(`<b>Rise check.</b> Overshoot from ${re.k.toFixed(4)}, ${res.check==='lower'?'<span style="color:var(--amber)">below the edge</span>':res.check==='agrees'?'agrees':'above the edge'}.`);
+  else if(fe.k!=null)L.push('<b>Rise check.</b> No overshoot in range.')}
  return`<ol class="steps">${L.map(x=>'<li>'+x+'</li>').join('')}</ol>`}
 
-function answerHTML(m,res){if(!res||res.pa==null){const st=m.status;return`<div class="answer none"><div class="side"><div class="k">${esc(res&&res.method||'PIRO-EDGE')}</div><div class="pav">${st==='cancelled'?'Cancelled':'No result'}</div>
-  <div>${esc(m.error||res&&res.why||'not enough data')}</div>${res&&res.fall&&res.fall.status==='no_dip'?'<div class="small dim">No dip at any value. Check for filament slip or a partial clog, then raise PA limit in Settings.</div>':''}</div></div>`}
- const cmd='SET_PRESSURE_ADVANCE ADVANCE='+res.pa,er=res.edge_result||{},ft=res.fit||{};
- const other=res.method==='PIRO-FIT'?(er.pa!=null?`No-overshoot edge ${er.pa}`:''):(ft.k!=null?`PIRO-FIT ${(+ft.k).toFixed(4)}`:'');
+function answerHTML(m,res){if(!res||res.pa==null){const st=m.status;return`<div class="answer none"><div class="side"><div class="k">${esc(res&&res.method||'PIRO-EDGE')}</div><div class="pav">${st==='cancelled'?'Cancelled':'No result'}</div>${res&&res.method==='PIRO-AREA'&&(res.edge_result||{}).pa!=null?`<div class="small dim">No-dip edge ${res.edge_result.pa}</div>`:''}
+  <div>${esc(m.error||res&&res.why||'not enough data')}</div>${res&&res.method!=='PIRO-AREA'&&res.fall&&res.fall.status==='no_dip'?'<div class="small dim">No dip at any value. Check for filament slip or a partial clog, then raise PA limit in Settings.</div>':''}</div></div>`}
+ const cmd='SET_PRESSURE_ADVANCE ADVANCE='+res.pa,er=res.edge_result||{},ar=res.area||{};
+ const other=res.method==='PIRO-AREA'?(er.pa!=null?`No-dip edge ${er.pa}`:''):(ar.k!=null?`PIRO-AREA ${(+ar.k).toFixed(4)}`:'');
  return`<div class="answer"><div><div class="k">Pressure advance · ${esc(res.method||'PIRO-EDGE')}</div><div class="pav"><span class="pvt">${res.pa}</span><span class="pxv">${pixel(String(res.pa),11)}</span><small>&plusmn; ${res.unc}</small></div>${other?`<div class="small dim">${other}</div>`:''}</div>
   <div class="side"><div class="row">${gradeHTML(res.grade)}<span class="small dim">${res.grade==='good'?'Ready to use':res.grade==='fair'?'Verify with a print':'Low confidence, repeat the test'}</span></div>
    <div class="cmdline"><code>${cmd}</code><button class="quiet cp" data-cp="${cmd}">Copy</button><button class="quiet usepick" data-pa="${res.pa}">Set as pick</button></div>
@@ -1200,7 +1210,7 @@ function runInfoHTML(m){const s=m.settings||{},n=(m.segments||[]).length,secs=(m
  const used=lm.fast!=null&&s.cycles?n*(lm.slow+s.cycles*(lm.fast+lm.slow))+(s.prime_length||0):null,f=(v,d)=>v==null?'-':fmt(+v,d);
  const prime=s.prime_length!=null?(s.prime_length>0?`${f(s.prime_length,0)} mm at ${f(s.prime_flow,1)} mm³/s`:'off'):(s.warmup!=null?f(s.warmup,0)+' s warm-up':'-');
  const cells=[['Nozzle',m.nozzle_temp!=null?f(m.nozzle_temp,0)+' °C':'-',''],['Fast flow',`${f(s.fast_flow,1)} mm³/s · ${f(s.fast_time,2)} s`,'fst'],['Slow flow',`${f(s.slow_flow,2)} mm³/s · ${f(s.slow_time,1)} s`,'slw'],
-  ['Cycles',s.cycles!=null?s.cycles+((m.analysis||{}).skip_first!==false?' (1 skipped)':''):'-',''],['Prime',prime,''],['Smooth time',(m.smooth_time!=null?Math.round(m.smooth_time*1000)+' ms':'-')+(m.pa_method==='klipper'?' · Klipper PA':' · test push'),''],
+  ['Cycles',s.cycles!=null?s.cycles+((m.analysis||{}).skip_first!==false?' (1 skipped)':''):'-',''],['Prime',prime,''],['Smooth time',(m.smooth_time!=null?Math.round(m.smooth_time*1000)+' ms':'-')+(m.pa_method==='klipper'?' · Klipper PA, line':m.push?' · push':' · older push'),''],
   ['Duration',fdur(secs),''],['Filament',used!=null?Math.round(used)+' mm':'-','']];
  return`<div class="rinfo">${cells.map(([k,v,c])=>`<div class="${c}">${k}<b class="num">${esc(v)}</b></div>`).join('')}</div>`}
 function renderRun(id,box){const m=meta[id],st=m.settings||{},test=m.kind==='test',res=test?resOf(m):null;
@@ -1213,22 +1223,30 @@ function renderRun(id,box){const m=meta[id],st=m.settings||{},test=m.kind==='tes
   ${m.error&&test&&res&&res.pa!=null?`<div style="color:var(--amber);margin-bottom:8px">${esc(m.error)}</div>`:''}
   ${test?`<div class="how"><h3>${res&&res.pa!=null?'Analysis':'Analysis'}</h3>${res?stepsHTML(m,res):''}
    <div class="figs">
-    ${m.search&&m.search.steps&&m.search.steps.length?`<figure><div class="ft">Search path</div><canvas class="fig f-path" style="height:200px"></canvas><figcaption>Teal: clean. Red: dip. Grey band: remaining range. Amber: estimates.</figcaption></figure>`
+    ${m.search&&m.search.steps&&m.search.steps.length?`<figure><div class="ft">Search path</div><canvas class="fig f-path" style="height:200px"></canvas><figcaption>${m.search.steps.some(x=>x.verdict==='over'||x.verdict==='under')?'Teal: area below 0 (gap). Red: above 0 (overshoot). Amber: crossing estimates.':'Teal: clean. Red: dip. Grey band: remaining range. Amber: estimates.'}</figcaption></figure>`
      :`<figure><div class="ft">Tested values</div><canvas class="fig f-path" style="height:200px"></canvas><figcaption>Fixed list (pre PIRO-EDGE run). Teal: clean. Red: below the noise limit.</figcaption></figure>`}
+    ${res&&res.method==='PIRO-AREA'?`
+    <figure><div class="ft">Area balance vs PA</div><canvas class="fig f-area" style="height:200px"></canvas><figcaption>Gap and overshoot after both speed changes, in ms of the full step. &plusmn;2 SE. Amber: the line and where it crosses 0. Teal dashed: no-dip edge.</figcaption></figure>
+    <figure><div class="ft">Pulse at the result</div><canvas class="fig f-shape" style="height:200px"></canvas><figcaption class="cap-shape">Speed-up and slow-down overlaid, at the tested value nearest the result.</figcaption></figure>
+    <figure><div class="ft">Tolerance narrowing</div><canvas class="fig f-narrow" style="height:200px"></canvas><figcaption>The area result and its &plusmn; after each PA value, in the order tested.</figcaption></figure>
+    <figure><div class="ft">Pulse trace</div><canvas class="fig f-pulse" style="height:200px"></canvas><figcaption class="cap-pulse">Loading</figcaption></figure>
+    <figure><div class="ft">Slow-down response</div><canvas class="fig f-curves" style="height:200px"></canvas><figcaption>Median per PA value, as a fraction of the step. Red dashed: noise limit.</figcaption></figure>
+    <figure><div class="ft">Dip vs PA</div><canvas class="fig f-dips" style="height:200px"></canvas><figcaption>&plusmn;2 SE, ringed: tested twice. Amber: line fit${res&&res.measured!=null?' before smooth time correction':''}.</figcaption></figure>`:`
     <figure><div class="ft">Pulse trace</div><canvas class="fig f-pulse" style="height:200px"></canvas><figcaption class="cap-pulse">Loading</figcaption></figure>
     <figure><div class="ft">Slow-down response</div><canvas class="fig f-curves" style="height:200px"></canvas><figcaption>Median per PA value, as a fraction of the step. Red dashed: noise limit.</figcaption></figure>
     <figure><div class="ft">Dip vs PA</div><canvas class="fig f-dips" style="height:200px"></canvas><figcaption>&plusmn;2 SE, ringed: tested twice. Amber: line fit${res&&res.measured!=null?' before smooth time correction':''}.</figcaption></figure>
-    <figure><div class="ft">Shape error vs PA</div><canvas class="fig f-fit" style="height:200px"></canvas><figcaption>Distance from a perfect square wave. Amber: PIRO-FIT minimum. Teal dashed: no-overshoot edge.</figcaption></figure>
-    <figure><div class="ft">Step shape</div><canvas class="fig f-shape" style="height:200px"></canvas><figcaption class="cap-shape">Speed-up and slow-down overlaid, at the tested value nearest the result. Dotted: perfect square wave.</figcaption></figure>
+    <figure><div class="ft">Area balance vs PA</div><canvas class="fig f-area" style="height:200px"></canvas><figcaption>Gap and overshoot after both speed changes, in ms of the full step. &plusmn;2 SE. Amber: the line and where it crosses 0. Teal dashed: no-dip edge.</figcaption></figure>
+    <figure><div class="ft">Pulse at the result</div><canvas class="fig f-shape" style="height:200px"></canvas><figcaption class="cap-shape">Speed-up and slow-down overlaid, at the tested value nearest the result.</figcaption></figure>
+    <figure><div class="ft">Tolerance narrowing</div><canvas class="fig f-narrow" style="height:200px"></canvas><figcaption>The area result and its &plusmn; after each PA value, in the order tested.</figcaption></figure>`}
    </div></div>
    <h3 style="font-size:14px;margin:18px 0 4px">All PA values</h3><div class="small dim">Click to open the trace.</div>`:''}
-  <div class="grid">${m.segments.map(s=>{const p=s.piro,bad=p&&-p.dip>limOf(s);return`<div class="pa card ${test&&p?(bad?'dip':'ok'):''} ${s.idx===near?'pick':''}" data-i="${s.idx}" role="button" tabindex="0" aria-pressed="false" title="${s.samples} samples${s.partial?', partial':''}">
+  <div class="grid">${m.segments.map(s=>{const p=s.piro,am=res&&res.method==='PIRO-AREA',ab=p&&p.area?p.area.balance:null,bad=p&&(am&&ab!=null?ab>0:-p.dip>limOf(s));return`<div class="pa card ${test&&p?(bad?'dip':'ok'):''} ${s.idx===near?'pick':''}" data-i="${s.idx}" role="button" tabindex="0" aria-pressed="false" title="${s.samples} samples${s.partial?', partial':''}">
    <canvas></canvas><div class="t num"><b>${test?fpa(s.pa):fdur(s.duration||0)}</b><span class="m">${s.idx===near?'pick':s.stage?(SHORT[s.stage]||esc(s.stage)):''}</span></div>
-   <div class="m num">${test&&p?'dip '+pct(p.dip):'&nbsp;'}</div>
+   <div class="m num">${test&&p?(am&&ab!=null?'area '+(ab>0?'+':'')+ab.toFixed(1)+' ms':'dip '+pct(p.dip)):'&nbsp;'}</div>
    ${test?`<button class="add quiet" data-add="${s.idx}" aria-pressed="${inCmp(id,s.idx)}" title="Add to Compare">+</button>`:''}</div>`}).join('')}</div>
   <div class="tagrow"><label class="f" style="width:130px">Pick<input class="pick" value="${esc(m.pa_pick??'')}" placeholder="e.g. 0.045"></label>
    <label class="f" style="width:180px">Name<input class="nm" value="${esc(m.name)}"></label>
-   ${test?`<label class="f" style="width:120px">First pulse<select class="o-skip"><option value="1"${(m.analysis||{}).skip_first!==false?' selected':''}>Skip</option><option value="0"${(m.analysis||{}).skip_first===false?' selected':''}>Use</option></select></label><label class="f" style="width:130px">Mode<select class="o-mode"><option value="fit"${(st.mode||st.pick||'edge')==='fit'?' selected':''}>PIRO-FIT</option><option value="edge"${(st.mode||st.pick||'edge')==='edge'?' selected':''}>PIRO-EDGE</option></select></label><button class="o-run" title="Analyse again">Re-analyse</button>`:''}
+   ${test?`<label class="f" style="width:120px">First pulse<select class="o-skip"><option value="1"${(m.analysis||{}).skip_first!==false?' selected':''}>Skip</option><option value="0"${(m.analysis||{}).skip_first===false?' selected':''}>Use</option></select></label><label class="f" style="width:130px">Mode<select class="o-mode"><option value="area"${['area','fit'].includes(st.mode||st.pick||'edge')?' selected':''}>PIRO-AREA</option><option value="edge"${(st.mode||st.pick||'edge')==='edge'?' selected':''}>PIRO-EDGE</option></select></label><button class="o-run" title="Analyse again">Re-analyse</button>`:''}
    <span class="sp"></span><button class="save">Save</button><button class="exp" title="Download run (.palc.json)">Export run</button><button class="del danger quiet">Delete run</button></div>
   <label class="f" style="margin-top:8px">Notes<textarea class="notes">${esc(m.notes)}</textarea></label>
   <details class="raw"><summary>Run settings</summary><div class="kv">${[['Nozzle',m.nozzle_temp!=null?m.nozzle_temp+' °C':'-'],['Smooth time',m.smooth_time!=null?Math.round(m.smooth_time*1000)+' ms':'-'],...Object.entries(st)].map(([k,v])=>`<span>${esc(k)} <b>${esc(v)}</b></span>`).join('')}</div></details>`;
@@ -1248,30 +1266,49 @@ function renderRun(id,box){const m=meta[id],st=m.settings||{},test=m.kind==='tes
  if(m.kind==='manual'&&m.segments.length)box.querySelector('.pa').click()}
 const openFigs=new Map();
 function drawFigs(box,m,res){openFigs.set(box,[m,res]);const q=s=>box.querySelector(s);if(!q('.f-path'))return;
- if(m.search&&m.search.steps&&m.search.steps.length)figPath(q('.f-path'),m.search,res);else figDips(q('.f-path'),res,true);figCurves(q('.f-curves'),m,res);figDips(q('.f-dips'),res);figPulse(q('.f-pulse'),m,res,q('.cap-pulse'));figFit(q('.f-fit'),res);figShape(q('.f-shape'),m,res,q('.cap-shape'))}
-/* PIRO-FIT: shape error per PA value and the parabola */
-function figFit(cv,res){if(!cv)return;const ft=res&&res.fit;if(!ft||!ft.points||ft.points.length<2){emptyFig(cv,'No shape data (re-analyse)');return}
- const P=ft.points.filter(p=>p[0]>0),k=ft.k,e=(res.edge_result||{}).pa;if(P.length<2){emptyFig(cv,'Not enough PA values');return}
+ if(m.search&&m.search.steps&&m.search.steps.length)figPath(q('.f-path'),m.search,res);else figDips(q('.f-path'),res,true);figCurves(q('.f-curves'),m,res);figDips(q('.f-dips'),res);figPulse(q('.f-pulse'),m,res,q('.cap-pulse'));figArea(q('.f-area'),res);figShape(q('.f-shape'),m,res,q('.cap-shape'));figNarrow(q('.f-narrow'),res)}
+/* PIRO-AREA: mean area balance per PA value, the line and its zero crossing */
+function figArea(cv,res){if(!cv)return;const ar=res&&res.area;if(!ar||!ar.points||ar.points.length<2){emptyFig(cv,'No area data (re-analyse)');return}
+ const P=ar.points,used=new Set((ar.used||[]).map(v=>+(+v).toFixed(6))),k=ar.k,e=(res.edge_result||{}).pa;
  const xs=P.map(p=>p[0]).concat(k!=null?[k]:[]).concat(e!=null?[e]:[]),x0=Math.max(0,Math.min(...xs)-.006),x1=Math.max(...xs)+.006;
- const q=x=>ft.a!=null?Math.sqrt(Math.max(0,ft.a*x*x+ft.b*x+ft.c)):null;
- const ys=P.map(p=>p[1]),y1=Math.max(...ys)*1.12,y0=Math.max(0,Math.min(...ys,ft.rms_min||1)*.8);
- const F=fig(cv,{x0,x1,y0,y1,yt:v=>Math.round(v*100)+'%',xt:v=>v.toFixed(x1-x0<.06?3:2),L:44});if(!F)return;const c=F.c;
- if(ft.a!=null){c.strokeStyle=css('--dim');c.lineWidth=1.6;c.beginPath();for(let i=0;i<=120;i++){const x=x0+(x1-x0)*i/120,y=q(x);const Y=F.Y(Math.min(y1,y));i?c.lineTo(F.X(x),Y):c.moveTo(F.X(x),Y)}c.stroke()}
+ const lo=P.map(p=>p[1]-2*p[2]),hi=P.map(p=>p[1]+2*p[2]),r=Math.max(...hi.map(Math.abs),...lo.map(Math.abs)),y0=Math.min(-5,...lo)-r*.06,y1=Math.max(5,...hi)+r*.06;
+ const F=fig(cv,{x0,x1,y0,y1,zero:true,yt:v=>(v>0?'+':'')+Math.round(v),xt:v=>v.toFixed(x1-x0<.06?3:2),L:44});if(!F)return;const c=F.c,am=css('--amber');
+ if(k!=null&&ar.se){c.fillStyle=am;c.globalAlpha=.13;c.fillRect(F.X(k-ar.se),F.T,Math.max(2,F.X(k+ar.se)-F.X(k-ar.se)),F.ph);c.globalAlpha=1}
+ if(ar.line){const a=ar.line.a,b=ar.line.b;c.save();c.beginPath();c.rect(F.L,F.T,F.pw,F.ph);c.clip();c.strokeStyle=am;c.lineWidth=1.8;c.beginPath();c.moveTo(F.X(x0),F.Y(a+b*x0));c.lineTo(F.X(x1),F.Y(a+b*x1));c.stroke();c.restore()}
  if(e!=null)vline(c,F,e,css('--trace'),[4,4]);
- c.fillStyle=css('--text');for(const p of P){c.beginPath();c.arc(F.X(p[0]),F.Y(Math.min(y1,p[1])),3.2,0,7);c.fill()}
- if(k!=null){vline(c,F,k,css('--amber'));label(c,'fit '+(+k).toFixed(4),Math.min(F.X(k)+6,F.L+F.pw-70),F.T+12,css('--amber'))}}
-/* overlaid speed-up and slow-down at the value nearest the result */
-function figShape(cv,m,res,cap){if(!cv)return;const segs=(m.segments||[]).filter(s=>s.piro&&s.piro.shape&&!s.partial&&s.pa>0);
- if(!segs.length||!res||res.pa==null){emptyFig(cv,'No shape data (re-analyse)');return}
- const s=segs.reduce((a,b)=>Math.abs(b.pa-res.pa)<Math.abs(a.pa-res.pa)?b:a),sh=s.piro.shape,n=sh.up.length,tx=i=>(sh.t0+(i+.5)*sh.bin)*1000;
- if(cap)cap.textContent=`Speed-up and slow-down, ${s.piro.n} pulses overlaid, at PA ${s.pa}. Dotted: perfect square wave.`;
- const up=sh.up,dn=sh.down.map(v=>v==null?null:1-v),all=up.concat(dn).filter(v=>v!=null);
- const F=fig(cv,{x0:tx(0),x1:tx(n-1),y0:Math.min(-.1,...all)-.03,y1:Math.max(1.1,...all)+.03,yt:v=>Math.round(v*100)+'%',xt:v=>Math.round(v)+' ms',L:44});if(!F)return;const c=F.c;
- c.strokeStyle=css('--dim');c.setLineDash([2,3]);c.lineWidth=1;c.beginPath();c.moveTo(F.X(tx(0)),F.Y(0));c.lineTo(F.X(0),F.Y(0));c.lineTo(F.X(0),F.Y(1));c.lineTo(F.X(tx(n-1)),F.Y(1));c.stroke();
- c.beginPath();c.moveTo(F.X(tx(0)),F.Y(1));c.lineTo(F.X(0),F.Y(1));c.lineTo(F.X(0),F.Y(0));c.lineTo(F.X(tx(n-1)),F.Y(0));c.stroke();c.setLineDash([]);
- for(const[v,col,name]of[[up,css('--amber'),'speed-up'],[dn,css('--trace'),'slow-down']]){c.strokeStyle=col;c.lineWidth=1.8;c.beginPath();let st=false;
-  v.forEach((y,i)=>{if(y==null){st=false;return}const X=F.X(tx(i)),Y=F.Y(y);st?c.lineTo(X,Y):c.moveTo(X,Y);st=true});c.stroke()}
- label(c,'speed-up',F.L+F.pw-6,F.T+12,css('--amber'),'right');label(c,'slow-down',F.L+F.pw-6,F.T+26,css('--trace'),'right')}
+ for(const[pa,v,se]of P){const x=F.X(pa),col=v>0?css('--rec'):css('--trace'),u=used.has(+(+pa).toFixed(6));
+  if(se){c.strokeStyle=col;c.lineWidth=1;c.beginPath();c.moveTo(x,F.Y(v-2*se));c.lineTo(x,F.Y(v+2*se));c.stroke()}
+  u?dot(c,x,F.Y(v),4,col):dot(c,x,F.Y(v),4,css('--panel2'),col)}
+ if(k!=null){vline(c,F,k,am);const right=F.X(k)>F.L+F.pw*.6;label(c,'area '+(+k).toFixed(4),F.X(k)+(right?-6:6),F.T+12,am,right?'right':'left',css('--panel2'))}
+ label(c,'overshoot',F.L+6,F.T+12,F.dim);label(c,'gap',F.L+F.pw-6,F.T+F.ph-6,F.dim,'right')}
+/* speed-up and slow-down overlaid (both 0 -> 1) at the value nearest the
+   result; shaded: what the area sums (gap below 100 %, overshoot above) */
+function figShape(cv,m,res,cap){if(!cv)return;const segs=(m.segments||[]).filter(s=>s.piro&&s.piro.area&&s.piro.area.up&&!s.partial&&s.pa>0);
+ const want=res&&(res.pa??(res.area||{}).k);if(!segs.length||want==null){emptyFig(cv,'No area data (re-analyse)');return}
+ const s=segs.reduce((a,b)=>Math.abs(b.pa-want)<Math.abs(a.pa-want)?b:a),A=s.piro.area,n=A.up.length,tx=i=>(A.t0+(i+.5)*A.bin)*1000,W=(A.win||.15)*1000;
+ const sgn=v=>(v>0?'+':'')+(+v).toFixed(1);
+ if(cap)cap.innerHTML=`PA <b>${s.pa}</b>, ${A.n} pulses. Shaded over ${Math.round(W)} ms: gap below 100 %, overshoot above. Speed-up ${sgn(A.rise)} ms, slow-down ${sgn(A.fall)} ms, balance <b>${sgn(A.balance)} ms</b>.`;
+ const all=A.up.concat(A.down).filter(v=>v!=null);
+ const F=fig(cv,{x0:tx(0),x1:tx(n-1),y0:Math.min(-.1,...all)-.03,y1:Math.max(1.15,...all)+.03,yt:v=>Math.round(v*100)+'%',xt:v=>Math.round(v)+' ms',L:44});if(!F)return;const c=F.c;
+ c.fillStyle=css('--text');c.globalAlpha=.05;c.fillRect(F.X(0),F.T,F.X(Math.min(W,tx(n-1)))-F.X(0),F.ph);c.globalAlpha=1;
+ c.strokeStyle=css('--dim');c.setLineDash([2,3]);c.lineWidth=1;c.beginPath();c.moveTo(F.X(tx(0)),F.Y(0));c.lineTo(F.X(0),F.Y(0));c.lineTo(F.X(0),F.Y(1));c.lineTo(F.X(tx(n-1)),F.Y(1));c.stroke();c.setLineDash([]);
+ for(const[v,col]of[[A.up,css('--amber')],[A.down,css('--trace')]]){
+  c.fillStyle=col;c.globalAlpha=.16;for(let i=0;i<n-1;i++){const t=tx(i);if(t<0||t>W||v[i]==null||v[i+1]==null)continue;
+   c.beginPath();c.moveTo(F.X(t),F.Y(1));c.lineTo(F.X(t),F.Y(v[i]));c.lineTo(F.X(tx(i+1)),F.Y(v[i+1]));c.lineTo(F.X(tx(i+1)),F.Y(1));c.closePath();c.fill()}c.globalAlpha=1;
+  c.strokeStyle=col;c.lineWidth=1.8;c.beginPath();let st=false;v.forEach((y,i)=>{if(y==null){st=false;return}const X=F.X(tx(i)),Y=F.Y(y);st?c.lineTo(X,Y):c.moveTo(X,Y);st=true});c.stroke()}
+ label(c,'speed-up',F.L+F.pw-6,F.T+F.ph-22,css('--amber'),'right');label(c,'slow-down',F.L+F.pw-6,F.T+F.ph-8,css('--trace'),'right')}
+/* the area result and its +- after 2, 3, 4 ... PA values */
+function figNarrow(cv,res){if(!cv)return;const ar=res&&res.area,N=((ar&&ar.narrow)||[]).filter(x=>x.k!=null);if(!N.length){emptyFig(cv,'No area data (re-analyse)');return}
+ const fin=ar.k!=null?ar.k:N[N.length-1].k,ok=N.filter(x=>x.se!=null&&x.se<.02);
+ const half=Math.min(.03,Math.max(.004,...ok.map(x=>Math.abs(x.k-fin)+x.se))*1.15);
+ const F=fig(cv,{x0:N[0].n-.6,x1:N[N.length-1].n+.6,y0:fin-half,y1:fin+half,T:16,xticks:N.map(x=>({v:x.n,label:String(x.n)})),yt:v=>v.toFixed(half<.006?4:3),L:52});if(!F)return;const c=F.c,am=css('--amber');
+ hline(c,F,fin,am,[5,4]);const cl=v=>Math.min(fin+half,Math.max(fin-half,v));
+ N.forEach((x,i)=>{const X=F.X(x.n),last=i===N.length-1,col=last?am:css('--text');
+  if(x.se!=null){c.strokeStyle=col;c.lineWidth=1.4;c.beginPath();c.moveTo(X,F.Y(cl(x.k-x.se)));c.lineTo(X,F.Y(cl(x.k+x.se)));c.stroke();
+   for(const v of[x.k-x.se,x.k+x.se])if(v===cl(v)){c.beginPath();c.moveTo(X-4,F.Y(v));c.lineTo(X+4,F.Y(v));c.stroke()}}
+  const inside=x.k===cl(x.k);if(inside)dot(c,X,F.Y(x.k),3.8,col);else{const y=F.Y(cl(x.k)),d=x.k>fin?1:-1;c.fillStyle=col;c.beginPath();c.moveTo(X-5,y+d*6);c.lineTo(X+5,y+d*6);c.lineTo(X,y);c.fill()}
+  if(x.se!=null&&(last||F.pw/N.length>=50))label(c,'±'+(+x.se).toFixed(4),X,F.T-4,last?am:F.dim,'center')});
+ label(c,'values tested',F.L+F.pw-4,F.T+F.ph-6,F.dim,'right')}
 function redrawFigs(){for(const[box,[m,res]]of openFigs){if(!box.isConnected){openFigs.delete(box);continue}drawFigs(box,m,res)}}
 /* ---- export / import ---- */
 const safeName=s=>String(s||'').trim().replace(/[^\w.-]+/g,'_').replace(/^_+|_+$/g,'');

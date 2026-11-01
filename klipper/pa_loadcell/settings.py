@@ -3,26 +3,23 @@ every field can be overridden by the same-named (UPPERCASE) command parameter.
 
 PIRO-EDGE test: a prime (PRIME_LENGTH mm at PRIME_FLOW mm^3/s), then an
 adaptive search over PA values. Every PA value is a slow lead-in and CYCLES
-fast/slow pulses, all extrude-only. Klipper's own PA is held at 0 and the
-PA charge K*(fast-slow) is put in by hand over the smoothing window around
-every speed-up and taken back around every slow-down ("artificial PA",
-the way OznLab sensor does it, github.com/ozancs/oznlab-sensor), so no XY
-motion and no max_extrude_cross_section change is needed.
+fast/slow pulses, all extrude-only with the push method (see testrun.py).
 
 The search (see testrun.py): PA 0, then PA_MAX (+UPPER_STEP until the force
 dips, failing at PA_LIMIT), then values around the predicted answer.
 
 Two settings shape a run:
-  MODE   the algorithm that judges the force curve: fit (default, PIRO-FIT,
-         the PA closest to a square-wave response) or edge (PIRO-EDGE, the
-         highest PA without a dip after the slow-down)
-  METHOD how each PA value is applied: klipper (default) or push.
+  MODE   the algorithm that judges the force curve: area (default,
+         PIRO-AREA, the PA where the gap after every speed change and the
+         overshoot have the same area) or edge (PIRO-EDGE, the highest PA
+         without a dip after the slow-down)
+  METHOD how each PA value is applied: push (default) or klipper.
 
-METHOD=klipper lets Klipper's own pressure advance and smoothing
-act: the nozzle moves back and forth on a short line along MOVE_AXIS with a
-constant amount of filament per mm, fast and slow come from the toolhead
-speed, and the PA value is set with SET_PRESSURE_ADVANCE. No conversion is
-applied to its result.
+METHOD=push: the nozzle stays still. Extrude-only moves follow exactly the
+extruder position Klipper's own pressure advance would give on a line with
+the same filament per mm and TEST_ACCEL, and Klipper's own smoothing acts on
+them. METHOD=klipper lets Klipper's pressure advance act on a real
+back-and-forth line along MOVE_AXIS. Neither result is converted.
 
 Auto PA (PA_AUTO in pa_auto.cfg, before a print): APPLY=1 sets the result as
 Klipper's PA and never stops the print (a poor result, a failure or a cancel
@@ -38,6 +35,7 @@ OBSOLETE = ('sweeps', 'extrude_len', 'slow_speed', 'fast_speed', 'settle',
             'wobble', 'wobble_axis', 'accel', 'model')
 SEARCH_TYPICAL = 7          # PA values a search usually needs
 SEARCH_MAX_TRAINS = 14      # hard stop for one search
+AREA_WINDOW = 0.15
 
 
 @dataclass
@@ -61,14 +59,16 @@ class Settings:
     test_x: float = 0.0           # nozzle extrudes (in air) here
     test_y: float = 0.0
     filament: str = ""            # free-text name stored in run metadata
-    method: str = "klipper"       # klipper = Klipper's PA on an XY line, push = pulses, no XY
+    method: str = "push"          # push = Klipper's PA without XY, klipper = on an XY line
     move_axis: str = "Y"          # klipper method: line axis
-    test_accel: float = 5000.0    # klipper method: toolhead accel, mm/s^2
-    line_length: float = 0.0      # klipper method: line length, 0 = from max cross-section
+    test_accel: float = 5000.0    # toolhead accel (push: of the line it copies), mm/s^2
+    line_length: float = 0.0      # line length, 0 = from max cross-section (sets mm per mm)
     line_dir: int = 0             # klipper method: 0 = centred on the test position,
                                   # 1 / -1 = starts there, runs towards + / -
     smooth_time: float = 0.0      # 0 = the extruder's pressure_advance_smooth_time
-    mode: str = "fit"             # fit = PIRO-FIT (best square wave), edge = PIRO-EDGE
+    mode: str = "area"            # area = PIRO-AREA (equal areas), edge = PIRO-EDGE
+    area_window: float = 0.15     # s of force summed after every speed change (area)
+    max_values: int = 7           # area: most PA values one search tests
     apply: int = 0                # 1 = set the result as Klipper's PA (auto PA)
     fail_pa: float = 0.02         # applied when an auto run gives no usable result
     reuse_hours: float = 0.0      # auto: reuse a matching result this recent
@@ -100,15 +100,19 @@ class Settings:
             filament=config.get('filament', '').strip().strip('"\''),
             method=config.getchoice('method', {'push': 'push',
                                                'klipper': 'klipper'},
-                                    config.get('pa_method', 'klipper')),
+                                    config.get('pa_method', 'push')),
             move_axis=config.getchoice('move_axis', {'X': 'X', 'Y': 'Y',
                                                      'x': 'X', 'y': 'Y'}, 'Y'),
             test_accel=g('test_accel', 5000., above=0.),
             line_length=g('line_length', 0., minval=0.),
             line_dir=config.getint('line_dir', 0, minval=-1, maxval=1),
             smooth_time=g('smooth_time', 0., minval=0., maxval=0.1),
-            mode=config.getchoice('mode', {'fit': 'fit', 'edge': 'edge'},
-                                  config.get('pick', 'fit')),
+            mode=config.getchoice('mode', {'area': 'area', 'edge': 'edge',
+                                           'fit': 'area'},
+                                  config.get('pick', 'area')),
+            area_window=g('area_window', AREA_WINDOW, minval=0.05, maxval=0.5),
+            max_values=config.getint('max_values', 7, minval=3,
+                                     maxval=SEARCH_MAX_TRAINS),
             fail_pa=g('fail_pa', 0.02, minval=0., maxval=2.),
             reuse_hours=g('reuse_hours', 0., minval=0.))
 
@@ -132,6 +136,8 @@ class Settings:
         s.method = str(s.method).strip().lower()
         s.move_axis = str(s.move_axis).strip().upper()
         s.mode = str(s.mode).strip().lower()
+        if s.mode == 'fit':                  # older name
+            s.mode = 'area'
         s.validate()
         return s
 
@@ -172,8 +178,12 @@ class Settings:
             raise PAError("LINE_DIR must be -1, 0 or 1")
         if self.smooth_time and not 0.01 <= self.smooth_time <= 0.1:
             raise PAError("SMOOTH_TIME must be 0 (printer value) or 0.01 to 0.1")
-        if self.mode not in ('fit', 'edge'):
-            raise PAError("MODE must be fit or edge")
+        if self.mode not in ('area', 'edge'):
+            raise PAError("MODE must be area or edge")
+        if not 0.05 <= self.area_window <= 0.5:
+            raise PAError("AREA_WINDOW must be 0.05 to 0.5 s")
+        if not 3 <= self.max_values <= SEARCH_MAX_TRAINS:
+            raise PAError("MAX_VALUES must be 3 to %d" % SEARCH_MAX_TRAINS)
         if self.apply not in (0, 1) or self.restrict not in (0, 1):
             raise PAError("APPLY and RESTRICT must be 0 or 1")
         if not 0 <= self.fail_pa <= 2.0:
@@ -230,8 +240,13 @@ class Settings:
                 'length': d_f + d_a + d_b,
                 'cross_section': r * area}
 
-    @staticmethod
-    def charge_speed(pa, area, fast_flow, slow_flow, smooth):
-        """mm/s of filament the artificial PA charge move needs at `pa`."""
-        vf, vs = fast_flow / area, slow_flow / area
-        return (pa * (vf - vs) + (vf + vs) * smooth / 2.) / smooth
+    def push_plan(self, area, max_ratio=None, smooth=0.04, accel=None):
+        """Push method: filament speeds and the ramp of the line it copies
+        (TEST_ACCEL times filament per mm). -> dict"""
+        ln = self.line(area, max_ratio, smooth)
+        acc = accel or self.test_accel
+        vs, vf = self.slow_flow / area, self.fast_flow / area
+        ea = acc * ln['ratio']
+        return {'ratio': ln['ratio'], 'accel': acc, 'e_accel': ea,
+                'v_slow': vs, 'v_fast': vf, 'ramp': (vf - vs) / ea,
+                'ramp0': vs / ea}

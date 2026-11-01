@@ -50,8 +50,8 @@ class LoadCell(tb.LoadCell):
             if tt <= t: pa = v
         return pa
     def u_at(s, t0, t1):
-        """mean filament speed over [t0, t1): exact, so a 40 ms artificial
-        PA charge is not rounded to whole samples"""
+        """mean filament speed over [t0, t1): exact, so a 1 ms push piece
+        is not rounded to whole samples"""
         e = 0.0
         sp = s.p.speeds
         i = s.wi = min(getattr(s, 'wi', 0), len(sp))
@@ -61,7 +61,7 @@ class LoadCell(tb.LoadCell):
             if b > a: e += sp[i][2] * (b - a)
             i += 1
         s.wi = i
-        return e / (t1 - t0)
+        return (e + s.p.e_delta(t0, t1)) / (t1 - t0)
     def pump(s):
         p = s.p
         if not p.client: return

@@ -10,6 +10,7 @@ Force at the extruder is not exactly pressure at the nozzle, so treat these
 as indicators for comparing PA values, not as absolute truth."""
 import bisect
 import math
+import random
 
 PRE = 0.30          # seconds before the edge kept in the window
 GUARD = 0.04        # seconds trimmed before the next edge so it cannot leak in
@@ -240,7 +241,7 @@ def _se(vals):
     return math.sqrt(sum((v - m) ** 2 for v in vals) / (n - 1) / n)
 
 
-def edge_score(t, f, markers, smooth=0.04, skip_first=True):
+def edge_score(t, f, markers, smooth=0.04, skip_first=True, area_window=None):
     """One PA value -> dict or None (see the block comment above)."""
     if len(t) < 50:
         return None
@@ -311,9 +312,9 @@ def edge_score(t, f, markers, smooth=0.04, skip_first=True):
            'fall_curve': [round(fc[k], 4) for k in range(0, len(fc), stp)],
            'rise_curve': [round(rc[k], 4) for k in range(0, len(rc), stp)],
            'dt': round(stp / sps, 5), 'start': round(h + 0.005, 4)}
-    sh = shape_error(t, f, markers, skip_first, start=h + 0.005)
-    if sh:
-        out['shape'] = sh
+    ar = pulse_area(t, f, markers, skip_first, area_window or AREA_WINDOW)
+    if ar:
+        out['area'] = ar
     return out
 
 
@@ -466,9 +467,29 @@ def predict(pts, floor=0.):
     return round(p['pa'] - (-p['dip']) / SLOPE_PRIOR, 5)
 
 
-# -- PIRO-FIT: the PA whose response is closest to a square wave ----------
-SHAPE_WIN = 0.35        # s scored after every speed change
-SHAPE_BIN = 0.006       # s, bins of the overlaid step shape (page graph)
+# -- PIRO-AREA: the PA where the gap and the overshoot have the same area --
+#
+# Per pulse (pulse_area), for every pulse except the first:
+#   * three settled levels, each its own pulse's: the slow level before the
+#     speed-up, the fast level before the slow-down and the slow level at
+#     the end of the next slow leg (slow creep and drift cancel)
+#   * step = fast - mean of the two slow levels
+#   * rise: area between the force and the fast level over AREA_WINDOW s
+#     after the speed-up; fall: area between the slow level and the force
+#     after the slow-down. As ms of the full step: negative = the force
+#     lags (a gap, too little PA), positive = it overshoots / dips below
+#     (too much PA)
+#   * balance = rise + fall
+# Per run (piro_area):
+#   the balance grows in a straight line with PA. A least squares line
+#   through the mean balance of every PA value tested (PA 0 left out when 3
+#   or more others exist) crosses 0 at the answer.
+#   +- : the larger of a jackknife over the PA values and a bootstrap over
+#   the pulses.
+AREA_WINDOW = 0.15      # s summed after every speed change
+AREA_BIN = 0.006        # s, bins of the overlaid pulse shape (page graph)
+AREA_NEAR = 0.015       # values this close to the answer count as "beside it"
+BOOT = 500              # bootstrap resamples
 
 
 def _median_between(t, f, a, b):
@@ -476,15 +497,22 @@ def _median_between(t, f, a, b):
     return _median(f[lo:hi]) if hi - lo >= 3 else None
 
 
-def shape_error(t, f, markers, skip_first=True, win=SHAPE_WIN, start=0.025):
-    """How far one PA value's force is from a perfect square wave.
-    Every pulse: the settled fast level and the settled slow levels before
-    and after it (each pulse its own levels, so slow drift cancels); after
-    the speed-up the force should sit at the fast level, after the slow-down
-    at the next slow level. Residuals as a fraction of the step, over `win`
-    seconds after each change, from `start` (half the smoothing window +
-    5 ms: inside the window the speed is still changing). -> dict (ms = mean square, per pulse too) or
-    None. Too little PA: lag error; too much: overshoot / undershoot error."""
+def _integral(t, f, a, b):
+    """Integral of the straight lines between samples from a to b (exact
+    ends, so the result does not depend on where the samples fall)."""
+    i, j = bisect.bisect_right(t, a), bisect.bisect_left(t, b)
+    if i < 1 or j >= len(t) or j < i:
+        return _interp(t, f, a) * (b - a)
+    xs = [a] + t[i:j] + [b]
+    ys = [_interp(t, f, a)] + f[i:j] + [_interp(t, f, b)]
+    return sum(0.5 * (ys[k] + ys[k + 1]) * (xs[k + 1] - xs[k])
+               for k in range(len(xs) - 1))
+
+
+def pulse_area(t, f, markers, skip_first=True, win=AREA_WINDOW):
+    """Rise and fall area of every pulse of one PA value -> dict or None
+    (see the block comment above). Also the mean overlaid pulse shape
+    (0 = the level before the change, 1 = the level after) for the page."""
     if len(t) < 50:
         return None
     fasts = sorted((m for m in markers if m.get('name') == 'fast'),
@@ -493,9 +521,9 @@ def shape_error(t, f, markers, skip_first=True, win=SHAPE_WIN, start=0.025):
                    key=lambda m: m['t0'])
     if skip_first and len(fasts) > 1:
         fasts = fasts[1:]
-    nb = int(round((win + 0.05) / SHAPE_BIN))
+    nb = int(round((win + 0.05) / AREA_BIN))
     up_b, dn_b = [[0., 0] for _ in range(nb)], [[0., 0] for _ in range(nb)]
-    pulses, ss, n, bal_u, bal_d, steps = [], 0., 0, 0., 0., []
+    pulses = []
     for m in fasts:
         tu, td = m['t0'], m['t1']
         ps = [x for x in slows if x['t0'] < tu - 0.05]       # the one before
@@ -504,8 +532,8 @@ def shape_error(t, f, markers, skip_first=True, win=SHAPE_WIN, start=0.025):
             continue
         ps, ns = ps[-1], ns[0]
         t_f, t_p, t_n = td - tu, ps['t1'] - ps['t0'], ns['t1'] - ns['t0']
-        w = min(win, 0.6 * t_f, 0.6 * t_n)
-        if w < 0.1:
+        wu, wd = min(win, 0.6 * t_f), min(win, 0.6 * t_n)
+        if min(wu, wd) < 0.05:
             continue
         hi = _median_between(t, f, td - min(0.2, 0.35 * t_f), td - 0.02)
         lo_p = _median_between(t, f, tu - min(0.25, 0.3 * t_p), tu - 0.02)
@@ -516,182 +544,216 @@ def shape_error(t, f, markers, skip_first=True, win=SHAPE_WIN, start=0.025):
         step = hi - 0.5 * (lo_p + lo_n)
         if abs(step) < 1e-9:
             continue
-        p_ss, p_n = 0., 0
-        for t0, target, base, up in ((tu, hi, lo_p, True), (td, lo_n, hi, False)):
+        sums = []
+        for t0, w, target, base, up in ((tu, wu, hi, lo_p, True),
+                                        (td, wd, lo_n, hi, False)):
             a = bisect.bisect_left(t, t0 - 0.05)
             b = bisect.bisect_right(t, t0 + w)
             span = target - base
-            for i in range(a, b):
-                x = t[i] - t0
-                if abs(span) > 1e-9:            # overlaid shape, 0 -> 1
-                    k = int((x + 0.05) / SHAPE_BIN)
+            if abs(span) > 1e-9:                # overlaid shape, 0 -> 1
+                for i in range(a, b):
+                    k = int((t[i] - t0 + 0.05) / AREA_BIN)
                     if 0 <= k < nb:
                         bb = (up_b if up else dn_b)[k]
                         bb[0] += (f[i] - base) / span
                         bb[1] += 1
-                if x < start:
-                    continue
-                r = (f[i] - target) / step
-                p_ss += r * r
-                p_n += 1
-                if up:
-                    bal_u += r
-                else:
-                    bal_d += r
-        if p_n:
-            pulses.append(p_ss / p_n)
-            ss += p_ss
-            n += p_n
-            steps.append(step)
-    if not n:
+            area = _integral(t, f, t0, t0 + w) - target * w
+            sums.append(1000. * (area if up else -area) / step)
+        pulses.append([round(sums[0], 3), round(sums[1], 3)])
+    if not pulses:
         return None
     cur = lambda bins: [round(v / c, 4) if c else None for v, c in bins]
-    return {'ms': round(ss / n, 6), 'n': n, 'pulses': [round(x, 6) for x in pulses],
-            'balance': round((bal_u - bal_d) / n, 5),
-            'up': cur(up_b), 'down': cur(dn_b), 'bin': SHAPE_BIN, 't0': -0.05,
-            'win': round(win, 3), 'start': round(start, 4)}
+    n = len(pulses)
+    return {'balance': round(sum(r + d for r, d in pulses) / n, 3),
+            'rise': round(sum(p[0] for p in pulses) / n, 3),
+            'fall': round(sum(p[1] for p in pulses) / n, 3),
+            'pulses': pulses, 'n': n, 'win': round(win, 3),
+            'up': cur(up_b), 'down': cur(dn_b), 'bin': AREA_BIN, 't0': -0.05}
 
 
-def _quad_fit(xs, ys, ws):
-    """Weighted least squares y = a x^2 + b x + c -> (a, b, c) or None."""
-    S = [[0.] * 3 for _ in range(3)]
-    v = [0.] * 3
-    for x, y, w in zip(xs, ys, ws):
-        p = (x * x, x, 1.)
-        for i in range(3):
-            v[i] += w * p[i] * y
-            for j in range(3):
-                S[i][j] += w * p[i] * p[j]
-    # Gaussian elimination
-    M = [S[i] + [v[i]] for i in range(3)]
-    for c in range(3):
-        piv = max(range(c, 3), key=lambda r: abs(M[r][c]))
-        if abs(M[piv][c]) < 1e-18:
-            return None
-        M[c], M[piv] = M[piv], M[c]
-        for r in range(3):
-            if r != c:
-                k = M[r][c] / M[c][c]
-                M[r] = [M[r][j] - k * M[c][j] for j in range(4)]
-    return tuple(M[i][3] / M[i][i] for i in range(3))
+def _area_values(segments):
+    """{pa: [pulse balances]} pooled over repeats, and the order in which
+    the PA values were first tested -> (by, order, parts) where parts holds
+    the rise / fall pulses."""
+    by, parts, order = {}, {}, []
+    for sgm in sorted(segments, key=lambda x: x.get('idx', 0)):
+        ar = (sgm.get('piro') or {}).get('area')
+        if not ar or sgm.get('partial') or sgm.get('pa') is None:
+            continue
+        pa = round(sgm['pa'], 6)
+        if pa not in by:
+            order.append(pa)
+        by.setdefault(pa, []).extend(r + d for r, d in ar['pulses'])
+        parts.setdefault(pa, []).extend(ar['pulses'])
+    return by, order, parts
 
 
-def piro_fit(segments):
-    """PIRO-FIT: the PA with the least shape error. The force is linear in
-    PA, so the mean square error is exactly a parabola in PA: it is fitted
-    through every PA value tested (PA 0 left out when 3 or more others
-    exist) and its lowest point is the answer. Uncertainty: jackknife over
-    the PA values. -> dict (k None when there is no minimum)."""
-    by = {}
-    for sgm in segments:
-        sh = (sgm.get('piro') or {}).get('shape')
-        if sh and not sgm.get('partial') and sgm.get('pa') is not None:
-            e = by.setdefault(round(sgm['pa'], 6), [0., 0])
-            e[0] += sh['ms'] * sh['n']
-            e[1] += sh['n']
-    pts = [(pa, v / c, c) for pa, (v, c) in sorted(by.items()) if c]
-    out = {'k': None, 'points': [[pa, round(math.sqrt(ms), 4)] for pa, ms, _ in pts]}
-    use = [p for p in pts if p[0] > 0]
-    if len(use) < 3:
-        use = pts
-    if len(use) < 3:
-        out['why'] = 'Not enough PA values for the fit'
-        return out
+def _use(pas):
+    """PA values the line goes through: PA 0 left out when 3 or more
+    others exist (far below the answer, it only adds leverage)."""
+    pos = [p for p in pas if p > 0]
+    return sorted(pos if len(pos) >= 3 else pas)
 
-    def solve(rows):
-        q = _quad_fit([r[0] for r in rows], [r[1] for r in rows],
-                      [1.] * len(rows))
-        if not q or q[0] <= 0:
-            return None
-        return q
-    q = solve(use)
-    if q is None:
-        out['why'] = 'Shape error has no minimum in the tested range'
-        return out
-    a, b, c = q
-    k = -b / (2. * a)
-    ks = []
-    if len(use) >= 4:
+
+def _cross(xs, ys):
+    """Least squares line -> (zero crossing, slope, intercept) or None."""
+    n = len(xs)
+    if n < 2:
+        return None
+    mx, my = sum(xs) / n, sum(ys) / n
+    sxx = sum((x - mx) ** 2 for x in xs)
+    if sxx <= 1e-15:
+        return None
+    b = sum((x - mx) * (y - my) for x, y in zip(xs, ys)) / sxx
+    a = my - b * mx
+    if b <= 0:
+        return None
+    return -a / b, b, a
+
+
+def _avg(v):
+    return sum(v) / len(v)
+
+
+def area_tolerance(by, use, rng=None, boot=BOOT):
+    """+- of the crossing: max(jackknife over PA values, bootstrap over
+    pulses). -> (se, jackknife, bootstrap)."""
+    rng = rng or random.Random(1)
+    jk = None
+    if len(use) >= 3:
+        ks = []
         for i in range(len(use)):
-            qi = solve(use[:i] + use[i + 1:])
-            if qi:
-                ks.append(-qi[1] / (2. * qi[0]))
-    if len(ks) >= 3:
-        mk = sum(ks) / len(ks)
-        se = math.sqrt((len(ks) - 1) / float(len(ks)) *
-                       sum((x - mk) ** 2 for x in ks))
-    else:
-        se = 0.25 * (max(p[0] for p in use) - min(p[0] for p in use))
-    se = max(se, 0.0003)
-    lo, hi = min(p[0] for p in use), max(p[0] for p in use)
-    out.update(k=round(k, 5), se=round(se, 5), a=a, b=b, c=c,
-               rms_min=round(math.sqrt(max(c - b * b / (4. * a), 0.)), 4),
-               used=[p[0] for p in use],
-               above=sum(1 for p in use if p[0] > k),
-               below=sum(1 for p in use if p[0] < k),
-               # a little beyond the tested values is fine: the error is
-               # exactly a parabola, the extrapolation is short
-               inside=lo - max(0.003, 0.05 * k) <= k <= hi + max(0.003, 0.05 * k))
-    return out
+            sub = use[:i] + use[i + 1:]
+            c = _cross(sub, [_avg(by[p]) for p in sub])
+            if c:
+                ks.append(c[0])
+        if len(ks) >= 3:
+            mk = _avg(ks)
+            jk = math.sqrt((len(ks) - 1) / float(len(ks)) *
+                           sum((x - mk) ** 2 for x in ks))
+    bs = []
+    for _ in range(boot):
+        ys = []
+        for p in use:
+            v = by[p]
+            ys.append(_avg([v[rng.randrange(len(v))] for _ in v]))
+        c = _cross(use, ys)
+        if c:
+            bs.append(c[0])
+    bsd = None
+    if len(bs) >= 0.8 * boot:
+        mb = _avg(bs)
+        bsd = math.sqrt(sum((x - mb) ** 2 for x in bs) / (len(bs) - 1))
+    got = [x for x in (jk, bsd) if x is not None]
+    return (max(max(got), 0.0003) if got else None), jk, bsd
 
 
-def run_result(segments, pick='fit'):
-    """The run's answer from one rule: PIRO-FIT (default) or PIRO-EDGE.
-    Both are always computed and kept ('fit', 'edge_result'); the result
-    comes from the chosen rule only."""
-    out = piro_pick(segments)
-    ft = piro_fit(segments)
-    out['fit'] = {k: ft.get(k) for k in ('k', 'se', 'rms_min', 'points',
-                                         'used', 'above', 'below', 'inside',
-                                         'why', 'a', 'b', 'c')}
-    out['edge_result'] = {k: out.get(k) for k in ('pa', 'unc', 'grade', 'why')}
-    if pick != 'fit':
+def area_estimate(segments):
+    """Quick crossing for the search (no tolerance) -> PA or None."""
+    by, order, _ = _area_values(segments)
+    use = _use(list(by))
+    c = _cross(use, [_avg(by[p]) for p in use])
+    return c[0] if c else None
+
+
+def piro_area(segments, boot=BOOT):
+    """PIRO-AREA over everything measured -> dict (k None when there is no
+    usable crossing, with why). Also 'narrow': the answer and its +- after
+    2, 3, 4 ... PA values, in the order they were tested."""
+    by, order, parts = _area_values(segments)
+    out = {'k': None, 'warnings': [],
+           'points': [[pa, round(_avg(by[pa]), 3),
+                       round(_se(by[pa]) or 0., 3), len(by[pa])]
+                      for pa in sorted(by)]}
+    narrow = []
+    for n in range(2, len(order) + 1):
+        u = _use(order[:n])
+        c = _cross(u, [_avg(by[p]) for p in u])
+        if not c:
+            narrow.append({'n': n, 'pa': order[n - 1], 'k': None, 'se': None})
+            continue
+        se, _, _ = area_tolerance(by, u, random.Random(n), max(100, boot // 3))
+        narrow.append({'n': n, 'pa': order[n - 1], 'k': round(c[0], 5),
+                       'se': _r(se, 5)})
+    out['narrow'] = narrow
+    use = _use(list(by))
+    out['used'] = use
+    if len(use) < 3:
+        out['why'] = 'Not enough PA values for the area line'
         return out
-    out.update(method='PIRO-FIT', pa=None, unc=None, grade=None, warnings=[])
-    if ft.get('k') is None:
-        out['why'] = ft.get('why') or 'No fit'
+    ys = [_avg(by[p]) for p in use]
+    c = _cross(use, ys)
+    if not c:
+        out['why'] = 'Area balance does not grow with PA'
         return out
-    k, se = ft['k'], ft['se']
-    if not ft.get('inside'):
-        out['why'] = 'Shape error minimum %.4f outside the tested values' % k
+    k, b, a = c
+    my = _avg(ys)
+    sst = sum((y - my) ** 2 for y in ys)
+    r2 = 1. - sum((y - a - b * x) ** 2 for x, y in zip(use, ys)) / sst \
+        if sst > 0 else 1.
+    out.update(line={'a': round(a, 4), 'b': round(b, 3)}, r2=round(r2, 4))
+    lo, hi = min(use), max(use)
+    m = max(0.003, 0.05 * abs(k))
+    if not lo - m <= k <= hi + m:
+        out['why'] = 'Area crossing %.4f outside the tested values' % k
         return out
     if k <= 0:
-        out['why'] = 'Shape error minimum at or below 0'
+        out['why'] = 'Area crossing at or below 0'
         return out
+    se, jk, bsd = area_tolerance(by, use, random.Random(1), boot)
     W = out['warnings']
-    if ft['above'] < 1 or ft['below'] < 1:
-        W.append('Fit not bracketed by tested values')
-    lvl = 0 if se <= max(0.0015, 0.04 * k) else \
-        1 if se <= max(0.003, 0.08 * k) else 2
-    lvl = min(2, lvl + len(W))
-    out.update(pa=round(k, 4), unc=round(se, 4),
-               grade=('good', 'fair', 'poor')[lvl],
-               why='Shape error lowest at %.4f (parabola through %d PA values)'
-               % (k, len(ft['used'])))
+    if r2 < 0.95:
+        W.append('Area line not straight (R² %.2f)' % r2)
+    above = sum(1 for p in by if k < p <= k + AREA_NEAR)
+    below = sum(1 for p in by if k - AREA_NEAR <= p < k)
+    if above < 2 or below < 2:
+        W.append('Fewer than 2 values within %.3f %s the result'
+                 % (AREA_NEAR, 'on each side of' if max(above, below) < 2
+                    else 'above' if above < 2 else 'below'))
+    # the two edges on their own (checked here, not shown)
+    sides = []
+    for j in (0, 1):
+        cs = _cross(use, [_avg([q[j] for q in parts[p]]) for p in use])
+        sides.append(cs[0] if cs else None)
+    if None not in sides and abs(sides[0] - sides[1]) > max(0.006, 0.1 * k):
+        W.append('Speed-up and slow-down areas disagree. Check pulse settings')
+    out.update(k=round(k, 5), se=round(se, 5),
+               jackknife=_r(jk, 5), bootstrap=_r(bsd, 5),
+               above=above, below=below)
     return out
 
 
-def klipper_k(k_art, smooth):
-    """Artificial PA (charge spread evenly over the smoothing window while
-    the speed jumps to the middle flow) needs a slightly larger K than
-    Klipper's own smoothed PA, which smooths the speed step and the PA term
-    with the same window. For a first-order melt lag tau the artificial
-    optimum is K_art = tau * x * coth(x), x = (smooth / 2) / tau, while
-    Klipper's is K = tau. Returns the Klipper K for a measured K_art."""
-    if not k_art or k_art <= 0 or not smooth:
-        return k_art
-    h, k = smooth / 2., k_art
-    for _ in range(40):
-        x = h / k
-        k = k_art / (x / math.tanh(x))
-    return k
+def run_result(segments, mode='area'):
+    """The run's answer from one rule: PIRO-AREA (default) or PIRO-EDGE.
+    Both are always computed and kept ('area', 'edge_result'); the result
+    comes from the chosen rule only."""
+    out = piro_pick(segments)
+    ar = piro_area(segments)
+    out['area'] = ar
+    out['edge_result'] = {k: out.get(k) for k in ('pa', 'unc', 'grade', 'why',
+                                                  'warnings')}
+    if mode == 'edge':
+        return out
+    out.update(method='PIRO-AREA', pa=None, unc=None, grade=None,
+               warnings=list(ar['warnings']))
+    if ar.get('k') is None:
+        out['why'] = ar.get('why') or 'No area crossing'
+        return out
+    k, se = ar['k'], ar['se']
+    lvl = 0 if se <= max(0.0015, 0.04 * k) else \
+        1 if se <= max(0.003, 0.08 * k) else 2
+    lvl = min(2, lvl + len(out['warnings']))
+    out.update(pa=round(k, 4), unc=round(se, 4),
+               grade=('good', 'fair', 'poor')[lvl],
+               why='Area balance crosses 0 at %.4f (line through %d PA values)'
+               % (k, len(ar['used'])))
+    return out
 
 
 def piro_pick(segments, smooth=None):
     """PIRO-EDGE: the highest PA without a dip after the slow-down, as
-    measured (`smooth` is accepted for older callers and ignored)."""
-    """The run's answer. Dict with pa, unc, grade, why, warnings, edges and
-    the points used (for the History graphs)."""
+    measured (`smooth` is accepted for older callers and ignored). Dict
+    with pa, unc, grade, why, warnings, edges and the points used."""
     pts = pool(segments)
     out = {'method': 'PIRO-EDGE', 'pa': None, 'unc': None, 'grade': None,
            'points': [{k: p[k] for k in ('pa', 'idx', 'times', 'n', 'dip',
