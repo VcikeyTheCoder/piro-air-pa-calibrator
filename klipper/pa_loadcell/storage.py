@@ -164,6 +164,11 @@ class RunStore:
         meta['search'] = search
         _atomic(self._meta_path(rid), meta)
 
+    def update_meta(self, rid, values):
+        meta = _load(self._meta_path(rid))
+        meta.update(values)
+        _atomic(self._meta_path(rid), meta)
+
     def update_auto(self, rid, values):
         """Auto PA record of a run (applied value, conditions, reuse)."""
         meta = _load(self._meta_path(rid))

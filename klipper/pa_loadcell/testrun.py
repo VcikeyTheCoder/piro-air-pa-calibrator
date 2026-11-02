@@ -52,7 +52,9 @@ APPLY=1 (auto): run() inside auto(), the result set as Klipper's PA; a poor
 result, a failure or a cancel applies FAIL_PA and never raises, so a print
 start goes on. REUSE_HOURS: the last auto run is reused when it is recent and
 matches (filament, target temperature, wall flow, method, smooth time).
-RESTRICT=0: the test runs where the nozzle is, no Z check, no moves."""
+RESTRICT=0: the test runs where the nozzle is, no Z check, no moves.
+PRIME_STEADY=1: after PRIME_LENGTH the prime goes on until the pushing force
+stops rising (empty nozzle), at most PRIME_MAX mm."""
 import collections
 import math
 import time
@@ -315,7 +317,9 @@ class PATestRunner:
             self._set_klipper_pa(k0)
             if klip:
                 self._set_limits(s, orig_lim)
-            self._prime(s, area, ext)
+            self._prime(s, area, ext, col, gcmd)
+            if self.prime_info:
+                self.store.update_meta(self.run_id, {'prime': self.prime_info})
             if s.prime_rest > 0:
                 self.toolhead.dwell(s.prime_rest)
             if klip:
@@ -466,24 +470,69 @@ class PATestRunner:
     def legs_since(self, seq):
         return [list(x) for x in self.legs if x[0] > seq]
 
-    def _prime(self, s, area, ext):
+    def _prime(self, s, area, ext, col=None, gcmd=None):
         """Push PRIME_LENGTH mm at PRIME_FLOW, extrude-only (PA does not act
         and does not matter here), split into pieces that respect
-        max_extrude_only_distance. The first PA value starts right after."""
-        if s.prime_length <= 0:
+        max_extrude_only_distance. With PRIME_STEADY=1 it then keeps
+        pushing in 1 s chunks, watching the load cell, until the pushing
+        force stops rising (two chunks in a row within 3 % of the last, or
+        the noise), at most PRIME_MAX mm in all: an empty nozzle fills up
+        before PA 0. The first PA value starts right after."""
+        self.prime_mm, self.prime_info = 0., None
+        steady = bool(s.prime_steady) and col is not None
+        if s.prime_length <= 0 and not steady:
             return
         self.phase = 'prime'
+        th = self.toolhead
         v = s.prime_flow / area                       # mm/s of filament
         limit = getattr(ext, 'max_e_dist', None) or 50.
         piece = max(1., min(limit * 0.9, 25.))
+        if steady:                  # force at rest: the zero for the levels
+            b0 = th.get_last_move_time()
+            th.dwell(0.4)
+            b1 = th.get_last_move_time()
+
+        def push(e):
+            t0 = th.get_last_move_time()
+            self._g("G1 E%.5f F%.4f" % (e, v * 60.))
+            t1 = th.get_last_move_time()
+            self._log_leg(t0, t1, s.prime_flow, 'prime')
+            self.prime_mm += e
+            return t0, t1
         left = s.prime_length
         while left > 1e-6 and not self.cancel_flag:
             e = min(piece, left)
-            th = self.toolhead
-            t0 = th.get_last_move_time()
-            self._g("G1 E%.5f F%.4f" % (e, v * 60.))
-            self._log_leg(t0, th.get_last_move_time(), s.prime_flow, 'prime')
+            push(e)
             left -= e
+        if not steady or self.cancel_flag:
+            return
+        chunk = min(max(2., v * 1.0), piece)          # about 1 s of filament
+        smp = self._collect(col, b0 + 0.1, b1)
+        base = sum(x[1] for x in smp) / len(smp)
+        levels, done = [], False
+        pend = [push(chunk)] if self.prime_mm + chunk <= s.prime_max + 1e-6 \
+            else []
+        while pend and not self.cancel_flag:
+            if self.prime_mm + chunk <= s.prime_max + 1e-6:
+                pend.append(push(chunk))              # keep the extruder busy
+            t0, t1 = pend.pop(0)
+            smp = self._collect(col, t0 + 0.3 * (t1 - t0), t1)
+            f = [x[1] for x in smp]
+            m = sum(f) / len(f)
+            sd = math.sqrt(sum((x - m) ** 2 for x in f) / max(1, len(f) - 1))
+            levels.append(abs(m - base))
+            tol = max(0.03 * levels[-1], 3. * sd / math.sqrt(len(f)))
+            if len(levels) >= 3 and all(
+                    abs(levels[-i] - levels[-i - 1]) <= tol for i in (1, 2)):
+                done = True
+                break
+        self.prime_info = {'mm': round(self.prime_mm, 1), 'steady': done,
+                           'levels': [round(x, 1) for x in levels]}
+        if gcmd is not None:
+            gcmd.respond_info(
+                "PIRO-EDGE: prime %.0f mm, %s" % (
+                    self.prime_mm, "pressure steady" if done else
+                    "PRIME_MAX reached, pressure still rising"))
 
     def _set_klipper_pa(self, value):
         self._g("SET_PRESSURE_ADVANCE ADVANCE=%.6f" % value)
@@ -519,7 +568,7 @@ class PATestRunner:
         col, s, area, sm, ln = ctx
         th = self.toolhead
         fil = s.per_pa_mm(area)
-        if self.used + fil > s.max_filament - s.prime_length + 1e-6:
+        if self.used + fil > s.max_filament - getattr(self, 'prime_mm', s.prime_length) + 1e-6:
             raise PAError("Stopped at MAX_FILAMENT %.0f mm" % s.max_filament)
         self.used += fil
         self.current_pa = pa
@@ -803,7 +852,7 @@ class PATestRunner:
                     raise _Cancelled()
                 raise PAError("No pressure step at PA %.4f. Check filament "
                               "and nozzle temperature" % k)
-            segs.append({'idx': idx, 'pa': k, 'piro': sc})
+            segs.append({'idx': idx, 'pa': k, 'piro': sc, 'stage': stage})
             p = point(k)
             lim = max(p['limit'], st['floor'])
             dips = too_high(p)
@@ -951,7 +1000,9 @@ class PATestRunner:
                               % (k - s.upper_step))
         top = k
         near = analysis.AREA_NEAR
-        while len(segs) < s.max_values:
+        # MAX_VALUES counts PA values: repeats of PA 0 do not use it up
+        count = lambda: len({round(g['pa'], 6) for g in segs})
+        while count() < s.max_values:
             est = analysis.area_estimate(segs)
             if est is None:
                 break

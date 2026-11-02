@@ -79,7 +79,7 @@ variables at the top of each macro. Details:
 
 ## Example
 
-Run 42 at 240 °C, analysed as PIRO-AREA: 0.0657 ± 0.0007, good. The no-dip edge is 0.0596.
+Run 42 at 240 °C, analysed as PIRO-AREA: 0.0659 ± 0.0010, good. The no-dip edge is 0.0596.
 
 ![Result](docs/images/answer.png)
 

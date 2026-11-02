@@ -481,9 +481,10 @@ def predict(pts, floor=0.):
 #     (too much PA)
 #   * balance = rise + fall
 # Per run (piro_area):
-#   the balance grows in a straight line with PA. A least squares line
-#   through the mean balance of every PA value tested (PA 0 left out when 3
-#   or more others exist) crosses 0 at the answer.
+#   near the answer the balance grows in a straight line with PA. A least
+#   squares line through the mean balance of the values tested beside the
+#   answer crosses 0 at the result. The aiming values (PA 0, PA_MAX) are
+#   left out: far from the answer the balance bends (_select).
 #   +- : the larger of a jackknife over the PA values and a bootstrap over
 #   the pulses.
 AREA_WINDOW = 0.15      # s summed after every speed change
@@ -589,10 +590,42 @@ def _area_values(segments):
 
 
 def _use(pas):
-    """PA values the line goes through: PA 0 left out when 3 or more
-    others exist (far below the answer, it only adds leverage)."""
+    """Fallback: PA 0 left out when 3 or more others exist."""
     pos = [p for p in pas if p > 0]
     return sorted(pos if len(pos) >= 3 else pas)
+
+
+AIM_STAGES = ('reference', 'upper')
+
+
+def _aims(segments):
+    """PA values tested only to aim the search: PA 0 and PA_MAX (plus any
+    upper steps)."""
+    st = {}
+    for sgm in segments:
+        if sgm.get('pa') is not None:
+            st.setdefault(round(sgm['pa'], 6), set()).add(sgm.get('stage'))
+    return {pa for pa, v in st.items() if v and v <= set(AIM_STAGES)}
+
+
+def _select(by, pas, aims):
+    """The values the result's line goes through. Far from the answer the
+    balance bends (at high flow the overshoot grows more slowly at high
+    PA), so the aiming values (PA 0, PA_MAX) are left out unless one sits
+    within AREA_NEAR of the crossing. Fewer than 3 left, or no stages
+    stored (older runs): every value but PA 0. -> (values, aimed)"""
+    base = _use(pas)
+    if not aims or not any(p in aims for p in pas):
+        return base, False
+    c = _cross(base, [_avg(by[p]) for p in base])
+    keep = {p for p in pas if p not in aims}
+    if c:
+        keep |= {p for p in pas if p in aims and p > 0
+                 and abs(p - c[0]) <= AREA_NEAR}
+    keep = sorted(keep)
+    if len(keep) >= 3:
+        return keep, False
+    return base, True
 
 
 def _cross(xs, ys):
@@ -651,7 +684,7 @@ def area_tolerance(by, use, rng=None, boot=BOOT):
 def area_estimate(segments):
     """Quick crossing for the search (no tolerance) -> PA or None."""
     by, order, _ = _area_values(segments)
-    use = _use(list(by))
+    use, _ = _select(by, list(by), _aims(segments))
     c = _cross(use, [_avg(by[p]) for p in use])
     return c[0] if c else None
 
@@ -659,24 +692,27 @@ def area_estimate(segments):
 def piro_area(segments, boot=BOOT):
     """PIRO-AREA over everything measured -> dict (k None when there is no
     usable crossing, with why). Also 'narrow': the answer and its +- after
-    2, 3, 4 ... PA values, in the order they were tested."""
+    2, 3, 4 ... PA values, in the order they were tested ('early': the
+    aiming values were still needed for the line)."""
     by, order, parts = _area_values(segments)
+    aims = _aims(segments)
     out = {'k': None, 'warnings': [],
            'points': [[pa, round(_avg(by[pa]), 3),
                        round(_se(by[pa]) or 0., 3), len(by[pa])]
                       for pa in sorted(by)]}
     narrow = []
     for n in range(2, len(order) + 1):
-        u = _use(order[:n])
+        u, early = _select(by, order[:n], aims)
         c = _cross(u, [_avg(by[p]) for p in u])
         if not c:
-            narrow.append({'n': n, 'pa': order[n - 1], 'k': None, 'se': None})
+            narrow.append({'n': n, 'pa': order[n - 1], 'k': None, 'se': None,
+                           'early': early})
             continue
         se, _, _ = area_tolerance(by, u, random.Random(n), max(100, boot // 3))
         narrow.append({'n': n, 'pa': order[n - 1], 'k': round(c[0], 5),
-                       'se': _r(se, 5)})
+                       'se': _r(se, 5), 'early': early})
     out['narrow'] = narrow
-    use = _use(list(by))
+    use, _ = _select(by, list(by), aims)
     out['used'] = use
     if len(use) < 3:
         out['why'] = 'Not enough PA values for the area line'

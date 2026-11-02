@@ -184,7 +184,7 @@ class LoadCell:
         p = s.p
         if not p.client: return
         n0 = int((p.sent - 1000) * 320)
-        n1 = int((p.pt + 0.3 - 1000) * 320)  # stream runs past the last move
+        n1 = int((p.pt - 1000) * 320) + 2  # stream runs past the last move
         if n1 <= n0: return
         data = []
         for i in range(n0, n1):
@@ -218,7 +218,7 @@ class LagCell(LoadCell):
     def pump(s):
         p = s.p
         if not p.client: return
-        n0, n1 = int((p.sent - 1000) * 320), int((p.pt + 0.3 - 1000) * 320)
+        n0, n1 = int((p.sent - 1000) * 320), int((p.pt - 1000) * 320) + 2
         if n1 <= n0: return
         data, dt = [], 1 / 320.0
         import math
@@ -231,6 +231,29 @@ class LagCell(LoadCell):
         p.sent = 1000 + n1 / 320.0
         if not p.client({'data': data}): p.client = None
 
+class FillCell(LagCell):
+    """A nozzle that starts nearly empty: the pushing force only reaches
+    its full size after `fill_mm` of filament (Run 64)."""
+    def __init__(s, p, tau, fill_mm, start=0.05):
+        super().__init__(p, tau); s.fill_mm, s.start, s.cum = fill_mm, start, 0.0
+    def pump(s):
+        p = s.p
+        if not p.client: return
+        n0, n1 = int((p.sent - 1000) * 320), int((p.pt - 1000) * 320) + 2
+        if n1 <= n0: return
+        data, dt = [], 1 / 320.0
+        k = math.exp(-dt / s.tau)
+        for i in range(n0, n1):
+            t = 1000 + i / 320.0
+            u = s.vel(t - dt, t)
+            s.cum += u * dt
+            s.q = u + (s.q - u) * k
+            fill = min(1.0, s.start + (1 - s.start) * s.cum / s.fill_mm)
+            g = 20.0 * s.q * fill + s.rng.gauss(0, s.noise)
+            data.append((t, g, g * 100, 0))
+        p.sent = 1000 + n1 / 320.0
+        if not p.client({'data': data}): p.client = None
+
 class Gcmd:
     def __init__(s): s.out = []
     def respond_info(s, m): s.out.append(m)
@@ -239,9 +262,9 @@ class Gcmd:
 from pa_loadcell import analysis
 
 
-def make(temp=210.0, z=20.0, tau=None, noise=0.15):
+def make(temp=210.0, z=20.0, tau=None, noise=0.15, fill=None):
     p = Printer(temp, z)
-    if tau: p.objs['load_cell'] = LagCell(p, tau, noise)
+    if tau: p.objs['load_cell'] = FillCell(p, tau, fill) if fill else LagCell(p, tau, noise)
     bus = SampleBus(p, 'load_cell', 60000, 15.0)
     store = RunStore(tempfile.mkdtemp())
     lim = {'min_temp': 200, 'required_z': 20, 'z_tol': 0.5, 'timeout': 3}
@@ -818,6 +841,62 @@ def test_piro_area_rule():
         sg['piro']['area']['pulses'] = [[r + 300 * (sg['pa'] - 0.062) + 3, d - 300 * (sg['pa'] - 0.062) - 3]
                                         for r, d in sg['piro']['area']['pulses']]
     assert any('disagree' in w for w in analysis.piro_area(segs)['warnings'])
+
+def test_area_leaves_out_aiming_values():
+    """At high flow the balance bends far from the answer: the result uses
+    only the values beside it, not PA 0 / PA_MAX (Runs 61, 62)"""
+    rows = [(0.0, -93.7, 'reference'), (0.1, 56.0, 'upper'), (0.0655, 24.9, 'area'),
+            (0.055, 0.5, 'area'), (0.047, -16.7, 'area'), (0.0515, -3.8, 'area')]
+    segs = _area_segs([(pa, b) for pa, b, _ in rows], noise=0.5)
+    for sg, (_, _, st) in zip(segs, rows): sg['stage'] = st
+    ar = analysis.piro_area(segs)
+    assert ar['used'] == [0.047, 0.0515, 0.055, 0.0655], ar['used']
+    assert abs(ar['k'] - 0.0542) < 0.0005 and not ar['warnings'], ar
+    plain = analysis.piro_area([{k: v for k, v in sg.items() if k != 'stage'} for sg in segs])
+    assert 0.1 in plain['used'] and plain['r2'] < ar['r2']   # older runs: as before
+    nar = ar['narrow']
+    assert [x['early'] for x in nar] == [True, True, True, False, False], nar
+    # an aiming value close to the answer stays in the line
+    rows2 = [(0.0, -90, 'reference'), (0.1, 6, 'upper'), (0.09, -6, 'area'),
+             (0.085, -12, 'area'), (0.105, 12, 'area')]
+    segs2 = _area_segs([(pa, b) for pa, b, _ in rows2])
+    for sg, (_, _, st) in zip(segs2, rows2): sg['stage'] = st
+    assert 0.1 in analysis.piro_area(segs2)['used']
+
+def test_empty_nozzle_prime_steady():
+    """Run 64: a nearly empty nozzle. Without PRIME_STEADY PA 0 is repeated,
+    but the repeats no longer use up MAX_VALUES. With it the prime goes on
+    until the force stops rising and PA 0 is measured once."""
+    p, bus, store, r = make(tau=0.045, fill=110.)
+    m = store.get_run(r.run(Gcmd(), S(cycles=6, max_filament=1000)))
+    st = [x['stage'] for x in m['search']['steps']]
+    pas = {x['pa'] for x in m['segments']}
+    assert st.count('reference') >= 2, st
+    assert len(pas) == 7 or m['analysis']['result']['area']['above'] >= 2, (st, pas)
+    assert 'prime' not in m                                   # off by default
+    p, bus, store, r = make(tau=0.045, fill=70.)
+    g = Gcmd()
+    m = store.get_run(r.run(g, S(cycles=6, max_filament=1000, prime_steady=1)))
+    st = [x['stage'] for x in m['search']['steps']]
+    assert st.count('reference') == 1, st
+    pr = m['prime']
+    assert pr['steady'] and 60 <= pr['mm'] <= 100, pr
+    assert any('pressure steady' in x for x in g.out), g.out
+    assert abs(m['analysis']['result']['pa'] - 0.049) < 0.004, m['analysis']['result']['pa']
+    # a full nozzle: only a few chunks after the 20 mm
+    p, bus, store, r = make(tau=0.045)
+    pr = store.get_run(r.run(Gcmd(), S(cycles=6, max_filament=1000, prime_steady=1)))['prime']
+    assert pr['steady'] and pr['mm'] <= 45, pr
+    # never steady: stops at PRIME_MAX and says so
+    p, bus, store, r = make(tau=0.045, fill=400.)
+    g = Gcmd()
+    m = store.get_run(r.run(g, S(cycles=6, max_filament=1000, prime_steady=1, prime_max=50)))
+    assert not m['prime']['steady'] and m['prime']['mm'] <= 50.01, m['prime']
+    assert any('PRIME_MAX reached' in x for x in g.out), g.out
+    for bad in (dict(prime_steady=2), dict(prime_steady=1, prime_length=30, prime_max=20)):
+        try: S(**bad); assert False, bad
+        except PAError: pass
+    assert S(prime_steady=1).filament_mm(Extruder.filament_area) > S().filament_mm(Extruder.filament_area)
 
 def test_area_search_stops_at_max_values():
     p, bus, store, r = make(tau=0.045)

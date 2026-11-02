@@ -14,6 +14,7 @@ EDITABLE = {
     'slow_flow': 'slow_flow', 'slow_time': 'slow_time',
     'prime_length': 'prime_length', 'prime_flow': 'prime_flow',
     'prime_rest': 'prime_rest', 'rest_time': 'rest_time',
+    'prime_steady': 'prime_steady', 'prime_max': 'prime_max',
     'max_filament': 'max_filament', 'skip_first': 'skip_first_pulse',
     'park_x': 'park_x', 'park_y': 'park_y', 'test_x': 'test_x',
     'test_y': 'test_y', 'filament': 'filament', 'method': 'method',

@@ -51,6 +51,8 @@ class Settings:
     prime_length: float = 20.0    # mm of filament pushed before the first PA
     prime_flow: float = 12.0      # mm^3/s during the prime
     prime_rest: float = 1.0       # s pause after the prime
+    prime_steady: int = 0         # 1 = keep priming until the pushing force stops rising
+    prime_max: float = 100.0      # mm, most filament the prime may use with prime_steady
     rest_time: float = 0.3        # s pause before every PA value
     max_filament: float = 400.0   # mm, refuse a test that could use more
     skip_first: int = 1           # 1 = ignore the first pulse of every PA
@@ -91,6 +93,8 @@ class Settings:
             prime_length=g('prime_length', 20., minval=0.),
             prime_flow=g('prime_flow', 12., above=0.),
             prime_rest=g('prime_rest', 1., minval=0.),
+            prime_steady=config.getint('prime_steady', 0, minval=0, maxval=1),
+            prime_max=g('prime_max', 100., above=0.),
             rest_time=g('rest_time', 0.3, minval=0.),
             max_filament=g('max_filament', 400., above=0.),
             skip_first=config.getint('skip_first_pulse', 1, minval=0,
@@ -162,6 +166,12 @@ class Settings:
             raise PAError("PRIME_LENGTH must be >= 0")
         if self.prime_flow <= 0:
             raise PAError("PRIME_FLOW must be > 0")
+        if self.prime_steady not in (0, 1):
+            raise PAError("PRIME_STEADY must be 0 or 1")
+        if self.prime_steady and not \
+                max(self.prime_length, 1.) <= self.prime_max <= 500:
+            raise PAError("PRIME_MAX must be at least PRIME_LENGTH and at "
+                          "most 500 mm")
         if self.prime_rest < 0 or self.rest_time < 0:
             raise PAError("PRIME_REST and REST_TIME must be >= 0")
         if self.skip_first not in (0, 1):
@@ -197,6 +207,11 @@ class Settings:
         return (self.fast_flow / area * self.fast_time,
                 self.slow_flow / area * self.slow_time)
 
+    def prime_mm(self):
+        """Most filament the prime can use."""
+        return max(self.prime_length, self.prime_max) if self.prime_steady \
+            else self.prime_length
+
     def prime_time(self, area):
         return self.prime_length * area / self.prime_flow
 
@@ -205,7 +220,7 @@ class Settings:
         return slow + self.cycles * (fast + slow)      # lead-in + pulses
 
     def filament_mm(self, area, trains=SEARCH_MAX_TRAINS):
-        return self.per_pa_mm(area) * trains + self.prime_length
+        return self.per_pa_mm(area) * trains + self.prime_mm()
 
     def per_pa_s(self):
         return self.rest_time + self.slow_time + \
