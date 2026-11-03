@@ -485,8 +485,8 @@ def predict(pts, floor=0.):
 #   squares line through the mean balance of the values tested beside the
 #   answer crosses 0 at the result. The aiming values (PA 0, PA_MAX) are
 #   left out: far from the answer the balance bends (_select).
-#   +- : the larger of a jackknife over the PA values and a bootstrap over
-#   the pulses.
+#   +- : the larger of how far the line can move with the pulse noise
+#   (area_tolerance) and a bootstrap over the pulses.
 AREA_WINDOW = 0.15      # s summed after every speed change
 AREA_BIN = 0.006        # s, bins of the overlaid pulse shape (page graph)
 AREA_NEAR = 0.015       # values this close to the answer count as "beside it"
@@ -648,37 +648,60 @@ def _avg(v):
     return sum(v) / len(v)
 
 
+CHI99 = {1: 6.63, 2: 9.21, 3: 11.34, 4: 13.28, 5: 15.09, 6: 16.81, 7: 18.48,
+         8: 20.09, 9: 21.67, 10: 23.21, 11: 24.72, 12: 26.22}
+
+
 def area_tolerance(by, use, rng=None, boot=BOOT):
-    """+- of the crossing: max(jackknife over PA values, bootstrap over
-    pulses). -> (se, jackknife, bootstrap)."""
+    """+- of the crossing of the (equal weight) line through `use`:
+      fit        how far the line can move: the noise of one value's mean
+                 (pooled from the pulses of all values, or how far the
+                 points miss the line when that is larger), through the
+                 line's slope
+      bootstrap  the pulses of every value drawn again at random
+    +- = the larger, at least 0.0003. Also chi2 (how far the points miss
+    the line against their own pulse noise) and influence (the largest
+    move of the result when one value is left out, from 4 values).
+    -> dict or None"""
     rng = rng or random.Random(1)
-    jk = None
-    if len(use) >= 3:
-        ks = []
-        for i in range(len(use)):
-            sub = use[:i] + use[i + 1:]
-            c = _cross(sub, [_avg(by[p]) for p in sub])
-            if c:
-                ks.append(c[0])
-        if len(ks) >= 3:
-            mk = _avg(ks)
-            jk = math.sqrt((len(ks) - 1) / float(len(ks)) *
-                           sum((x - mk) ** 2 for x in ks))
+    n = len(use)
+    ys = [_avg(by[p]) for p in use]
+    c = _cross(use, ys)
+    if not c:
+        return None
+    k, b, a = c
+    ses = [_se(by[p]) for p in use]
+    known = [x for x in ses if x]
+    pool = math.sqrt(_avg([x * x for x in known])) if known else 1.
+    ses = [max(x or pool, 0.5) for x in ses]
+    res = [y - a - b * x for x, y in zip(use, ys)]
+    mx = _avg(use)
+    sxx = sum((x - mx) ** 2 for x in use)
+    sig = math.sqrt(_avg([x * x for x in ses]))
+    if n > 2:
+        sig = max(sig, math.sqrt(sum(r * r for r in res) / (n - 2)))
+    fit = sig * math.sqrt(1. / n + (k - mx) ** 2 / sxx) / abs(b)
+    chi2 = sum((r / e) ** 2 for r, e in zip(res, ses))
     bs = []
     for _ in range(boot):
-        ys = []
-        for p in use:
-            v = by[p]
-            ys.append(_avg([v[rng.randrange(len(v))] for _ in v]))
-        c = _cross(use, ys)
-        if c:
-            bs.append(c[0])
+        cc = _cross(use, [_avg([by[p][rng.randrange(len(by[p]))]
+                                for _ in by[p]]) for p in use])
+        if cc:
+            bs.append(cc[0])
     bsd = None
     if len(bs) >= 0.8 * boot:
         mb = _avg(bs)
         bsd = math.sqrt(sum((x - mb) ** 2 for x in bs) / (len(bs) - 1))
-    got = [x for x in (jk, bsd) if x is not None]
-    return (max(max(got), 0.0003) if got else None), jk, bsd
+    infl = None
+    if n >= 4:
+        moves = []
+        for i in range(n):
+            cc = _cross(use[:i] + use[i + 1:], ys[:i] + ys[i + 1:])
+            if cc:
+                moves.append(abs(cc[0] - k))
+        infl = max(moves) if moves else None
+    return {'se': max(fit, bsd or 0., 0.0003), 'fit': fit, 'bootstrap': bsd,
+            'chi2': chi2, 'dof': n - 2, 'influence': infl}
 
 
 def area_estimate(segments):
@@ -708,9 +731,9 @@ def piro_area(segments, boot=BOOT):
             narrow.append({'n': n, 'pa': order[n - 1], 'k': None, 'se': None,
                            'early': early})
             continue
-        se, _, _ = area_tolerance(by, u, random.Random(n), max(100, boot // 3))
+        t = area_tolerance(by, u, random.Random(n), max(100, boot // 3))
         narrow.append({'n': n, 'pa': order[n - 1], 'k': round(c[0], 5),
-                       'se': _r(se, 5), 'early': early})
+                       'se': _r(t['se'] if t else None, 5), 'early': early})
     out['narrow'] = narrow
     use, _ = _select(by, list(by), aims)
     out['used'] = use
@@ -736,10 +759,23 @@ def piro_area(segments, boot=BOOT):
     if k <= 0:
         out['why'] = 'Area crossing at or below 0'
         return out
-    se, jk, bsd = area_tolerance(by, use, random.Random(1), boot)
+    t = area_tolerance(by, use, random.Random(1), boot)
+    se = t['se']
     W = out['warnings']
-    if r2 < 0.95:
+    # not straight: R² low AND the points miss the line by more than their
+    # own pulse noise explains (a couple of noisy pulses alone do not count)
+    if r2 < 0.95 and t['dof'] > 0 and t['chi2'] > CHI99.get(t['dof'], 1e9):
         W.append('Area line not straight (R² %.2f)' % r2)
+    # one value decides the answer: leaving it out moves the result by more
+    # than 2 x +- and by more than the 'good' limit
+    if t['influence'] is not None and \
+            t['influence'] > max(2. * se, 0.0015, 0.04 * k):
+        W.append('One value moves the result by %.4f' % t['influence'])
+    ref = [sg for sg in segments if sg.get('stage') == 'reference'
+           and (sg.get('piro') or {}).get('spread')]
+    if ref and ref[-1]['piro']['spread'] > 1.35:
+        W.append('Pressure still rising at PA 0 (nozzle not full). '
+                 'Use prime_steady')
     above = sum(1 for p in by if k < p <= k + AREA_NEAR)
     below = sum(1 for p in by if k - AREA_NEAR <= p < k)
     if above < 2 or below < 2:
@@ -753,9 +789,9 @@ def piro_area(segments, boot=BOOT):
         sides.append(cs[0] if cs else None)
     if None not in sides and abs(sides[0] - sides[1]) > max(0.006, 0.1 * k):
         W.append('Speed-up and slow-down areas disagree. Check pulse settings')
-    out.update(k=round(k, 5), se=round(se, 5),
-               jackknife=_r(jk, 5), bootstrap=_r(bsd, 5),
-               above=above, below=below)
+    out.update(k=round(k, 5), se=round(se, 5), fit=_r(t['fit'], 5),
+               bootstrap=_r(t['bootstrap'], 5), chi2=round(t['chi2'], 2),
+               influence=_r(t['influence'], 5), above=above, below=below)
     return out
 
 

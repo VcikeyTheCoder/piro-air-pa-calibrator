@@ -933,7 +933,7 @@ const MAXN=14,typOf=v=>v.mode==='edge'?7:Math.min(+v.max_values||7,MAXN);
 function plan(v){const A=area(),TYP=typOf(v),fast=v.fast_flow/A*v.fast_time,slow=v.slow_flow/A*v.slow_time,per=slow+v.cycles*(fast+slow),
   prime=v.prime_length>0?v.prime_length:0,primeMax=+v.prime_steady?Math.max(prime,+v.prime_max||0):prime,primeT=prime&&v.prime_flow>0?prime*A/v.prime_flow:0,perS=v.rest_time+v.slow_time+v.cycles*(v.fast_time+v.slow_time),
   vf=v.fast_flow/A,vs=v.slow_flow/A,sm=v.smooth_time>0?v.smooth_time:smoothT(),line=lineOf(v,A,sm),push=line?null:pushOf(v,A);
- return{A,TYP,fast,slow,per,prime,primeT,perS,vf,vs,sm,line,push,filTyp:per*TYP+prime,filMax:per*MAXN+primeMax,secs:perS*TYP+primeT+(v.prime_rest||0)}}
+ return{A,TYP,fast,slow,per,prime,primeT,perS,vf,vs,sm,line,push,filTyp:per*TYP+prime,filMax:per*(v.mode==='edge'?MAXN:TYP)+primeMax,secs:perS*TYP+primeT+(v.prime_rest||0)}}
 /* filament mm per toolhead mm of the line (Settings.line in settings.py) */
 function ratioOf(v,A){const ex=DEF&&DEF.extruder||{},cap=.64/A,mr=ex.max_extrude_ratio||cap,L=+v.line_length||0;return L>0?(v.fast_flow*v.fast_time+v.slow_flow*v.slow_time)/(A*L):.85*Math.min(mr,cap)}
 /* push method: the line it copies (Settings.push_plan) */
@@ -1180,7 +1180,7 @@ function stepsHTML(m,res){const sr=m.search,P=res.points||[],fe=res.fall||{},ar=
  else L.push(`<b>Fixed list.</b> ${m.segments.length} values, ${Math.min(...m.segments.map(s=>s.pa))} to ${Math.max(...m.segments.map(s=>s.pa))}.`);
  const pu=m.push;if(m.pa_method==='klipper')L.push(`<b>Method.</b> Klipper PA on a ${m.line?fmt(m.line.length,1)+' mm ':''}line, no conversion.`);
  else if(pu)L.push(`<b>Method.</b> Push: Klipper PA without XY, as on a ${fmt(pu.ratio*(m.filament_area||2.405),2)} mm² line at ${fmt(pu.accel,0)} mm/s². No conversion.`);
- if(ar.k!=null)L.push(`<b>Area line.</b> Crosses 0 at <b>${(+ar.k).toFixed(4)}</b> &plusmn; ${(+ar.se).toFixed(4)} (${(ar.used||[]).length} values, R² ${(+ar.r2).toFixed(3)})${res.method==='PIRO-AREA'?'':'. Not used: the result rule is PIRO-EDGE'}.`);
+ if(ar.k!=null)L.push(`<b>Area line.</b> Crosses 0 at <b>${(+ar.k).toFixed(4)}</b> &plusmn; ${(+ar.se).toFixed(4)} (${(ar.used||[]).length} values, R² ${(+ar.r2).toFixed(3)}; &plusmn; from the line and the pulse noise${ar.fit!=null?` ${(+ar.fit).toFixed(4)}`:''}, pulse bootstrap ${ar.bootstrap!=null?(+ar.bootstrap).toFixed(4):'-'})${res.method==='PIRO-AREA'?'':'. Not used: the result rule is PIRO-EDGE'}.`);
  else if(ar.why)L.push(`<b>Area line.</b> ${esc(ar.why)}.`);
  if(fe.k!=null)L.push(`<b>Edge.</b> Clean ${fe.k_ok}, dip ${fe.k_bad}. Line fit (${fe.line?fe.used.length:2} values): <b>${fe.k.toFixed(4)}</b>${res.method==='PIRO-AREA'?'. Not used: the result rule is PIRO-AREA':''}.`);
  if(res.measured!=null&&res.pa!=null)L.push(`<b>Smooth time correction (${Math.round((res.smooth||.04)*1000)} ms).</b> ${res.measured} &rarr; <b>${res.pa}</b>.`);

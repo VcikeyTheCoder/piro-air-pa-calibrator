@@ -107,7 +107,7 @@ OBSOLETE = ('sweeps', 'extrude_len', 'slow_speed', 'fast_speed', 'settle', 'warm
             'pa_mode', 'pa_start', 'pa_end', 'pa_step', 'wobble',
             'wobble_axis', 'accel', 'model')
 # earlier defaults: a value nobody changed moves to the PIRO-EDGE default
-OLD_DEFAULTS = {'cycles': ('3', '4'), 'fast_flow': ('19.24',), 'fast_time': ('0.25',),
+OLD_DEFAULTS = {'cycles': ('3', '4', '6'), 'prime_steady': ('0',), 'fast_flow': ('19.24',), 'fast_time': ('0.25',),
                 'slow_flow': ('1.92',), 'prime_length': ('40',), 'prime_flow': ('5',),
                 'prime_rest': ('0',), 'rest_time': ('0',), 'pa_max': ('0.08',),
                 'method': ('klipper',), 'mode': ('fit',)}

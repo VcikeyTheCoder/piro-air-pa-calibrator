@@ -43,7 +43,7 @@ class Settings:
     pa_max: float = 0.10          # first high PA tried (upper-limit check)
     upper_step: float = 0.02      # added while PA_MAX shows no dip
     pa_limit: float = 0.20        # no dip up to here: the test fails
-    cycles: int = 6               # fast+slow pulses per PA value
+    cycles: int = 10              # fast+slow pulses per PA value (first one skipped)
     fast_flow: float = 12.0       # mm^3/s during the fast leg
     fast_time: float = 0.6        # s per fast leg
     slow_flow: float = 1.8        # mm^3/s during the slow leg
@@ -51,7 +51,7 @@ class Settings:
     prime_length: float = 20.0    # mm of filament pushed before the first PA
     prime_flow: float = 12.0      # mm^3/s during the prime
     prime_rest: float = 1.0       # s pause after the prime
-    prime_steady: int = 0         # 1 = keep priming until the pushing force stops rising
+    prime_steady: int = 1         # 1 = keep priming until the pushing force stops rising
     prime_max: float = 100.0      # mm, most filament the prime may use with prime_steady
     rest_time: float = 0.3        # s pause before every PA value
     max_filament: float = 400.0   # mm, refuse a test that could use more
@@ -85,7 +85,7 @@ class Settings:
             pa_max=g('pa_max', 0.10, above=0.),
             upper_step=g('upper_step', 0.02, above=0.),
             pa_limit=g('pa_limit', 0.20, above=0.),
-            cycles=config.getint('cycles', 6, minval=2),
+            cycles=config.getint('cycles', 10, minval=2),
             fast_flow=g('fast_flow', 12., above=0.),
             fast_time=g('fast_time', 0.6, above=0.),
             slow_flow=g('slow_flow', 1.8, above=0.),
@@ -93,7 +93,7 @@ class Settings:
             prime_length=g('prime_length', 20., minval=0.),
             prime_flow=g('prime_flow', 12., above=0.),
             prime_rest=g('prime_rest', 1., minval=0.),
-            prime_steady=config.getint('prime_steady', 0, minval=0, maxval=1),
+            prime_steady=config.getint('prime_steady', 1, minval=0, maxval=1),
             prime_max=g('prime_max', 100., above=0.),
             rest_time=g('rest_time', 0.3, minval=0.),
             max_filament=g('max_filament', 400., above=0.),
@@ -219,8 +219,14 @@ class Settings:
         fast, slow = self.leg_mm(area)
         return slow + self.cycles * (fast + slow)      # lead-in + pulses
 
-    def filament_mm(self, area, trains=SEARCH_MAX_TRAINS):
-        return self.per_pa_mm(area) * trains + self.prime_mm()
+    def max_trains(self):
+        """Most PA values one test can measure: area MAX_VALUES (PA 0 once),
+        edge SEARCH_MAX_TRAINS."""
+        return self.max_values if self.mode == 'area' else SEARCH_MAX_TRAINS
+
+    def filament_mm(self, area, trains=None):
+        return self.per_pa_mm(area) * (trains or self.max_trains()) + \
+            self.prime_mm()
 
     def per_pa_s(self):
         return self.rest_time + self.slow_time + \

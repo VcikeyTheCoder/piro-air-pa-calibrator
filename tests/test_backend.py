@@ -271,7 +271,8 @@ def make(temp=210.0, z=20.0, tau=None, noise=0.15, fill=None):
     return p, bus, store, PATestRunner(p, bus, store, lim)
 
 def S(**kw):
-    d = dict(cycles=3, test_x=100, test_y=100, park_x=10, park_y=10, method='push')
+    d = dict(cycles=3, test_x=100, test_y=100, park_x=10, park_y=10, method='push',
+             prime_steady=0)
     d.update(kw); s = Settings(**d); s.validate(); return s
 
 
@@ -813,7 +814,7 @@ def test_piro_area_rule():
     assert abs(ar['k'] - 0.062) < 0.0005 and ar['r2'] > 0.999, ar
     assert ar['used'][0] == 0.054 and 0.0 not in ar['used']      # PA 0 left out
     assert ar['above'] == 2 and ar['below'] == 2 and not ar['warnings'], ar
-    assert ar['se'] >= 0.0003 and ar['se'] == max(ar['jackknife'], ar['bootstrap'], 0.0003)
+    assert ar['se'] >= 0.0003 and abs(ar['se'] - max(ar['fit'], ar['bootstrap'], 0.0003)) < 1e-5
     nar = ar['narrow']
     assert [x['n'] for x in nar] == [2, 3, 4, 5, 6] and [x['pa'] for x in nar] == list(order[1:])
     assert nar[0]['k'] is not None and abs(nar[-1]['k'] - ar['k']) < 1e-4
@@ -864,16 +865,18 @@ def test_area_leaves_out_aiming_values():
     assert 0.1 in analysis.piro_area(segs2)['used']
 
 def test_empty_nozzle_prime_steady():
-    """Run 64: a nearly empty nozzle. Without PRIME_STEADY PA 0 is repeated,
-    but the repeats no longer use up MAX_VALUES. With it the prime goes on
-    until the force stops rising and PA 0 is measured once."""
+    """Run 64: a nearly empty nozzle. Area mode measures PA 0 once and warns
+    when its pressure is still rising; PRIME_STEADY fills the nozzle first."""
     p, bus, store, r = make(tau=0.045, fill=110.)
     m = store.get_run(r.run(Gcmd(), S(cycles=6, max_filament=1000)))
     st = [x['stage'] for x in m['search']['steps']]
-    pas = {x['pa'] for x in m['segments']}
-    assert st.count('reference') >= 2, st
-    assert len(pas) == 7 or m['analysis']['result']['area']['above'] >= 2, (st, pas)
-    assert 'prime' not in m                                   # off by default
+    assert st.count('reference') == 1, st                     # area: PA 0 once
+    assert any('Pressure still rising at PA 0' in w
+               for w in m['analysis']['result']['warnings']), m['analysis']['result']['warnings']
+    assert 'prime' not in m                                   # prime_steady 0 here
+    p, bus, store, r = make(tau=0.045, fill=110.)             # edge keeps its repeats
+    m = store.get_run(r.run(Gcmd(), S(cycles=6, max_filament=1000, mode='edge')))
+    assert [x['stage'] for x in m['search']['steps']].count('reference') >= 2
     p, bus, store, r = make(tau=0.045, fill=70.)
     g = Gcmd()
     m = store.get_run(r.run(g, S(cycles=6, max_filament=1000, prime_steady=1)))
@@ -897,6 +900,52 @@ def test_empty_nozzle_prime_steady():
         try: S(**bad); assert False, bad
         except PAError: pass
     assert S(prime_steady=1).filament_mm(Extruder.filament_area) > S().filament_mm(Extruder.filament_area)
+
+def test_area_placement_and_single_reference():
+    """C: values beside the answer about 0.004 and 0.010 from it, never
+    closer than 0.003 to each other; PA 0 measured once in area mode"""
+    from pa_loadcell.testrun import AREA_GAP
+    p, bus, store, r = make(tau=0.045)
+    m = store.get_run(r.run(Gcmd(), S(cycles=4)))
+    pas = sorted(x['pa'] for x in m['segments'])
+    st = [x['stage'] for x in m['search']['steps']]
+    assert st.count('reference') == 1 and len(pas) <= 7, st
+    assert all(b - a >= AREA_GAP - 1e-9 for a, b in zip(pas, pas[1:])), pas
+    ar = m['analysis']['result']['area']
+    near = [x for x in ar['used'] if abs(x - ar['k']) <= 0.015]
+    assert max(near) - min(near) >= 0.012, near          # wide spread
+    assert ar['above'] >= 2 and ar['below'] >= 2, ar
+
+def test_area_tolerance_fix_a():
+    """The +- comes from the line and the pulse noise, not from leaving
+    values out: a noisy pair (Run 73) no longer inflates it or fails the
+    straightness check; a real bend with calm pulses still does"""
+    rows = [(0.0, 'reference', [-118, -116, -113, -117, -109]),
+            (0.1, 'upper', [85, 71, 95, 61, 82]),
+            (0.0575, 'area', [-9, -17, -7, -24, -5]), (0.062, 'area', [6, -7, 1, -8, -1]),
+            (0.066, 'area', [25, -4, 10, 5, 10]), (0.0685, 'area', [8, 0, 10, 1, 6])]
+    segs = [{'idx': i, 'pa': pa, 'stage': st, 'partial': False,
+             'piro': {'area': {'pulses': [[v / 2, v / 2] for v in pul]}}}
+            for i, (pa, st, pul) in enumerate(rows)]
+    ar = analysis.piro_area(segs)
+    assert abs(ar['k'] - 0.0635) < 0.0003 and ar['se'] < 0.0016, ar
+    assert not any('straight' in w for w in ar['warnings']), ar['warnings']
+    assert ar['influence'] is not None and ar['fit'] > 0
+    # calm pulses on a bent curve: R² low and far beyond the pulse noise
+    bent = [(0.0, 'reference', -100), (0.1, 'upper', 60), (0.05, 'area', -40),
+            (0.055, 'area', -5), (0.06, 'area', 0), (0.065, 'area', 2), (0.07, 'area', 40)]
+    segs = [{'idx': i, 'pa': pa, 'stage': st, 'partial': False,
+             'piro': {'area': {'pulses': [[v / 2 + d, v / 2 - d] for d in (-.2, 0, .2, .1, -.1)]}}}
+            for i, (pa, st, v) in enumerate(bent)]
+    assert any('not straight' in w for w in analysis.piro_area(segs)['warnings'])
+    # three values close together and one far out that bends the line:
+    # leaving that one out moves the result by more than 2 x +-
+    odd = [(0.0, 'reference', -100), (0.1, 'upper', 80), (0.056, 'area', -14),
+           (0.059, 'area', -8), (0.062, 'area', -2), (0.074, 'area', 6)]
+    segs = [{'idx': i, 'pa': pa, 'stage': st, 'partial': False,
+             'piro': {'area': {'pulses': [[v / 2 + d, v / 2 - d] for d in (-.2, 0, .2, .1, -.1)]}}}
+            for i, (pa, st, v) in enumerate(odd)]
+    assert any('One value moves the result' in w for w in analysis.piro_area(segs)['warnings'])
 
 def test_area_search_stops_at_max_values():
     p, bus, store, r = make(tau=0.045)
@@ -1002,9 +1051,13 @@ def test_settings_amounts():
     area = 3.14159265 * 0.875 ** 2
     fast, slow = s.leg_mm(area)
     assert abs(fast - 12 / area * 0.6) < 1e-9 and abs(slow - 1.8 / area) < 1e-9
-    assert abs(s.per_pa_mm(area) - (slow + 6 * (fast + slow))) < 1e-9
-    assert abs(s.filament_mm(area) - (s.per_pa_mm(area) * SEARCH_MAX_TRAINS + 20)) < 1e-9
-    assert abs(s.per_pa_s() - (0.3 + 1 + 6 * 1.6)) < 1e-9
+    assert (s.cycles, s.prime_steady, s.prime_max) == (10, 1, 100.)    # defaults
+    assert abs(s.per_pa_mm(area) - (slow + 10 * (fast + slow))) < 1e-9
+    # area: at most MAX_VALUES (PA 0 measured once) + the longest prime
+    assert abs(s.filament_mm(area) - (s.per_pa_mm(area) * 7 + 100)) < 1e-9
+    e = Settings(mode='edge')                          # edge: 14 measurements
+    assert abs(e.filament_mm(area) - (e.per_pa_mm(area) * SEARCH_MAX_TRAINS + 100)) < 1e-9
+    assert abs(s.per_pa_s() - (0.3 + 1 + 10 * 1.6)) < 1e-9
     assert s.filament_mm(area) < s.max_filament        # defaults fit the cap
 
 def test_prime_limits():

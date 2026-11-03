@@ -26,8 +26,10 @@ Search (_search), MODE=area (default):
   2. PA_MAX, then +UPPER_STEP until the area balance is above 0; still
      below 0 at PA_LIMIT -> the test fails
   3. the crossing of the area line so far, then values beside it on the
-     side that has fewer (higher one first), max(0.003, 5 %) apart, until
-     2 values sit within 0.015 on each side or MAX_VALUES are tested
+     side that has fewer (higher one first): the first about 0.004 from it,
+     the second about 0.010, never closer than 0.003 to a tested value,
+     until 2 values sit within 0.015 on each side or MAX_VALUES are tested.
+     PA 0 is measured once (PRIME_STEADY fills an empty nozzle first)
   4. the answer: analysis.run_result over everything measured
 MODE=edge:
   1. PA 0: reference (noise floor, pressure step size)
@@ -64,6 +66,9 @@ from . import analysis
 from .settings import SEARCH_MAX_TRAINS, SEARCH_TYPICAL
 
 DEFAULT_AREA = math.pi * 0.875 ** 2      # 1.75 mm filament
+AREA_OFFSETS = (0.004, 0.010, 0.007, 0.013, 0.015)   # from the estimate
+AREA_OFFSETS_2ND = (0.010, 0.013, 0.007, 0.004, 0.015)
+AREA_GAP = 0.003            # never closer than this to a tested value
 PUSH_TINY = 0.000001        # Klipper PA during push: keeps its smoothing on
 PUSH_PIECE = 0.001          # s, longest piece of a push ramp
 PUSH_E_ACCEL = 1e7          # mm/s^2, extruder and toolhead limit while a push train is queued
@@ -891,8 +896,9 @@ class PATestRunner:
         def tested(x):
             return any(abs(x - g['pa']) < 0.0012 for g in segs)
         try:
-            # 1. reference
-            for attempt in range(3):
+            # 1. reference (area: once, prime_steady fills the nozzle;
+            #    edge: repeated while the step is not settled, it sets the floor)
+            for attempt in range(1 if area_mode else 3):
                 say("reference PA 0%s" % (" (repeat)" if attempt else ""))
                 measure(0., 'reference', attempt > 0)
                 if segs[-1]['piro']['spread'] <= 1.35:
@@ -1016,13 +1022,16 @@ class PATestRunner:
             sides = [x for x, n in ((1, above), (-1, below)) if n < 2]
             if len(sides) == 2 and below < above:
                 sides.reverse()
-            d = max(0.003, 0.05 * est)
             x = None
             for sg in sides:
-                for j in (1, 2, 3, 4):
-                    c = snap(est + sg * j * d)
-                    if 0 < c <= s.pa_limit and abs(c - est) <= near \
-                            and not tested(c):
+                n_side = above if sg > 0 else below
+                # first value on a side close in, the second far out: a
+                # wide spread makes the line surer
+                offs = AREA_OFFSETS if n_side == 0 else AREA_OFFSETS_2ND
+                for o in offs:
+                    c = snap(est + sg * o)
+                    if 0 < c <= s.pa_limit and abs(c - est) <= near + 1e-9 \
+                            and all(abs(c - p) >= AREA_GAP - 1e-9 for p in pas):
                         x = c
                         break
                 if x is not None:
