@@ -225,6 +225,18 @@ def main(seed=True, host='127.0.0.1', ws_port=8765, http_port=8080):
                 return 'ok'
             if cmd == 'LOAD_CELL_TARE':
                 lc.tared = True; return 'ok'
+            if cmd == 'PA_DEMO_RUNNING':         # UI screenshots: a test in progress
+                r = plug.runner
+                r.state, r.phase, r.current_pa, r.values, r.max_values = 'running', 'fast', 0.0485, 4, 7
+                r.progress, r.pa_t, r.started = 0.55, p.pt - 2.0, p.now - 64
+                r.search = {'steps': [{'pa': 0.0, 'stage': 'reference'}, {'pa': 0.1, 'stage': 'upper'},
+                                      {'pa': 0.053, 'stage': 'area'}], 'prediction': 0.0487}
+                r.last = {'run': 3, 'status': 'complete', 'pa': 0.0487, 'unc': 0.0003, 'grade': 'good'}
+                t = p.pt + 0.1
+                for k in range(6):
+                    r._log_leg(t, t + 0.6, 12.0, 'fast'); r._log_leg(t + 0.6, t + 1.6, 1.8, 'slow')
+                    p.speeds.append((t, t + 0.6, 12.0)); t += 1.6
+                return 'ok'
             return 'ok'
         ep = 'pa_loadcell/' + method.split('.')[-1]
         r = Req(params)

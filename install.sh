@@ -65,7 +65,7 @@ nginx_remove() {
 
 if [ "${1:-}" = "--uninstall" ]; then
   say "Uninstalling"
-  rm -rf "$EXTRAS/pa_loadcell" "$UI_DIR"
+  rm -rf "$EXTRAS/pa_loadcell" "$EXTRAS/pa_eddy.py" "$UI_DIR"
   [ -f "$CONFIG_DIR/printer.cfg" ] && sed -i -e '/^\[include pa_loadcell.cfg\]$/d' -e '/^\[include pa_auto.cfg\]$/d' "$CONFIG_DIR/printer.cfg"
   python3 - "$CONFIG_DIR/.theme/navi.json" <<'PY' 2>/dev/null || true
 import json, sys
@@ -87,12 +87,16 @@ fi
 [ -f "$CONFIG_DIR/printer.cfg" ] || die "printer.cfg not found in $CONFIG_DIR (set CONFIG_DIR)"
 
 say "Linking Klipper module"
-rm -rf "$EXTRAS/pa_loadcell"
+rm -rf "$EXTRAS/pa_loadcell" "$EXTRAS/pa_eddy.py"
 ln -s "$REPO/klipper/pa_loadcell" "$EXTRAS/pa_loadcell" || cp -r "$REPO/klipper/pa_loadcell" "$EXTRAS/pa_loadcell"
+# [pa_eddy]: BTT Eddy as a pressure sensor (only used when configured)
+ln -s "$REPO/klipper/pa_eddy.py" "$EXTRAS/pa_eddy.py" || cp "$REPO/klipper/pa_eddy.py" "$EXTRAS/pa_eddy.py"
 # keep Klipper's git tree clean so Moonraker does not flag it as dirty
-if [ -d "$KLIPPER_DIR/.git" ] && ! grep -qx 'klippy/extras/pa_loadcell' "$KLIPPER_DIR/.git/info/exclude" 2>/dev/null; then
-  echo 'klippy/extras/pa_loadcell' >> "$KLIPPER_DIR/.git/info/exclude"
-fi
+for X in klippy/extras/pa_loadcell klippy/extras/pa_eddy.py; do
+  if [ -d "$KLIPPER_DIR/.git" ] && ! grep -qx "$X" "$KLIPPER_DIR/.git/info/exclude" 2>/dev/null; then
+    echo "$X" >> "$KLIPPER_DIR/.git/info/exclude"
+  fi
+done
 
 say "Installing config"
 CFG="$CONFIG_DIR/pa_loadcell.cfg"
@@ -110,7 +114,10 @@ OBSOLETE = ('sweeps', 'extrude_len', 'slow_speed', 'fast_speed', 'settle', 'warm
 OLD_DEFAULTS = {'cycles': ('3', '4', '6'), 'prime_steady': ('0',), 'fast_flow': ('19.24',), 'fast_time': ('0.25',),
                 'slow_flow': ('1.92',), 'prime_length': ('40',), 'prime_flow': ('5',),
                 'prime_rest': ('0',), 'rest_time': ('0',), 'pa_max': ('0.08',),
-                'method': ('klipper',), 'mode': ('fit',)}
+                'method': ('klipper',), 'mode': ('fit', 'area')}
+# 'mode: area' was the default only with the old comment: a value you chose
+# later (Settings writes the new comment) is never changed again
+ONLY_WITH = {'mode': ('algorithm judging the force curve', '')}
 key = lambda l: (re.match(r'^([a-z_]+)\s*:', l) or [None, None])[1]
 RENAMED = {'pa_method': 'method', 'pick': 'mode'}   # older option names
 for i, l in enumerate(lines):
@@ -131,12 +138,24 @@ for k, olds in OLD_DEFAULTS.items():              # untouched old default -> new
     for i, l in enumerate(lines):
         m = re.match(r'^%s\s*:\s*([^\s#]+)' % k, l)
         if key(l) == k and m and m.group(1) in olds and k in newl and newl[k] != l:
+            if k in ONLY_WITH and m.group(1) == 'area' and \
+                    ONLY_WITH[k][0] not in l:
+                continue
             lines[i] = newl[k]; moved.append(k)
 add = [newl[k] for k in newl if k not in have]
 if add:
-    while lines and lines[-1] == '':
-        lines.pop()
-    lines += ['# added by install.sh'] + add + ['']
+    # at the end of the [pa_loadcell] section, never below another section
+    # (a [pa_eddy] section may follow it in the same file)
+    start = next((i for i, l in enumerate(lines)
+                  if re.match(r'^\s*\[pa_loadcell\]', l)), None)
+    end = len(lines)
+    if start is not None:
+        end = next((i for i in range(start + 1, len(lines))
+                    if re.match(r'^\s*#?\s*\[[a-z_ ]+\]', lines[i])), len(lines))
+    at = end
+    while at > (start or 0) + 1 and lines[at - 1].strip() == '':
+        at -= 1
+    lines[at:at] = ['# added by install.sh'] + add
 open(cfg, 'w').write('\n'.join(lines))
 print('    added: %s' % (', '.join(key(l) for l in add) or 'none'))
 print('    updated to new defaults: %s' % (', '.join(moved) or 'none'))
@@ -157,6 +176,13 @@ if [ -f "$AUTO" ]; then
   if cmp -s "$AUTO" "$REPO/klipper/pa_auto.cfg"; then
     echo "    up to date"
   else
+    # the old default rule (area) moves to the new default (fall); a mode
+    # you changed to edge stays
+    if grep -qE '^variable_mode:[[:space:]]*"area"[[:space:]]*# area = PIRO-AREA, edge = PIRO-EDGE' "$AUTO"; then
+      cp "$AUTO" "$AUTO.bak-pa_loadcell"
+      sed -i -E 's/^variable_mode:[[:space:]]*"area"[[:space:]]*# area = PIRO-AREA, edge = PIRO-EDGE.*/variable_mode: "fall"           # fall = slow-down area (default), area = PIRO-AREA, edge = PIRO-EDGE/' "$AUTO"
+      echo "    mode area -> fall in your $AUTO (backup: pa_auto.cfg.bak-pa_loadcell)"
+    fi
     echo "    kept your $AUTO (the latest version is $REPO/klipper/pa_auto.cfg)"
   fi
 else
@@ -189,7 +215,7 @@ done
 
 say "Linking web page: $UI_DIR"
 rm -rf "$UI_DIR"
-ln -s "$REPO/ui" "$UI_DIR" || { mkdir -p "$UI_DIR"; cp "$REPO/ui/index.html" "$UI_DIR/"; }
+ln -s "$REPO/ui" "$UI_DIR" || { mkdir -p "$UI_DIR"; cp "$REPO/ui/index.html" "$REPO/ui/mini.html" "$UI_DIR/"; }
 
 say "Adding 'Load Cell' link to the Mainsail sidebar"
 python3 - "$CONFIG_DIR/.theme/navi.json" <<'PY'

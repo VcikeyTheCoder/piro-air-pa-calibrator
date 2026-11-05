@@ -6,6 +6,7 @@ storage options are never written from the page."""
 import os
 import re
 from .errors import PAError
+from .fileio import atomic_write
 
 # page / Settings field -> config key
 EDITABLE = {
@@ -32,8 +33,12 @@ def _fmt(v):
     if isinstance(v, float):
         return ('%.6f' % v).rstrip('0').rstrip('.') or '0'
     s = str(v)
-    if '\n' in s or '#' in s or ';' in s:
-        raise PAError("Text values cannot contain # ; or line breaks")
+    # any control character (\r and \n start a new line for Klipper's
+    # config reader), # and ; (comments) and [ ] (a section) are refused
+    if any(ord(c) < 32 or ord(c) == 127 for c in s) or \
+            any(c in s for c in '#;[]'):
+        raise PAError("Text values cannot contain # ; [ ] or control "
+                      "characters")
     return s
 
 
@@ -92,11 +97,6 @@ def save(path, values):
     with open(path) as f:
         text = f.read()
     new = update_text(text, values)
-    bak = path + '.bak-pa_loadcell-ui'
-    with open(bak, 'w') as f:
-        f.write(text)
-    tmp = path + '.tmp'
-    with open(tmp, 'w') as f:
-        f.write(new)
-    os.replace(tmp, path)
+    atomic_write(path + '.bak-pa_loadcell-ui', text)
+    atomic_write(path, new)
     return path

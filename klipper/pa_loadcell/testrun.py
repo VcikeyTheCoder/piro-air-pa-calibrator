@@ -21,7 +21,8 @@ too) are lifted while a train is queued, with no XY motion, and put back
 right after; the motor only sees the smoothed motion.
 Markers sit at the middle of each ramp, as with the klipper method.
 
-Search (_search), MODE=area (default):
+Search (_search), MODE=fall (default) and MODE=area (same search; fall
+judges by the slow-down area alone, area by rise + fall):
   1. PA 0: reference
   2. PA_MAX, then +UPPER_STEP until the area balance is above 0; still
      below 0 at PA_LIMIT -> the test fails
@@ -58,6 +59,7 @@ RESTRICT=0: the test runs where the nozzle is, no Z check, no moves.
 PRIME_STEADY=1: after PRIME_LENGTH the prime goes on until the pushing force
 stops rising (empty nozzle), at most PRIME_MAX mm."""
 import collections
+import logging
 import math
 import time
 from dataclasses import asdict
@@ -117,6 +119,23 @@ class SegmentCollector:
         self.buf = [s for s in self.buf if s[0] > t1]
         return out
 
+    def negate(self):
+        """The sensor's sign was just flipped: flip what is buffered too."""
+        self.buf = [(t, -v) for t, v in self.buf]
+
+
+def dropped(t, rate):
+    """Share of samples missing in a window (gaps in the timestamps)."""
+    if len(t) < 10 or not rate:
+        return 0.
+    dt = 1. / rate
+    miss = sum(max(0., round((b - a) / dt) - 1)
+               for a, b in zip(t, t[1:]) if b - a > 1.5 * dt)
+    return miss / (len(t) + miss)
+
+
+DROP_LIMIT = 0.05           # more samples missing than this: PA value fails
+
 
 class _Cancelled(Exception):
     pass
@@ -150,6 +169,10 @@ class PATestRunner:
         self.started = 0.0
         self.note = ''              # search progress for the UI
         self.search = None          # live search steps for the UI
+        self.dead = False           # Klipper shut down: no more G-code
+        self.last = None            # answer of the last finished test
+        self.values = 0             # PA values measured in this run
+        self.max_values = 0
 
     @property
     def toolhead(self):
@@ -161,6 +184,25 @@ class PATestRunner:
         if self.state == 'running':
             self.cancel_flag, self.state = True, 'cancelling'
 
+    def on_shutdown(self):
+        """Klipper shut down (emergency stop, MCU error): stop at the next
+        step, and do not send G-code while cleaning up (it cannot run)."""
+        if self.state != 'idle':
+            self.dead = True
+            self.cancel_flag = True
+
+    def _display(self, text=None):
+        """Mainsail / screen status line (never M73: that is the print's
+        progress)."""
+        if self.dead or self.printer.lookup_object('display_status',
+                                                    None) is None:
+            return              # no status line on this printer
+        try:
+            self._g("SET_DISPLAY_TEXT MSG=\"%s\"" % text.replace('"', "'")
+                    if text else "SET_DISPLAY_TEXT")
+        except Exception:
+            pass
+
     def _g(self, script):
         self.gcode.run_script_from_command(script)
 
@@ -169,7 +211,7 @@ class PATestRunner:
         now = self.reactor.monotonic()
         L = self.limits
         if not self.bus.available():
-            raise PAError("Load cell not found. Check load_cell: in [pa_loadcell]")
+            raise PAError(self.bus.main.missing_text())
         st = self.toolhead.get_status(now)
         homed = st.get('homed_axes', '')
         if not all(a in homed for a in 'xyz'):
@@ -275,6 +317,8 @@ class PATestRunner:
             s.test_y = s.park_y = round(pos[1], 3)
         temp, area = self.precheck(s)
         self.state, self.cancel_flag, self.progress = 'running', False, 0.0
+        self.dead, self.values = False, 0
+        self.max_values = s.max_trains()
         self.started = self.reactor.monotonic()
         now = self.reactor.monotonic()
         ext = self.toolhead.get_extruder()
@@ -305,11 +349,24 @@ class PATestRunner:
                      if ln else None),
             'push': ({k: round(v, 5) for k, v in self.pp.items()}
                      if self.pp else None),
-            'analysis': {'skip_first': bool(s.skip_first)}})
+            'analysis': {'skip_first': bool(s.skip_first)},
+            'sensor': self.bus.sensor, 'primary': self.bus.main.kind,
+            'unit': self.bus.unit})
         col = SegmentCollector()
+        col2 = SegmentCollector() if self.bus.other is not None else None
+        self.col2 = None
         status, err, saved = 'complete', '', False
         try:
             self.bus.subscribe(col.on_samples)
+            if col2 is not None:
+                try:
+                    self.bus.subscribe(col2.on_samples, self.bus.other.kind)
+                    self.col2 = col2
+                except PAError as e:
+                    gcmd.respond_info("PIRO-EDGE: second sensor not used: %s"
+                                      % e)
+            self._health_line(gcmd)
+            self._display("PA test: priming")
             # 100 % speed and flow so each leg lasts exactly its planned time
             self._g("SAVE_GCODE_STATE NAME=PA_LC\nG90\nM83\nM220 S100\nM221 S100")
             saved = True
@@ -334,23 +391,51 @@ class PATestRunner:
                 status = 'cancelled'
         except Exception as e:
             status, err = 'error', str(e)
+            if self.dead:
+                status, err = 'error', 'Klipper shut down during the test'
             gcmd.respond_info("PA_LOADCELL_TEST aborted: %s" % err)
         finally:
             self._cleanup(s, orig_pa, saved, col, orig_sm, orig_lim)
-            self.store.finalize(self.run_id, status, err)
+            self.state = 'analysing'
+            self.note = 'final analysis'
+            try:
+                meta = self.store.finalize(self.run_id, status, err)
+            except Exception as e:
+                logging.exception("pa_loadcell: finalize failed")
+                meta = {'segments': [], 'analysis': {}}
+                status, err = 'error', err or str(e)
+            # the answer is stored (run, search, last) before the state goes
+            # back to idle, so every viewer that sees 'idle' sees the result
+            res = (meta.get('analysis') or {}).get('result') or {}
+            self.last = {'run': self.run_id, 'status': status,
+                         'pa': res.get('pa'), 'unc': res.get('unc'),
+                         'grade': res.get('grade'), 'method': res.get('method'),
+                         'why': res.get('why') or err}
+            if self.search is not None:
+                self.search.update(result=res.get('pa'), unc=res.get('unc'),
+                                   grade=res.get('grade'),
+                                   error=None if res.get('pa') is not None
+                                   else (err or res.get('why') or status))
+                try:
+                    self.store.set_search(self.run_id, self.search)
+                except Exception:
+                    pass
             self.state, self.current_pa, self.phase = 'idle', None, ''
             self.pa_t, self.note = None, ''
-        if self.search:
-            self.store.set_search(self.run_id, self.search)
-        res = (self.store.get_run(self.run_id).get('analysis') or {}) \
-            .get('result') or {}
+            self._display(None)
         gcmd.respond_info("Run %d %s: %d PA values%s"
-                          % (self.run_id, status,
-                             len(self.store.get_run(self.run_id)['segments']),
+                          % (self.run_id, status, len(meta['segments']),
                              (", %s PA %.4f +- %.4f (%s)"
                               % (res.get('method', 'PIRO-EDGE'), res['pa'],
                                  res['unc'], res['grade']))
                              if res.get('pa') is not None else ''))
+        for name, r in ((meta.get('analysis') or {}).get('channels') or
+                        {}).items():
+            gcmd.respond_info("  %s (compared, not applied): %s"
+                              % (name, ("PA %.4f +- %.4f (%s)"
+                                        % (r['pa'], r['unc'], r['grade']))
+                                 if r.get('pa') is not None else
+                                 (r.get('why') or 'no result')))
         if status == 'error':
             raise PAError(err)
         return self.run_id
@@ -485,14 +570,27 @@ class PATestRunner:
         before PA 0. The first PA value starts right after."""
         self.prime_mm, self.prime_info = 0., None
         steady = bool(s.prime_steady) and col is not None
+        # Eddy channels (main and / or the second sensor): their sign is
+        # checked on the first prime piece, rest -> pushing must go up
+        signs = []
+        if col is not None and self.bus.main.kind == 'eddy':
+            signs.append((self.bus.main, col))
+        o, c2 = self.bus.other, getattr(self, 'col2', None)
+        if o is not None and o.kind == 'eddy' and c2 is not None:
+            signs.append((o, c2))
         if s.prime_length <= 0 and not steady:
+            if signs and gcmd is not None:
+                gcmd.respond_info("PIRO-EDGE: no prime, Eddy sign not checked "
+                                  "(using the saved one)")
             return
         self.phase = 'prime'
         th = self.toolhead
         v = s.prime_flow / area                       # mm/s of filament
         limit = getattr(ext, 'max_e_dist', None) or 50.
-        piece = max(1., min(limit * 0.9, 25.))
-        if steady:                  # force at rest: the zero for the levels
+        # pieces of at most ~2 s, so a cancel is seen within a few seconds
+        piece = max(1., min(limit * 0.9, 25., 2. * v))
+        chunk = min(max(2., v * 1.0), piece)          # about 1 s of filament
+        if steady or signs:         # force at rest: the zero for the levels
             b0 = th.get_last_move_time()
             th.dwell(0.4)
             b1 = th.get_last_move_time()
@@ -504,16 +602,22 @@ class PATestRunner:
             self._log_leg(t0, t1, s.prime_flow, 'prime')
             self.prime_mm += e
             return t0, t1
-        left = s.prime_length
-        while left > 1e-6 and not self.cancel_flag:
-            e = min(piece, left)
-            push(e)
-            left -= e
+        # equal pieces (Klipper stops between extrude-only moves, so no tiny
+        # last piece); with an Eddy and no prime length: one ~1 s piece
+        left = s.prime_length if s.prime_length > 0 else (chunk if signs else 0.)
+        n = int(math.ceil(left / piece - 1e-9)) if left > 1e-6 else 0
+        base = None
+        for i in range(n):
+            if self.cancel_flag:
+                break
+            t0, t1 = push(left / n)
+            if i == 0 and signs:
+                base = self._eddy_signs(signs, col, b0, b1, t0, t1, gcmd)
         if not steady or self.cancel_flag:
             return
-        chunk = min(max(2., v * 1.0), piece)          # about 1 s of filament
-        smp = self._collect(col, b0 + 0.1, b1)
-        base = sum(x[1] for x in smp) / len(smp)
+        if base is None:
+            smp = self._collect(col, b0 + 0.1, b1)
+            base = sum(x[1] for x in smp) / len(smp)
         levels, done = [], False
         pend = [push(chunk)] if self.prime_mm + chunk <= s.prime_max + 1e-6 \
             else []
@@ -532,12 +636,60 @@ class PATestRunner:
                 done = True
                 break
         self.prime_info = {'mm': round(self.prime_mm, 1), 'steady': done,
-                           'levels': [round(x, 1) for x in levels]}
+                           'levels': [round(x, 1) for x in levels],
+                           'sign': self.bus.main.sign}
         if gcmd is not None:
             gcmd.respond_info(
                 "PIRO-EDGE: prime %.0f mm, %s" % (
                     self.prime_mm, "pressure steady" if done else
                     "PRIME_MAX reached, pressure still rising"))
+
+    def _eddy_signs(self, items, col, b0, b1, t0, t1, gcmd):
+        """Rest (b0..b1) -> the first prime piece (t0..t1): pushing must read
+        higher. If it reads lower, flip that Eddy's sign (and what is
+        buffered), remembered for the next runs. Too small a change: the
+        main sensor stops the test, a second sensor only gets a warning.
+        -> the main channel's rest level (after any flip) or None"""
+        out = None
+        for ch, c in items:
+            rest = [x[1] for x in self._collect(c, b0 + 0.1, b1)]
+            f = [x[1] for x in self._collect(c, t0 + 0.5 * (t1 - t0), t1)]
+            base, m = sum(rest) / len(rest), sum(f) / len(f)
+            d = m - base
+            noise = math.sqrt(sum((x - m) ** 2 for x in f) / max(1, len(f) - 1))
+            main = ch is self.bus.main
+            if abs(d) < 3. * noise or abs(d) < 0.5:
+                msg = ("Eddy reading barely changes when pushing (%.1f Hz). "
+                       "Check the Eddy mount and its target" % d)
+                if main:
+                    raise PAError(msg)
+                if gcmd is not None:
+                    gcmd.respond_info("PIRO-EDGE: second sensor: " + msg)
+                continue
+            if d < 0:
+                ch.flip_sign()
+                self.bus.save_state()
+                c.negate()
+                base = -base
+                if gcmd is not None:
+                    gcmd.respond_info("PIRO-EDGE: Eddy reads lower with "
+                                      "pressure, sign flipped (remembered)")
+            if main:
+                out = base
+        return out
+
+    def _health_line(self, gcmd):
+        """One line at the start: sensor(s), rate, errors so far."""
+        parts = []
+        for ch in self.bus.channels:
+            i = ch.info()
+            parts.append("%s %s %.0f/s, unit %s%s%s" % (
+                i['label'], i['source'] or '-', i['rate'], i['unit'],
+                ", sign %+d" % i['sign'] if ch.kind == 'eddy' else '',
+                ", %d errors" % i['errors'] if i['errors'] else ''))
+        gcmd.respond_info("PIRO-EDGE: " + ("; ".join(parts)) +
+                          (" (judged by %s)" % self.bus.main.info()['label']
+                           if len(parts) > 1 else ''))
 
     def _set_klipper_pa(self, value):
         self._g("SET_PRESSURE_ADVANCE ADVANCE=%.6f" % value)
@@ -577,6 +729,9 @@ class PATestRunner:
             raise PAError("Stopped at MAX_FILAMENT %.0f mm" % s.max_filament)
         self.used += fil
         self.current_pa = pa
+        self.values += 1
+        self._display("PA test %d/%d: PA %.4f" % (self.values,
+                                                  self.max_values, pa))
         if ln:
             self._set_klipper_pa(pa)          # Klipper's own PA from here on
             self._line_start(s, ln)
@@ -585,6 +740,9 @@ class PATestRunner:
         t_base = th.get_last_move_time()      # recording starts here
         self.pa_t = t_base
         col.discard_before(t_base - 0.05)
+        if self.col2 is not None:
+            self.col2.discard_before(t_base - 0.05)
+        h0 = self.bus.main.health()
         if ln:
             markers, partial = self._train_klipper(s, ln, area, t_base)
         else:
@@ -601,13 +759,32 @@ class PATestRunner:
         samples = self._collect(col, t_base, t_end)
         if not any(m['name'] == 'fast' for m in markers):
             return None, None
-        seg = {'pa': pa, 'unit': self.bus.unit,
+        h1 = self.bus.main.health()
+        miss = dropped([x[0] for x in samples], self.bus.rate)
+        if miss > DROP_LIMIT:
+            raise PAError("%s dropped %.0f %% of its samples at PA %.4f. "
+                          "Check its wiring / CAN bus load"
+                          % (self.bus.main.info()['label'], 100. * miss, pa))
+        seg = {'pa': pa, 'unit': self.bus.unit, 'sensor': self.bus.main.kind,
                'rate': round(self.bus.rate, 1), 'markers': markers,
                'partial': partial,
                'method': 'klipper' if ln else 'push',
                'flows': {'fast': s.fast_flow, 'slow': s.slow_flow},
                't': [round(t - t_base, 4) for t, _ in samples],
                'f': [round(v, 3) for _, v in samples]}
+        lost = {k: h1[k] - h0[k] for k in h0 if h1[k] > h0[k]}
+        if lost or miss > 0.005:
+            seg['dropped'] = dict(lost, missing=round(miss, 4))
+        if self.col2 is not None:
+            try:
+                s2 = self._collect(self.col2, t_base, t_end, wait=1.0)
+                o = self.bus.other
+                seg['channels'] = {o.kind: {
+                    'unit': o.unit, 'rate': round(o.rate, 1),
+                    't': [round(t - t_base, 4) for t, _ in s2],
+                    'f': [round(v, 3) for _, v in s2]}}
+            except PAError:
+                pass                      # second sensor late: main only
         if stage:
             seg['stage'] = stage
         if repeat:
@@ -829,7 +1006,7 @@ class PATestRunner:
         col, s, area, sm, ln = ctx
         steps, segs = [], []
         self.search = {'steps': steps, 'result': None}
-        area_mode = s.mode == 'area'
+        area_mode = s.mode in ('area', 'fall')
         typical = s.max_values if area_mode else SEARCH_TYPICAL
         snap = lambda x: max(0.0005, round(x * 2000.) / 2000.)
         st = {'floor': 0.}
@@ -869,8 +1046,9 @@ class PATestRunner:
                           if area_mode else ('dips' if dips else 'ok'),
                           'prediction': pred})
             if area_mode:
-                say("PA %.4f %s: area %s"
-                    % (k, stage, "-" if bal is None else "%+.1f ms" % bal))
+                say("PA %.4f %s: %s %s"
+                    % (k, stage, 'fall area' if s.mode == 'fall' else 'area',
+                       "-" if bal is None else "%+.1f ms" % bal))
             else:
                 say("PA %.4f %s: %s (dip %+.0f%%, limit %.0f%%)"
                     % (k, stage, "too high" if dips else "no dip",
@@ -879,8 +1057,10 @@ class PATestRunner:
             return dips
 
         def balance(k):
-            """Mean area balance (ms) of all pulses at PA k, or None."""
-            v = [r + d for g in segs if abs(g['pa'] - k) < 1e-6
+            """Mean area balance (ms) of all pulses at PA k (fall: the
+            slow-down area alone), or None."""
+            v = [(d if s.mode == 'fall' else r + d)
+                 for g in segs if abs(g['pa'] - k) < 1e-6
                  for r, d in ((g['piro'] or {}).get('area') or {})
                  .get('pulses', [])]
             return round(sum(v) / len(v), 2) if v else None
@@ -979,15 +1159,9 @@ class PATestRunner:
             return
         except _Budget:
             say("search limit reached (%d PA values)" % SEARCH_MAX_TRAINS)
-        res = analysis.run_result(segs, s.mode)
-        self.search.update(result=res.get('pa'), unc=res.get('unc'),
-                           grade=res.get('grade'))
-        if res.get('pa') is not None:
-            say("%s PA %.4f +- %.4f (%s)"
-                % (res.get('method', 'PIRO-EDGE'), res['pa'], res['unc'],
-                   res['grade']))
-        else:
-            say("no result: %s" % res.get('why', ''))
+        # the answer itself comes from the full analysis when the run is
+        # finalised (in the background), see run()
+        say("measuring done, analysing")
 
     def _area_search(self, s, segs, measure, balance, tested, snap, say):
         """MODE=area after the reference: PA_MAX (+UPPER_STEP) until the
@@ -1001,7 +1175,7 @@ class PATestRunner:
                 break
             k = round(k + s.upper_step, 5)
             if k > s.pa_limit + 1e-9:
-                raise PAError("Area balance below 0 up to PA %.3f. Check the "
+                raise PAError("Area below 0 up to PA %.3f. Check the "
                               "filament path or raise PA_LIMIT"
                               % (k - s.upper_step))
         top = k
@@ -1009,7 +1183,8 @@ class PATestRunner:
         # MAX_VALUES counts PA values: repeats of PA 0 do not use it up
         count = lambda: len({round(g['pa'], 6) for g in segs})
         while count() < s.max_values:
-            est = analysis.area_estimate(segs)
+            est = analysis.area_estimate(
+                segs, 'fall' if s.mode == 'fall' else 'both')
             if est is None:
                 break
             est = min(max(est, 0.0005), top)
@@ -1041,11 +1216,14 @@ class PATestRunner:
             say("estimate %.4f" % est)
             measure(x, 'area', pred=round(est, 5))
 
-    def _collect(self, col, t0, t1):
-        deadline = self.reactor.monotonic() + self.limits['timeout']
+    def _collect(self, col, t0, t1, wait=None):
+        deadline = self.reactor.monotonic() + (wait or self.limits['timeout'])
         while col.latest < t1:
+            if self.cancel_flag and self.dead:
+                raise PAError("Klipper shut down")
             if self.reactor.monotonic() > deadline:
-                raise PAError("Load cell data timed out")
+                raise PAError("Sensor data timed out (no samples for %.0f s)"
+                              % (wait or self.limits['timeout']))
             self.reactor.pause(self.reactor.monotonic() + 0.05)
         out = col.take(t0, t1)
         if not out:
@@ -1053,21 +1231,31 @@ class PATestRunner:
         return out
 
     def _cleanup(self, s, orig_pa, saved, col, orig_sm=None, orig_lim=None):
-        steps = [lambda: self.bus.unsubscribe(col.on_samples),
-                 lambda: self._g("SET_PRESSURE_ADVANCE ADVANCE=%.5f%s"
+        """Every way out of a test comes here: each step on its own (one
+        failing does not skip the rest). After a Klipper shutdown only the
+        in-memory steps run; the restart restores the rest from config."""
+        if getattr(self, 'col2', None) is not None:
+            try:
+                self.bus.unsubscribe(self.col2.on_samples)
+            except Exception:
+                pass
+            self.col2 = None
+        G = []                  # steps that send G-code
+        M = [lambda: self.bus.unsubscribe(col.on_samples)]   # in memory only
+        G.append(lambda: self._g("SET_PRESSURE_ADVANCE ADVANCE=%.5f%s"
                                  % (orig_pa, (" SMOOTH_TIME=%.4f" % orig_sm)
-                                    if s.smooth_time and orig_sm else ""))]
+                                    if s.smooth_time and orig_sm else "")))
         if orig_lim:
-            steps.append(lambda: self._restore_limits(orig_lim))
+            G.append(lambda: self._restore_limits(orig_lim))
         if getattr(self, 'e_lim', None):
-            steps.append(lambda: self._e_limits(self.toolhead.get_extruder(),
-                                                False))
+            M.append(lambda: self._e_limits(self.toolhead.get_extruder(),
+                                            False))
         if s.restrict or s.method == 'klipper':   # free + klipper: back to the start
-            steps.append(lambda: self._g("G1 X%.2f Y%.2f F6000"
-                                         % (s.park_x, s.park_y)))
+            G.append(lambda: self._g("G1 X%.2f Y%.2f F6000"
+                                     % (s.park_x, s.park_y)))
         if saved:
-            steps.append(lambda: self._g("RESTORE_GCODE_STATE NAME=PA_LC"))
-        for fn in steps:        # one failing step must not skip the rest
+            G.append(lambda: self._g("RESTORE_GCODE_STATE NAME=PA_LC"))
+        for fn in M + ([] if self.dead else G):   # each step on its own
             try:
                 fn()
             except Exception:

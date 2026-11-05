@@ -1,4 +1,5 @@
 """Manual recording: independent of the PA test, start/stop any time."""
+import logging
 from .errors import PAError
 
 
@@ -31,10 +32,37 @@ class ManualRecorder:
             raise
 
     def _on(self, samples):
+        """Called from the sensor's data callback: only collect here. Saving
+        (file writes, analysis) happens later from the reactor, so a disk
+        problem can never take the sensor callback, and Klipper, down."""
+        if not self.active:
+            return
         self.buf.extend(samples)
-        if self.buf[-1][0] - self.buf[0][0] > self.max_seconds:
+        if self.buf[-1][0] - self.buf[0][0] > self.max_seconds \
+                and not self.auto_stopped:
             self.auto_stopped = True
-            self.stop()
+            reactor = self.printer.get_reactor()
+            if hasattr(reactor, 'register_callback'):
+                reactor.register_callback(lambda e: self._auto_stop())
+            else:
+                self._auto_stop()
+
+    def _auto_stop(self):
+        try:
+            if self.active:
+                self.stop()
+        except Exception:
+            logging.exception("pa_loadcell: saving the recording failed")
+            self.active = False
+
+    def abort(self):
+        """Klipper shut down: stop collecting, keep nothing half-written."""
+        self.active = False
+        try:
+            self.bus.unsubscribe(self._on)
+        except Exception:
+            pass
+        self.buf, self.marks = [], []
 
     def mark(self, text=''):
         if not self.active or not self.buf:

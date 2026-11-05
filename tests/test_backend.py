@@ -29,6 +29,14 @@ class Printer:
         self.now = max(t, self.now)
         for h in self.hooks: h()
     def lookup_object(self, n, d=None): return self.objs.get(n, d)
+    def lookup_objects(self, module=None):
+        return [(n, o) for n, o in self.objs.items()
+                if module is None or n == module or n.startswith(module + ' ')]
+    def register_event_handler(self, ev, cb):
+        self.__dict__.setdefault('events', []).append((ev, cb))
+    def send_event(self, ev, *a):
+        for e, cb in self.__dict__.get('events', []):
+            if e == ev: cb(*a)
     # extrude-only moves, each at constant speed over its Klipper duration,
     # smoothed like Klipper does (triangle over smooth_time) while PA != 0
     @staticmethod
@@ -458,15 +466,16 @@ def _synth_b2b(tau, ring=0.0, loops=6, fast=0.6, slow=1.0, rate=320.0):
 # ---------------------------------------------------------------------
 # PIRO-EDGE
 def test_full_search_finds_pa():
-    """Defaults: push method, PIRO-AREA. With Klipper's smoothing the equal
-    area PA sits a little above the melt lag (0.045 here)"""
+    """Defaults: push method, MODE=fall. With Klipper's smoothing the zero
+    fall-area PA sits a little above the melt lag (0.045 here)"""
     p, bus, store, r = make(tau=0.045)
     g = Gcmd()
     rid = r.run(g, S())
     m = store.get_run(rid)
     assert m['status'] == 'complete', m.get('error')
     res = m['analysis']['result']
-    assert res['method'] == 'PIRO-AREA' and abs(res['pa'] - 0.049) < 0.003, res['pa']
+    assert res['method'] == 'PIRO-FALL' and abs(res['pa'] - 0.049) < 0.003, res['pa']
+    assert res['area_result']['pa'] is not None and res['area_fall']['k'] is not None
     assert res['grade'] == 'good' and res['unc'] > 0, (res['grade'], res['warnings'])
     pas = [x['pa'] for x in m['segments']]
     assert pas[:2] == [0.0, 0.1] and len(pas) <= 7, pas          # MAX_VALUES
@@ -496,7 +505,10 @@ def test_full_search_finds_pa():
     assert (ext.max_e_velocity, ext.max_e_accel) == (100.0, 5000.0)
     # prime: extrude-only moves totalling 20 mm before the first pulses
     i_pa = p.log.index('SET_PRESSURE_ADVANCE ADVANCE=0.000001')
-    assert p.log[i_pa + 1].startswith('G1 E20.00000 F'), p.log[i_pa + 1]
+    prime, j = 0., i_pa + 1                 # pieces of at most ~2 s
+    while p.log[j].startswith('G1 E') and prime < 20 - 1e-6:
+        prime += float(p.log[j].split()[1][1:]); j += 1
+    assert abs(prime - 20) < 1e-3 and j - i_pa - 1 == 3, (prime, p.log[i_pa + 1:j])   # 3 equal pieces
     seg = store.get_segment(rid, 1)
     assert seg['method'] == 'push'
     names = [k['name'] for k in seg['markers']]
@@ -505,7 +517,7 @@ def test_full_search_finds_pa():
     assert abs(f['t1'] - f['t0'] - 0.6) < 0.0002, f              # FAST_TIME
     e = m['segments'][1]
     assert e['piro']['n'] == 2 and e['piro']['area']['n'] == 2    # first pulse skipped
-    assert 'PIRO-AREA PA' in g.out[-1], g.out[-1]
+    assert 'PIRO-FALL PA' in g.out[-1], g.out[-1]
     assert m['push']['accel'] == 4000 and abs(m['push']['ramp'] - 0.00469) < 1e-4
 
 def test_klipper_method_finds_pa():
@@ -818,7 +830,7 @@ def test_piro_area_rule():
     nar = ar['narrow']
     assert [x['n'] for x in nar] == [2, 3, 4, 5, 6] and [x['pa'] for x in nar] == list(order[1:])
     assert nar[0]['k'] is not None and abs(nar[-1]['k'] - ar['k']) < 1e-4
-    res = analysis.run_result(_area_segs([(pa, line(pa)) for pa in order], 0.3))
+    res = analysis.run_result(_area_segs([(pa, line(pa)) for pa in order], 0.3), 'area')
     assert res['method'] == 'PIRO-AREA' and res['grade'] == 'good' and res['pa'] == round(ar['k'], 4)
     # PA 0 is used while there are fewer than 3 others
     ar = analysis.piro_area(_area_segs([(pa, line(pa)) for pa in (0.0, 0.1, 0.066)]))
@@ -829,7 +841,7 @@ def test_piro_area_rule():
     assert analysis.piro_area(_area_segs([(0.05, 5), (0.06, 4), (0.07, 3)]))['k'] is None
     far = analysis.piro_area(_area_segs([(0.01, -50), (0.02, -40), (0.03, -30)]))
     assert far['k'] is None and 'outside' in far['why'], far
-    res = analysis.run_result(_area_segs([(0.01, -50), (0.02, -40), (0.03, -30)]))
+    res = analysis.run_result(_area_segs([(0.01, -50), (0.02, -40), (0.03, -30)]), 'area')
     assert res['pa'] is None and res['why'] and res['method'] == 'PIRO-AREA'
     # bent line: a warning, the grade drops
     bent = [(pa, line(pa) * (4 if pa < 0.062 else 1))
@@ -962,7 +974,7 @@ def test_area_upper_limit_fails():
     # a very slow melt: still lagging at PA_LIMIT
     p, bus, store, r = make(tau=0.3)
     try: r.run(Gcmd(), S(prime_length=0, pa_limit=0.14)); assert False
-    except PAError as e: assert 'Area balance below 0 up to PA 0.140' in str(e), e
+    except PAError as e: assert 'Area below 0 up to PA 0.140' in str(e), e
     assert [x['pa'] for x in store.get_run(1)['segments']] == [0.0, 0.1, 0.12, 0.14]
 
 def test_mode_setting_and_reanalyse():
@@ -981,7 +993,7 @@ def test_mode_setting_and_reanalyse():
     json.dump(meta, open(os.path.join(store.root, 'run_%04d' % rid, 'meta.json'), 'w'))
     assert store.reanalyze(rid)['analysis']['result']['method'] == 'PIRO-EDGE'
     d = Settings()
-    assert (d.mode, d.method, d.max_values, d.area_window) == ('area', 'push', 7, 0.15)
+    assert (d.mode, d.method, d.max_values, d.area_window) == ('fall', 'push', 7, 0.15)
     class G:                                    # older parameter names still work
         def __init__(s, p): s.p = p
         def get(s, k, d=None): return s.p.get(k, d)

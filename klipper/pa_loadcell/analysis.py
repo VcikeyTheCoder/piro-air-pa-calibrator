@@ -572,10 +572,16 @@ def pulse_area(t, f, markers, skip_first=True, win=AREA_WINDOW):
             'up': cur(up_b), 'down': cur(dn_b), 'bin': AREA_BIN, 't0': -0.05}
 
 
-def _area_values(segments):
-    """{pa: [pulse balances]} pooled over repeats, and the order in which
+AREA_PARTS = {'both': lambda r, d: r + d, 'fall': lambda r, d: d,
+              'rise': lambda r, d: r}
+
+
+def _area_values(segments, part='both'):
+    """{pa: [pulse values]} pooled over repeats, and the order in which
     the PA values were first tested -> (by, order, parts) where parts holds
-    the rise / fall pulses."""
+    the rise / fall pulses. part: both = balance (rise + fall), fall = the
+    slow-down area alone (MODE=fall), rise = the speed-up area alone."""
+    val = AREA_PARTS[part]
     by, parts, order = {}, {}, []
     for sgm in sorted(segments, key=lambda x: x.get('idx', 0)):
         ar = (sgm.get('piro') or {}).get('area')
@@ -584,7 +590,7 @@ def _area_values(segments):
         pa = round(sgm['pa'], 6)
         if pa not in by:
             order.append(pa)
-        by.setdefault(pa, []).extend(r + d for r, d in ar['pulses'])
+        by.setdefault(pa, []).extend(val(r, d) for r, d in ar['pulses'])
         parts.setdefault(pa, []).extend(ar['pulses'])
     return by, order, parts
 
@@ -704,20 +710,21 @@ def area_tolerance(by, use, rng=None, boot=BOOT):
             'chi2': chi2, 'dof': n - 2, 'influence': infl}
 
 
-def area_estimate(segments):
+def area_estimate(segments, part='both'):
     """Quick crossing for the search (no tolerance) -> PA or None."""
-    by, order, _ = _area_values(segments)
+    by, order, _ = _area_values(segments, part)
     use, _ = _select(by, list(by), _aims(segments))
     c = _cross(use, [_avg(by[p]) for p in use])
     return c[0] if c else None
 
 
-def piro_area(segments, boot=BOOT):
+def piro_area(segments, boot=BOOT, part='both'):
     """PIRO-AREA over everything measured -> dict (k None when there is no
     usable crossing, with why). Also 'narrow': the answer and its +- after
     2, 3, 4 ... PA values, in the order they were tested ('early': the
-    aiming values were still needed for the line)."""
-    by, order, parts = _area_values(segments)
+    aiming values were still needed for the line). part: both (balance,
+    PIRO-AREA) or fall (slow-down area alone, MODE=fall)."""
+    by, order, parts = _area_values(segments, part)
     aims = _aims(segments)
     out = {'k': None, 'warnings': [],
            'points': [[pa, round(_avg(by[pa]), 3),
@@ -795,19 +802,30 @@ def piro_area(segments, boot=BOOT):
     return out
 
 
-def run_result(segments, mode='area'):
-    """The run's answer from one rule: PIRO-AREA (default) or PIRO-EDGE.
-    Both are always computed and kept ('area', 'edge_result'); the result
-    comes from the chosen rule only."""
+RULES = ('fall', 'area', 'edge')
+RULE_NAME = {'fall': 'PIRO-FALL', 'area': 'PIRO-AREA', 'edge': 'PIRO-EDGE'}
+
+
+def run_result(segments, mode='fall', boot=BOOT):
+    """The run's answer from one rule: fall (default, the slow-down area
+    alone), area (PIRO-AREA, rise + fall) or edge (PIRO-EDGE). All three are
+    always computed and kept ('area_fall', 'area', 'edge_result') so the page
+    can compare them; the result comes from the chosen rule only. `boot`:
+    bootstrap draws (fewer while a test is still running)."""
+    mode = 'area' if mode == 'fit' else mode
     out = piro_pick(segments)
-    ar = piro_area(segments)
-    out['area'] = ar
+    both = piro_area(segments, boot)
+    fall = piro_area(segments, boot, 'fall')
+    out['area'], out['area_fall'] = both, fall
     out['edge_result'] = {k: out.get(k) for k in ('pa', 'unc', 'grade', 'why',
                                                   'warnings')}
+    for key, ar in (('area_result', both), ('fall_result', fall)):
+        out[key] = {'pa': _r(ar.get('k'), 4), 'unc': _r(ar.get('se'), 4)}
     if mode == 'edge':
         return out
-    out.update(method='PIRO-AREA', pa=None, unc=None, grade=None,
-               warnings=list(ar['warnings']))
+    ar = fall if mode == 'fall' else both
+    out.update(method=RULE_NAME[mode], rule=mode, pa=None, unc=None,
+               grade=None, warnings=list(ar['warnings']))
     if ar.get('k') is None:
         out['why'] = ar.get('why') or 'No area crossing'
         return out
@@ -817,8 +835,9 @@ def run_result(segments, mode='area'):
     lvl = min(2, lvl + len(out['warnings']))
     out.update(pa=round(k, 4), unc=round(se, 4),
                grade=('good', 'fair', 'poor')[lvl],
-               why='Area balance crosses 0 at %.4f (line through %d PA values)'
-               % (k, len(ar['used'])))
+               why='%s crosses 0 at %.4f (line through %d PA values)'
+               % ('Slow-down area' if mode == 'fall' else 'Area balance', k,
+                  len(ar['used'])))
     return out
 
 

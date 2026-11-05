@@ -6,6 +6,7 @@ import json
 import os
 import re
 from .errors import PAError
+from .fileio import atomic_write
 
 FORMAT = 'piro_edge_theme'
 LAYOUTS = ('piro', 'mainsail', 'fluidd', 'ratos', 'cat', 'terminal')
@@ -77,10 +78,7 @@ class ThemeStore:
         if t['id'] in LAYOUTS:
             t['id'] += '-custom'
         path = os.path.join(self.dir, t['id'] + '.json')
-        tmp = path + '.tmp'
-        with open(tmp, 'w') as f:
-            json.dump(t, f, indent=1)
-        os.replace(tmp, path)
+        atomic_write(path, json.dumps(t, indent=1))
         return t
 
     def delete(self, tid):

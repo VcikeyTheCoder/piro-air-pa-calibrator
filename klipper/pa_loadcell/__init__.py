@@ -11,7 +11,7 @@ from .recorder import ManualRecorder
 from .settings import Settings
 from .storage import RunStore
 from .themes import ThemeStore
-from . import cfgfile
+from . import cfgfile, fileio
 from .testrun import PATestRunner, extruder_info
 
 
@@ -20,11 +20,23 @@ class PALoadCell:
         self.printer = printer = config.get_printer()
         self.reactor = printer.get_reactor()
         self.defaults = Settings.from_config(config)
+        data_dir = config.get('data_dir', '~/printer_data/pa_loadcell')
+        # which sensor(s): load_cell, eddy or both (primary judges the test,
+        # the other is recorded alongside and compared)
+        sensor = config.getchoice('sensor', {k: k for k in (
+            'load_cell', 'eddy', 'both')}, 'load_cell')
+        primary = config.getchoice('primary', {'load_cell': 'load_cell',
+                                               'eddy': 'eddy'}, 'load_cell')
         self.bus = SampleBus(printer, config.get('load_cell', 'load_cell'),
                              config.getint('ring_size', 60000, minval=2000),
-                             config.getfloat('live_idle', 15., above=1.))
-        data_dir = config.get('data_dir', '~/printer_data/pa_loadcell')
+                             config.getfloat('live_idle', 15., above=1.),
+                             sensor=sensor, primary=primary,
+                             eddy_name=config.get('eddy', 'pa_eddy'),
+                             state_dir=data_dir)
         self.store = RunStore(data_dir)
+        # heavy analysis in a separate process: Klipper's loop keeps running
+        self.store.bg = lambda fn, args: fileio.in_background(
+            self.reactor, fn, args)
         self.themes = ThemeStore(data_dir)
         self.cfg_override = config.get('config_path', None)
         self.runner = PATestRunner(printer, self.bus, self.store, {
@@ -43,14 +55,44 @@ class PALoadCell:
         # record work while a test is running. Moonraker exposes them as
         # printer.pa_loadcell.<name> (JSON-RPC) and /printer/pa_loadcell/<name>.
         self.uploads = {}       # token -> {'parts': [...], 'size', 'at'}
+        printer.register_event_handler('klippy:ready', self._ready)
+        printer.register_event_handler('klippy:shutdown', self._shutdown)
+        printer.register_event_handler('klippy:disconnect', self._shutdown)
         wh = printer.lookup_object('webhooks')
         for name in ('live', 'info', 'defaults', 'runs', 'run', 'segment',
                      'tag', 'delete', 'record_start', 'record_stop', 'mark',
                      'cancel', 'export', 'import_begin', 'import_chunk',
                      'import_end', 'reanalyze', 'config_save', 'theme_list',
-                     'theme_save', 'theme_delete'):
+                     'theme_save', 'theme_delete', 'tare', 'status'):
             wh.register_endpoint('pa_loadcell/' + name,
                                  self._wrap(getattr(self, '_wh_' + name)))
+
+    # -- Klipper events -------------------------------------------------
+    def _ready(self):
+        """Runs left 'running' by a crash, power cut or restart."""
+        try:
+            n = self.store.mark_interrupted(
+                self.runner.run_id if self.runner.state != 'idle' else None)
+            if n:
+                logging.info("pa_loadcell: %d interrupted run(s) marked", n)
+        except Exception:
+            logging.exception("pa_loadcell: checking old runs failed")
+
+    def _shutdown(self):
+        """Emergency stop / MCU error: no G-code works any more. The test
+        stops at its next step and saves what it measured; Klipper's
+        restart puts PA and all limits back from the config."""
+        self.runner.on_shutdown()
+        if self.rec.active:
+            self.rec.abort()
+
+    def busy(self):
+        """'' or why heavy or conflicting work must wait."""
+        if self.runner.state != 'idle':
+            return "PA test running"
+        if self.rec.active:
+            return "Recording running"
+        return ''
 
     # -- G-code -------------------------------------------------------
     def cmd_test(self, gcmd):
@@ -69,6 +111,11 @@ class PALoadCell:
                 fail = self.defaults.fail_pa
             self.runner.fallback(gcmd, fail, str(e))
             return
+        if self.rec.active:
+            if s.apply:
+                self.runner.fallback(gcmd, s.fail_pa, "a recording is running")
+                return
+            raise gcmd.error("Stop the recording first")
         if s.apply:
             self.runner.auto(gcmd, s)
             return
@@ -99,15 +146,28 @@ class PALoadCell:
 
     # -- webhooks -----------------------------------------------------
     def _wrap(self, fn):
+        """Every endpoint: a problem becomes an error answer for the page.
+        Klipper shuts the printer down on any other exception from a
+        webhook, so nothing is allowed to escape."""
         def handler(req):
+            err = getattr(req, 'error', Exception)
             try:
-                req.send(fn(req) or {})
+                out = fn(req)
+            except err:
+                raise                       # bad request parameter
             except PAError as e:
-                raise getattr(req, 'error', Exception)(str(e))
+                raise err(str(e))
+            except Exception as e:
+                logging.exception("pa_loadcell: endpoint %s failed",
+                                  getattr(fn, '__name__', '?'))
+                raise err("pa_loadcell: %s" % (e,))
+            req.send(out or {})
         return handler
 
     def _wh_live(self, req):
-        out = self.bus.live(req.get_int('since', 0))
+        out = self.bus.live(req.get_int('since', 0),
+                            min(6000, max(100, req.get_int('limit', 6000))),
+                            req.get_int('since2', 0))
         r = self.runner
         out['test'] = {'state': r.state, 'progress': round(r.progress, 3),
                        'pa': r.current_pa, 'run': r.run_id,
@@ -116,7 +176,10 @@ class PALoadCell:
                        'search': r.search if r.state != 'idle' else None,
                        'legs': r.legs_since(req.get_int('leg_seq', 0)),
                        'elapsed': round(self.reactor.monotonic() - r.started,
-                                        1) if r.state != 'idle' else 0}
+                                        1) if r.state != 'idle' else 0,
+                       'values': r.values if r.state != 'idle' else 0,
+                       'max_values': r.max_values if r.state != 'idle' else 0,
+                       'last': r.last}
         out['printer'] = self._printer_status()
         out['rec'] = {'active': self.rec.active,
                       'elapsed': round(self.rec.elapsed(), 1),
@@ -125,7 +188,8 @@ class PALoadCell:
 
     def _wh_info(self, req):
         out = self.bus.info() if self.bus.lc else {
-            'source': '', 'available': self.bus.available()}
+            'source': '', 'sensor': self.bus.sensor,
+            'primary': self.bus.main.kind}
         out['available'] = self.bus.available()
         return out
 
@@ -146,7 +210,8 @@ class PALoadCell:
         return {'runs': self.store.list_runs()}
 
     def _wh_run(self, req):
-        return self.store.get_run(req.get_int('run'))
+        # an older run is re-analysed when opened, but not during a test
+        return self.store.get_run(req.get_int('run'), analyse=not self.busy())
 
     def _wh_segment(self, req):
         def opt(name):
@@ -161,12 +226,18 @@ class PALoadCell:
                                       opt('t0'), opt('t1'))
 
     def _wh_tag(self, req):
-        pick = req.get_str('pa_pick', '__keep__')
+        pick = str(req.get('pa_pick', '__keep__')).strip()
         notes = req.get_str('notes', '__keep__')
         name = req.get_str('name', '')
+        if pick not in ('__keep__', ''):
+            try:
+                pick = float(pick.replace(',', '.'))
+            except ValueError:
+                raise PAError("PA must be a number, e.g. 0.045")
+            if not 0 <= pick <= 2:
+                raise PAError("PA must be between 0 and 2")
         self.store.set_tag(
-            req.get_int('run'),
-            None if pick == '__keep__' else (float(pick) if pick else ''),
+            req.get_int('run'), None if pick == '__keep__' else pick,
             None if notes == '__keep__' else notes, name)
 
     def _wh_delete(self, req):
@@ -176,8 +247,8 @@ class PALoadCell:
         self.store.delete(req.get_int('run'))
 
     def _wh_record_start(self, req):
-        if self.runner.state != 'idle':
-            raise PAError("PA test running")
+        if self.busy():
+            raise PAError(self.busy())
         self.rec.start(req.get_str('label', ''))
 
     def _wh_record_stop(self, req):
@@ -186,16 +257,32 @@ class PALoadCell:
     def _wh_cancel(self, req):
         self.runner.cancel()
 
+    def _wh_tare(self, req):
+        """Eddy: zero the reading here. Load cell: the page sends Klipper's
+        LOAD_CELL_TARE instead."""
+        if self.runner.state != 'idle':
+            raise PAError("PA test running")
+        kind = req.get_str('sensor', '') or None
+        if kind not in (None, 'load_cell', 'eddy'):
+            raise PAError("sensor must be load_cell or eddy")
+        self.bus.tare(kind)
+        return self.bus.info()
+
     # -- export / import / re-analyse ------------------------------------
     def _wh_export(self, req):
         return self.store.export_run(req.get_int('run'))
 
-    MAX_UPLOAD = 64 * 1024 * 1024
+    MAX_UPLOAD = 32 * 1024 * 1024   # one file
+    MAX_UPLOADS = 2                 # at the same time
 
     def _wh_import_begin(self, req):
         now = time.time()
         for k in [k for k, u in self.uploads.items() if now - u['at'] > 600]:
             del self.uploads[k]                 # forget stale uploads
+        if self.busy():
+            raise PAError("%s: import after it" % self.busy())
+        if len(self.uploads) >= self.MAX_UPLOADS:
+            raise PAError("Another import is still running")
         token = uuid.uuid4().hex
         self.uploads[token] = {'parts': [], 'size': 0, 'at': now}
         return {'token': token}
@@ -219,22 +306,25 @@ class PALoadCell:
         u = self.uploads.pop(req.get_str('token'), None)
         if u is None:
             raise PAError("Upload expired")
+        if self.busy():
+            raise PAError("%s: import after it" % self.busy())
         try:
             data = json.loads(''.join(u['parts']))
-        except ValueError:
+        except (ValueError, RecursionError):
             raise PAError("Not a JSON file")
+        u['parts'] = []
         return {'run': self.store.import_run(data)}
 
     def _wh_reanalyze(self, req):
         rid = req.get_int('run')
-        if self.runner.state != 'idle' and rid == self.runner.run_id:
-            raise PAError("Run still recording")
+        if self.busy():
+            raise PAError("%s: re-analyse after it" % self.busy())
         skip = req.get('skip_first', None)
         mode = req.get('mode', None) or req.get('pick', None)
         if mode == 'fit':                    # older name
             mode = 'area'
-        if mode not in (None, 'area', 'edge'):
-            raise PAError("mode must be area or edge")
+        if mode not in (None, 'fall', 'area', 'edge'):
+            raise PAError("mode must be fall, area or edge")
         return self.store.reanalyze(rid, None if skip is None else bool(skip),
                                     mode)
 
@@ -290,12 +380,42 @@ class PALoadCell:
     def _wh_theme_delete(self, req):
         self.themes.delete(req.get_str('id'))
 
-    def get_status(self, eventtime):
-        return {'state': self.runner.state,
-                'progress': round(self.runner.progress, 3),
+    def _status(self):
+        """Small, cheap snapshot of the test for Mainsail and the mini
+        window (Klipper status object 'pa_loadcell', pushed by Moonraker)."""
+        r = self.runner
+        busy = r.state != 'idle'
+        return {'state': r.state,
+                'progress': round(r.progress, 3),
+                'phase': r.phase if busy else '',
+                'pa': r.current_pa if busy else None,
+                'values': r.values if busy else 0,
+                'max_values': r.max_values if busy else 0,
+                'note': r.note if busy else '',
+                'run': r.run_id,
+                'elapsed': round(self.reactor.monotonic() - r.started, 1)
+                if busy else 0,
+                'prediction': (r.search or {}).get('prediction') if busy
+                else None,
+                'last': r.last,
                 'recording': self.rec.active,
                 'feed': self.bus.running,
+                'sensor': self.bus.sensor,
+                'primary': self.bus.main.kind,
+                'unit': self.bus.unit,
                 'rate': round(self.bus.rate, 1)}
+
+    def _wh_status(self, req):
+        out = self._status()
+        r = self.runner
+        out['search'] = r.search if r.state != 'idle' else None
+        out['legs'] = r.legs_since(req.get_int('leg_seq', 0))
+        out['leg_seq'] = r.leg_seq
+        out['pa_t'] = r.pa_t
+        return out
+
+    def get_status(self, eventtime):
+        return self._status()
 
 
 def load_config(config):

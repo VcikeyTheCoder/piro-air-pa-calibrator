@@ -9,10 +9,11 @@ The search (see testrun.py): PA 0, then PA_MAX (+UPPER_STEP until the force
 dips, failing at PA_LIMIT), then values around the predicted answer.
 
 Two settings shape a run:
-  MODE   the algorithm that judges the force curve: area (default,
-         PIRO-AREA, the PA where the gap after every speed change and the
-         overshoot have the same area) or edge (PIRO-EDGE, the highest PA
-         without a dip after the slow-down)
+  MODE   the rule that judges the force curve: fall (default, the PA where
+         the area after the slow-down is 0: no lag, no dip), area
+         (PIRO-AREA, the PA where the gap after every speed change and the
+         overshoot have the same area, rise + fall) or edge (PIRO-EDGE, the
+         highest PA without a dip after the slow-down)
   METHOD how each PA value is applied: push (default) or klipper.
 
 METHOD=push: the nozzle stays still. Extrude-only moves follow exactly the
@@ -68,7 +69,7 @@ class Settings:
     line_dir: int = 0             # klipper method: 0 = centred on the test position,
                                   # 1 / -1 = starts there, runs towards + / -
     smooth_time: float = 0.0      # 0 = the extruder's pressure_advance_smooth_time
-    mode: str = "area"            # area = PIRO-AREA (equal areas), edge = PIRO-EDGE
+    mode: str = "fall"            # fall = slow-down area, area = PIRO-AREA (rise + fall), edge = PIRO-EDGE
     area_window: float = 0.15     # s of force summed after every speed change (area)
     max_values: int = 7           # area: most PA values one search tests
     apply: int = 0                # 1 = set the result as Klipper's PA (auto PA)
@@ -111,9 +112,9 @@ class Settings:
             line_length=g('line_length', 0., minval=0.),
             line_dir=config.getint('line_dir', 0, minval=-1, maxval=1),
             smooth_time=g('smooth_time', 0., minval=0., maxval=0.1),
-            mode=config.getchoice('mode', {'area': 'area', 'edge': 'edge',
-                                           'fit': 'area'},
-                                  config.get('pick', 'area')),
+            mode=config.getchoice('mode', {'fall': 'fall', 'area': 'area',
+                                           'edge': 'edge', 'fit': 'area'},
+                                  config.get('pick', 'fall')),
             area_window=g('area_window', AREA_WINDOW, minval=0.05, maxval=0.5),
             max_values=config.getint('max_values', 7, minval=3,
                                      maxval=SEARCH_MAX_TRAINS),
@@ -188,8 +189,8 @@ class Settings:
             raise PAError("LINE_DIR must be -1, 0 or 1")
         if self.smooth_time and not 0.01 <= self.smooth_time <= 0.1:
             raise PAError("SMOOTH_TIME must be 0 (printer value) or 0.01 to 0.1")
-        if self.mode not in ('area', 'edge'):
-            raise PAError("MODE must be area or edge")
+        if self.mode not in ('fall', 'area', 'edge'):
+            raise PAError("MODE must be fall, area or edge")
         if not 0.05 <= self.area_window <= 0.5:
             raise PAError("AREA_WINDOW must be 0.05 to 0.5 s")
         if not 3 <= self.max_values <= SEARCH_MAX_TRAINS:
@@ -222,7 +223,8 @@ class Settings:
     def max_trains(self):
         """Most PA values one test can measure: area MAX_VALUES (PA 0 once),
         edge SEARCH_MAX_TRAINS."""
-        return self.max_values if self.mode == 'area' else SEARCH_MAX_TRAINS
+        return self.max_values if self.mode in ('area', 'fall') \
+            else SEARCH_MAX_TRAINS
 
     def filament_mm(self, area, trains=None):
         return self.per_pa_mm(area) * (trains or self.max_trains()) + \

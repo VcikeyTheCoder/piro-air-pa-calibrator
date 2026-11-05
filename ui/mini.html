@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PIRO-EDGE mini</title>
+<!-- Read-only PA test monitor for Mainsail: add it in Mainsail under
+     Settings > Webcams > HTML Iframe, URL /loadcell/mini.html
+     It only reads (live samples, test status); it never starts or stops anything. -->
+<style>
+:root{--bg:#1e1e1e;--bar:#272727;--line:rgba(255,255,255,.12);--text:rgba(255,255,255,.87);--dim:rgba(255,255,255,.6);--faint:rgba(255,255,255,.38);
+ --primary:#2196f3;--ok:#4caf50;--warn:#ff9800;--bad:#ff5252;--grid:rgba(255,255,255,.07);--cmd:rgba(255,255,255,.55)}
+:root[data-mode=light]{--bg:#ffffff;--bar:#f5f5f5;--line:rgba(0,0,0,.12);--text:rgba(0,0,0,.87);--dim:rgba(0,0,0,.6);--faint:rgba(0,0,0,.38);--grid:rgba(0,0,0,.07);--cmd:rgba(0,0,0,.5)}
+*{box-sizing:border-box}html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:13px/1.35 Roboto,"Segoe UI",system-ui,sans-serif;overflow:hidden}
+.app{display:flex;flex-direction:column;height:100%}
+.top{display:flex;align-items:center;gap:8px;padding:6px 10px;background:var(--bar);border-bottom:1px solid var(--line);min-height:36px;flex-wrap:wrap}
+.top h1{font-size:13px;font-weight:500;margin:0;letter-spacing:.01em;white-space:nowrap}
+.chip{display:inline-flex;align-items:center;gap:6px;padding:1px 9px;border-radius:12px;font-size:11.5px;background:rgba(127,127,127,.18);color:var(--dim);white-space:nowrap}
+.chip i{width:7px;height:7px;border-radius:50%;background:var(--faint)}.chip.run i{background:var(--primary)}.chip.ok i{background:var(--ok)}.chip.bad i{background:var(--bad)}.chip.warn i{background:var(--warn)}
+.sp{flex:1}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.seg button{font:inherit;font-size:11.5px;color:var(--dim);background:none;border:0;padding:2px 9px;cursor:pointer}
+.seg button+button{border-left:1px solid var(--line)}
+.seg button[aria-pressed=true]{color:var(--primary);background:color-mix(in srgb,var(--primary) 14%,transparent)}
+.seg button:focus-visible{outline:2px solid var(--primary);outline-offset:-2px}
+.prog{height:3px;background:var(--line)}.prog i{display:block;height:100%;width:0;background:var(--primary);transition:width .4s}
+.info{display:flex;gap:16px;align-items:flex-end;padding:8px 10px 4px;flex-wrap:wrap}
+.kv{display:flex;flex-direction:column;min-width:0}.kv span{font-size:11px;color:var(--faint)}
+.kv b{font-weight:500;font-size:15px;font-variant-numeric:tabular-nums}.kv b.big{font-size:22px;font-weight:400}
+.steps{display:flex;gap:0;align-items:center;padding:4px 10px 2px;font-size:11px;color:var(--faint);flex-wrap:wrap;row-gap:2px}
+.steps li{list-style:none;display:flex;align-items:center;gap:5px;white-space:nowrap}
+.steps li+li::before{content:"";width:14px;height:1px;background:var(--line);margin:0 6px}
+.steps li i{width:8px;height:8px;border-radius:50%;border:1.5px solid var(--faint)}
+.steps li.done{color:var(--dim)}.steps li.done i{background:var(--ok);border-color:var(--ok)}
+.steps li.now{color:var(--text)}.steps li.now i{background:var(--primary);border-color:var(--primary);box-shadow:0 0 0 3px color-mix(in srgb,var(--primary) 25%,transparent)}
+.graph{position:relative;flex:1;min-height:90px;margin:2px 6px 0}
+canvas{position:absolute;inset:0;width:100%;height:100%}
+.foot{display:flex;gap:4px 10px;padding:3px 10px 5px;font-size:11px;color:var(--faint);align-items:center;flex-wrap:wrap}
+.foot a{color:var(--dim)}
+.legend{display:inline-flex;gap:10px;align-items:center}.legend s{display:inline-block;width:16px;height:0;border-top:2px solid var(--primary);vertical-align:middle}
+.legend s.c{border-top:2px dotted var(--cmd)}.legend s.p{border-top:1px dashed var(--warn)}
+.msg{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;text-align:center;color:var(--dim);padding:12px;font-size:12.5px}
+@media (max-width:420px){.kv b.big{font-size:18px}.info{gap:10px}.foot .legend{display:none}}
+@media (prefers-reduced-motion:reduce){.prog i{transition:none}}
+</style></head>
+<body><div class="app">
+ <div class="top"><h1>PA test</h1><span class="chip" id="state"><i></i><span>connecting</span></span><span class="sp"></span>
+  <span class="seg" id="win" role="group" aria-label="Graph time window"><button data-w="3">3 s</button><button data-w="5">5 s</button><button data-w="10">10 s</button></span></div>
+ <div class="prog" aria-hidden="true"><i id="bar"></i></div>
+ <ol class="steps" id="steps" aria-label="Test steps"><li data-s="prime"><i></i>Prime</li><li data-s="ref"><i></i>PA 0</li><li data-s="upper"><i></i>Upper</li><li data-s="near"><i></i>Near values</li><li data-s="result"><i></i>Result</li></ol>
+ <div class="info">
+  <div class="kv"><span>PA now</span><b class="big" id="pa">-</b></div>
+  <div class="kv"><span>Value</span><b id="n">-</b></div>
+  <div class="kv"><span>Estimate</span><b id="est">-</b></div>
+  <div class="kv"><span id="lastk">Last result</span><b id="last">-</b></div>
+  <div class="kv"><span id="snm">Sensor</span><b id="now">-</b></div>
+ </div>
+ <div class="graph"><canvas id="cv" aria-label="Live sensor reading, extruder command dotted, PA changes marked"></canvas><div class="msg" id="msg" hidden></div></div>
+ <div class="foot"><span class="legend"><span><s></s> <span id="lgS">sensor</span></span><span><s class="c"></s> extruder command</span><span><s class="p"></s> PA change</span></span><span class="sp"></span><span>Watch only · <a href="/loadcell/?tab=test" target="_blank" rel="noopener">open PIRO-EDGE</a> to start or cancel</span></div>
+</div>
+<script>
+'use strict';
+const $=s=>document.querySelector(s);
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const ls={get(k,d){try{const v=localStorage.getItem('palc.mini.'+k);return v==null?d:JSON.parse(v)}catch{return d}},set(k,v){try{localStorage.setItem('palc.mini.'+k,JSON.stringify(v))}catch{}}};
+let WIN=[3,5,10].includes(ls.get('win',5))?ls.get('win',5):5;
+const css=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+let COL={};function colours(){COL={p:css('--primary'),cmd:css('--cmd'),warn:css('--warn'),grid:css('--grid'),dim:css('--faint'),text:css('--dim')}}colours();
+
+/* Moonraker websocket on this same host: JSON-RPC, status pushed by subscription */
+/* ?ws=host:port only for the development harness: this host or localhost */
+const WSURL=(()=>{const w=new URLSearchParams(location.search).get('ws'),h=w&&w.split(':')[0];
+ if(w&&/^[\w.-]+(:\d+)?$/.test(w)&&[location.hostname,'localhost','127.0.0.1'].includes(h))return'ws://'+w;
+ return(location.protocol==='https:'?'wss://':'ws://')+location.host+'/websocket'})();
+const rpc={id:1,pend:new Map(),ws:null,up:false,back:600,auth:false,
+ connect(){const ws=this.ws=new WebSocket(WSURL);
+  ws.onopen=()=>{this.up=true;this.back=600;start()};
+  ws.onmessage=e=>{let m;try{m=JSON.parse(e.data)}catch{return}
+   if(m.method==='notify_status_update'&&m.params&&m.params[0]&&m.params[0].pa_loadcell){Object.assign(ST,m.params[0].pa_loadcell);DIRTY=true;return}
+   const p=this.pend.get(m.id);if(!p)return;this.pend.delete(m.id);clearTimeout(p.to);
+   if(m.error){const t=String(m.error.message||'');if(m.error.code===401||/unauthori[sz]ed/i.test(t))this.auth=true;p.rej(new Error(t||'error'))}else p.res(m.result)};
+  ws.onclose=()=>{this.up=false;for(const[,p]of this.pend){clearTimeout(p.to);p.rej(new Error('offline'))}this.pend.clear();setTimeout(()=>this.connect(),this.back);this.back=Math.min(this.back*2,8000);paint()};
+  ws.onerror=()=>ws.close()},
+ call(method,params={},ms=6000){return new Promise((res,rej)=>{if(!this.up)return rej(new Error('offline'));const id=this.id++;
+  const to=setTimeout(()=>{this.pend.delete(id);rej(new Error('timeout'))},ms);this.pend.set(id,{res,rej,to});
+  this.ws.send(JSON.stringify({jsonrpc:'2.0',method,params,id}))})}};
+
+/* Mainsail's own colour and light/dark mode, when Moonraker has them */
+async function mainsailLook(){try{const r=await rpc.call('server.database.get_item',{namespace:'mainsail',key:'uiSettings'});const v=(r&&r.value)||{};
+  if(typeof v.primary==='string'&&/^#[0-9a-f]{3,8}$/i.test(v.primary))document.documentElement.style.setProperty('--primary',v.primary);
+  if(v.mode==='light')document.documentElement.dataset.mode='light';colours();DIRTY=true}catch{}}
+
+let ST={state:'idle'},T={},info={},since=0,legSeq=0,epoch=null,gen=null,DIRTY=true,lastErr='';
+const S={t:[],f:[]},LEGS=[],MARKS=[];let lastPaT=null,FIT=null;
+async function start(){mainsailLook();try{await rpc.call('printer.objects.subscribe',{objects:{pa_loadcell:null}}).then(r=>{if(r&&r.status&&r.status.pa_loadcell)Object.assign(ST,r.status.pa_loadcell)})}catch{}}
+function keep(){const end=S.t.length?S.t[S.t.length-1]:0,cut=end-12;let k=0;while(k<S.t.length&&S.t[k]<cut)k++;if(k>200){S.t=S.t.slice(k);S.f=S.f.slice(k)}
+ while(LEGS.length&&LEGS[0].t1<cut)LEGS.shift();while(MARKS.length&&MARKS[0].t<cut-1)MARKS.shift()}
+/* force = offset + gain * flow from the settled part of finished legs */
+function fit(){const xs=[],ys=[],end=S.t.length?S.t[S.t.length-1]:0;
+ for(const g of LEGS){if(g.t1>end||g.name==='prime')continue;const d=g.t1-g.t0;let s=0,n=0;for(let i=lb(S.t,g.t0+.5*d);i<S.t.length&&S.t[i]<g.t1-.05*d;i++){s+=S.f[i];n++}if(n>2){xs.push(g.flow);ys.push(s/n)}}
+ if(new Set(xs).size<2)return;const n=xs.length,mx=xs.reduce((a,b)=>a+b)/n,my=ys.reduce((a,b)=>a+b)/n;let sxx=0,sxy=0;
+ for(let i=0;i<n;i++){sxx+=(xs[i]-mx)**2;sxy+=(xs[i]-mx)*(ys[i]-my)}if(sxx>0)FIT={g:sxy/sxx,o:my-sxy/sxx*mx}}
+function lb(a,x){let lo=0,hi=a.length;while(lo<hi){const m=(lo+hi)>>1;if(a[m]<x)lo=m+1;else hi=m}return lo}
+async function poll(){for(;;){
+ if(document.hidden||!rpc.up){await new Promise(r=>setTimeout(r,500));continue}
+ try{const r=await rpc.call('printer.pa_loadcell.live',{since,leg_seq:legSeq,limit:3000});lastErr='';info=r;
+  if(r.reset||r.epoch!==epoch||r.unit_gen!==gen){S.t=[];S.f=[];LEGS.length=0;MARKS.length=0;FIT=null;epoch=r.epoch;gen=r.unit_gen;legSeq=0}
+  for(const[t,v]of r.samples)if(!S.t.length||t>S.t[S.t.length-1]){S.t.push(t);S.f.push(v)}since=r.seq;
+  T=r.test||{};if(T.state)ST=Object.assign({},ST,{state:T.state,pa:T.pa,progress:T.progress,phase:T.phase,note:T.note,run:T.run,values:T.values,max_values:T.max_values,last:T.last});
+  if(T.legs&&T.legs.length){for(const[sq,t0,t1,flow,name]of T.legs)LEGS.push({t0,t1,flow,name});legSeq=T.legs[T.legs.length-1][0]}
+  if(T.pa_t!=null&&T.pa_t!==lastPaT){lastPaT=T.pa_t;MARKS.push({t:T.pa_t,pa:T.pa})}
+  keep();fit();if(r.samples.length)DIRTY=true}
+ catch(e){lastErr=e.message;DIRTY=true}
+ paint();await new Promise(r=>setTimeout(r,lastErr?1500:250))}}
+
+const fpa=v=>v==null||!isFinite(v)?'-':(+v).toFixed(4).replace(/(\.\d{3}\d*?)0+$/,'$1');
+const STAGE={reference:'ref',upper:'upper',area:'near',bracket:'near',refine:'near',confirm:'near',repeat:'near'};
+function stage(){const busy=ST.state&&ST.state!=='idle';if(!busy)return ST.last&&ST.last.pa!=null?'done':null;
+ if(ST.state==='analysing')return'result';const st=(T.search&&T.search.steps)||[];if(st.length)return STAGE[st[st.length-1].stage]||'near';
+ return ST.phase==='prime'||!ST.values?'prime':'ref'}
+function paint(){const busy=ST.state&&ST.state!=='idle',st=$('#state'),L=ST.last;
+ let cls='',txt='Idle';
+ if(!rpc.up){cls='bad';txt='Offline'}else if(rpc.auth){cls='bad';txt='Login needed'}
+ else if(ST.state==='analysing'){cls='run';txt='Analysing'}
+ else if(ST.state==='cancelling'){cls='warn';txt='Cancelling'}
+ else if(busy){cls='run';txt=ST.phase==='prime'?'Priming':'Measuring'+(ST.values?` ${ST.values}/${ST.max_values||'?'}`:'')}
+ else if(L&&L.status&&L.status!=='complete'){cls='bad';txt='Last test '+L.status}
+ else if(L&&L.pa!=null){cls='ok';txt='Done'}
+ st.className='chip '+cls;st.lastElementChild.textContent=txt;
+ $('#bar').style.width=busy?Math.round((ST.progress||0)*100)+'%':(L&&L.pa!=null?'100%':'0');
+ const sg=stage(),order=['prime','ref','upper','near','result'],ix=sg==='done'?5:order.indexOf(sg);
+ document.querySelectorAll('#steps li').forEach((li,i)=>{li.className=ix<0?'':i<ix?'done':i===ix?'now':''});
+ $('#pa').textContent=busy&&ST.pa!=null?fpa(ST.pa):'-';
+ $('#n').textContent=busy&&ST.values?`${ST.values} of ${ST.max_values||'?'}`:'-';
+ const pr=busy?(T.search&&T.search.prediction)??ST.prediction:null;$('#est').textContent=pr!=null?fpa(pr):'-';
+ $('#last').innerHTML=L&&L.pa!=null?`${esc(fpa(L.pa))} <span style="color:var(--faint);font-size:12px">± ${esc(L.unc)} ${esc(L.grade||'')}</span>`:'-';
+ const unit=info.unit==='g'||info.unit==='Hz'?info.unit:'';$('#snm').textContent=info.label||'Sensor';$('#lgS').textContent=(info.label||'sensor').toLowerCase()+(unit?' ('+unit+')':'');
+ const n=S.f.length;if(n){let a=0,k=Math.min(n,30);for(let i=n-k;i<n;i++)a+=S.f[i];$('#now').textContent=(a/k).toFixed(1)+(unit?' '+unit:'')}else $('#now').textContent='-';
+ const m=$('#msg');const why=!rpc.up?'Connecting to the printer':rpc.auth?'Moonraker asks for a login. Open this page from a trusted network (moonraker.conf trusted_clients).':lastErr?'No data: '+lastErr:!n?'Waiting for sensor data':'';
+ m.hidden=!why;m.textContent=why}
+
+/* graph: last WIN seconds; min/max per pixel column so 3, 5 or 10 s cost the same */
+function draw(){const cv=$('#cv'),w=cv.clientWidth,h=cv.clientHeight;if(!w||!h)return;const dpr=devicePixelRatio||1;
+ if(cv.width!==Math.round(w*dpr)||cv.height!==Math.round(h*dpr)){cv.width=Math.round(w*dpr);cv.height=Math.round(h*dpr)}
+ const c=cv.getContext('2d');c.setTransform(dpr,0,0,dpr,0,0);c.clearRect(0,0,w,h);
+ const n=S.t.length;if(n<2)return;const x1=S.t[n-1],x0=x1-WIN,L=40,R=6,Tp=6,B=16,pw=w-L-R,ph=h-Tp-B;
+ const a=Math.max(0,lb(S.t,x0)-1),cols=Math.max(10,Math.floor(pw)),mn=new Float32Array(cols).fill(Infinity),mx=new Float32Array(cols).fill(-Infinity);
+ let y0=Infinity,y1=-Infinity;for(let i=a;i<n;i++){const k=Math.floor((S.t[i]-x0)/WIN*(cols-1));if(k<0)continue;const v=S.f[i];if(v<mn[k])mn[k]=v;if(v>mx[k])mx[k]=v;if(v<y0)y0=v;if(v>y1)y1=v}
+ const cmd=[];if(FIT)for(const g of LEGS){if(g.t1<x0||g.name==='prime')continue;cmd.push(g);const v=FIT.o+FIT.g*g.flow;if(v<y0)y0=v;if(v>y1)y1=v}
+ if(!(y1>y0)){y0-=1;y1+=1}const pad=(y1-y0)*.08;y0-=pad;y1+=pad;
+ const X=t=>L+(t-x0)/WIN*pw,Y=v=>Tp+ph-(v-y0)/(y1-y0)*ph;
+ c.font='10px Roboto,system-ui,sans-serif';c.fillStyle=COL.dim;c.strokeStyle=COL.grid;c.lineWidth=1;c.textAlign='right';
+ const step=niceStep(y1-y0,4);for(let v=Math.ceil(y0/step)*step;v<y1;v+=step){const y=Math.round(Y(v))+.5;c.beginPath();c.moveTo(L,y);c.lineTo(L+pw,y);c.stroke();c.fillText(+v.toPrecision(4),L-4,y+3)}
+ c.textAlign='center';for(let s=0;s<=WIN;s+=WIN<=3?1:WIN<=5?1:2){const x=Math.round(X(x1-s))+.5;c.beginPath();c.moveTo(x,Tp);c.lineTo(x,Tp+ph);c.stroke();c.fillText(s?'-'+s+' s':'now',Math.min(x,L+pw-12),h-4)}
+ c.save();c.beginPath();c.rect(L,Tp,pw,ph);c.clip();
+ for(const mk of MARKS){if(mk.t<x0)continue;const x=Math.round(X(mk.t))+.5;c.strokeStyle=COL.warn;c.setLineDash([3,3]);c.beginPath();c.moveTo(x,Tp);c.lineTo(x,Tp+ph);c.stroke();c.setLineDash([]);
+  c.fillStyle=COL.warn;c.textAlign='left';c.fillText('PA '+fpa(mk.pa),x+3,Tp+10)}
+ if(cmd.length){c.strokeStyle=COL.cmd;c.lineWidth=1.6;c.setLineDash([2,3]);c.beginPath();let first=true;
+  for(const g of cmd){const v=Y(FIT.o+FIT.g*g.flow),xa=X(Math.max(g.t0,x0)),xb=X(Math.min(g.t1,x1));if(first){c.moveTo(xa,v);first=false}else c.lineTo(xa,v);c.lineTo(xb,v)}c.stroke();c.setLineDash([])}
+ c.strokeStyle=COL.p;c.lineWidth=1.5;c.lineJoin='round';c.beginPath();let on=false;
+ for(let k=0;k<cols;k++){if(mn[k]===Infinity){on=false;continue}const x=L+k*pw/(cols-1),ya=Y(mn[k]),yb=Y(mx[k]);if(!on){c.moveTo(x,ya);on=true}else c.lineTo(x,ya);if(yb!==ya)c.lineTo(x,yb)}
+ c.stroke();c.restore()}
+function niceStep(r,n){const s=r/n,p=Math.pow(10,Math.floor(Math.log10(s||1))),f=s/p;return(f<1.5?1:f<3?2:f<7?5:10)*p}
+function frame(){if(DIRTY&&!document.hidden){DIRTY=false;draw()}requestAnimationFrame(frame)}
+function paintWin(){document.querySelectorAll('#win button').forEach(b=>b.setAttribute('aria-pressed',+b.dataset.w===WIN))}
+document.querySelectorAll('#win button').forEach(b=>b.onclick=()=>{WIN=+b.dataset.w;ls.set('win',WIN);paintWin();DIRTY=true});
+addEventListener('resize',()=>{DIRTY=true});document.addEventListener('visibilitychange',()=>{DIRTY=true});
+paintWin();paint();rpc.connect();poll();requestAnimationFrame(frame);
+</script></body></html>
