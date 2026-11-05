@@ -25,7 +25,7 @@
 .kv{display:flex;flex-direction:column;min-width:0}.kv span{font-size:11px;color:var(--faint)}
 .kv b{font-weight:500;font-size:15px;font-variant-numeric:tabular-nums}.kv b.big{font-size:22px;font-weight:400}
 .steps{display:flex;gap:0;align-items:center;padding:4px 10px 2px;font-size:11px;color:var(--faint);flex-wrap:wrap;row-gap:2px}
-.steps li{list-style:none;display:flex;align-items:center;gap:5px;white-space:nowrap}
+.steps{margin:0}.steps li{list-style:none;display:flex;align-items:center;gap:5px;white-space:nowrap}.steps em{font-style:normal}
 .steps li+li::before{content:"";width:14px;height:1px;background:var(--line);margin:0 6px}
 .steps li i{width:8px;height:8px;border-radius:50%;border:1.5px solid var(--faint)}
 .steps li.done{color:var(--dim)}.steps li.done i{background:var(--ok);border-color:var(--ok)}
@@ -37,6 +37,17 @@ canvas{position:absolute;inset:0;width:100%;height:100%}
 .legend{display:inline-flex;gap:10px;align-items:center}.legend s{display:inline-block;width:16px;height:0;border-top:2px solid var(--primary);vertical-align:middle}
 .legend s.c{border-top:2px dotted var(--cmd)}.legend s.p{border-top:1px dashed var(--warn)}
 .msg{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;text-align:center;color:var(--dim);padding:12px;font-size:12.5px}
+/* compact: a small Mainsail webcam tile (4:3, about 430 x 325). Steps
+   become dots, the numbers one row, the graph takes the rest */
+@media (max-height:380px){
+ .top{padding:3px 8px;min-height:0;gap:6px}.top h1{font-size:12px}
+ .mid{display:flex;align-items:center;gap:4px 12px;padding:4px 8px 2px;flex-wrap:wrap}
+ .steps{padding:0}.steps em{display:none}.steps li+li::before{width:6px;margin:0 3px}
+ .info{padding:0;gap:3px 12px;align-items:baseline}
+ .kv{flex-direction:row;align-items:baseline;gap:4px}.kv span{font-size:10.5px}
+ .kv b,.kv b.big{font-size:13px;font-weight:500}
+ .graph{min-height:0;margin:2px 4px 2px}.foot{display:none}}
+@media (max-height:240px){.info .kv:nth-child(2),.info .kv:nth-child(5){display:none}}
 @media (max-width:420px){.kv b.big{font-size:18px}.info{gap:10px}.foot .legend{display:none}}
 @media (prefers-reduced-motion:reduce){.prog i{transition:none}}
 </style></head>
@@ -44,13 +55,15 @@ canvas{position:absolute;inset:0;width:100%;height:100%}
  <div class="top"><h1>PA test</h1><span class="chip" id="state"><i></i><span>connecting</span></span><span class="sp"></span>
   <span class="seg" id="win" role="group" aria-label="Graph time window"><button data-w="3">3 s</button><button data-w="5">5 s</button><button data-w="10">10 s</button></span></div>
  <div class="prog" aria-hidden="true"><i id="bar"></i></div>
- <ol class="steps" id="steps" aria-label="Test steps"><li data-s="prime"><i></i>Prime</li><li data-s="ref"><i></i>PA 0</li><li data-s="upper"><i></i>Upper</li><li data-s="near"><i></i>Near values</li><li data-s="result"><i></i>Result</li></ol>
+ <div class="mid">
+ <ol class="steps" id="steps" aria-label="Test steps"><li data-s="prime" title="Prime"><i></i><em>Prime</em></li><li data-s="ref" title="PA 0"><i></i><em>PA 0</em></li><li data-s="upper" title="Upper"><i></i><em>Upper</em></li><li data-s="near" title="Near values"><i></i><em>Near values</em></li><li data-s="result" title="Result"><i></i><em>Result</em></li></ol>
  <div class="info">
   <div class="kv"><span>PA now</span><b class="big" id="pa">-</b></div>
   <div class="kv"><span>Value</span><b id="n">-</b></div>
   <div class="kv"><span>Estimate</span><b id="est">-</b></div>
   <div class="kv"><span id="lastk">Last result</span><b id="last">-</b></div>
   <div class="kv"><span id="snm">Sensor</span><b id="now">-</b></div>
+ </div>
  </div>
  <div class="graph"><canvas id="cv" aria-label="Live sensor reading, extruder command dotted, PA changes marked"></canvas><div class="msg" id="msg" hidden></div></div>
  <div class="foot"><span class="legend"><span><s></s> <span id="lgS">sensor</span></span><span><s class="c"></s> extruder command</span><span><s class="p"></s> PA change</span></span><span class="sp"></span><span>Watch only · <a href="/loadcell/?tab=test" target="_blank" rel="noopener">open PIRO-EDGE</a> to start or cancel</span></div>
