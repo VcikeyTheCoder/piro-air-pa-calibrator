@@ -16,6 +16,7 @@
 .chip i{width:7px;height:7px;border-radius:50%;background:var(--faint)}.chip.run i{background:var(--primary)}.chip.ok i{background:var(--ok)}.chip.bad i{background:var(--bad)}.chip.warn i{background:var(--warn)}
 .sp{flex:1}
 .seg{display:inline-flex;border:1px solid var(--line);border-radius:4px;overflow:hidden}
+select{font:inherit;font-size:11.5px;color:var(--dim);background:var(--bg);border:1px solid var(--line);border-radius:4px;padding:1px 4px}select:focus-visible{outline:2px solid var(--primary)}
 .seg button{font:inherit;font-size:11.5px;color:var(--dim);background:none;border:0;padding:2px 9px;cursor:pointer}
 .seg button+button{border-left:1px solid var(--line)}
 .seg button[aria-pressed=true]{color:var(--primary);background:color-mix(in srgb,var(--primary) 14%,transparent)}
@@ -36,7 +37,7 @@ canvas{position:absolute;inset:0;width:100%;height:100%}
 .foot a{color:var(--dim)}
 .legend{display:inline-flex;gap:10px;align-items:center}.legend s{display:inline-block;width:16px;height:0;border-top:2px solid var(--primary);vertical-align:middle}
 .legend s.c{border-top:2px dotted var(--cmd)}.legend s.p{border-top:1px dashed var(--warn)}
-.msg{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;text-align:center;color:var(--dim);padding:12px;font-size:12.5px}
+.msg[hidden]{display:none}.msg{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;text-align:center;color:var(--dim);padding:12px;font-size:12.5px}
 /* compact: a small Mainsail webcam tile (4:3, about 430 x 325). Steps
    become dots, the numbers one row, the graph takes the rest */
 @media (max-height:380px){
@@ -49,10 +50,13 @@ canvas{position:absolute;inset:0;width:100%;height:100%}
  .graph{min-height:0;margin:2px 4px 2px}.foot{display:none}}
 @media (max-height:240px){.info .kv:nth-child(2),.info .kv:nth-child(5){display:none}}
 @media (max-width:420px){.kv b.big{font-size:18px}.info{gap:10px}.foot .legend{display:none}}
+.pinfo{display:none}.probing .steps,.probing .info{display:none}.probing .pinfo{display:flex}
+.pinfo b.bad{color:var(--bad)}.pinfo b.ok{color:var(--ok)}.pinfo b.warn{color:var(--warn)}
 @media (prefers-reduced-motion:reduce){.prog i{transition:none}}
 </style></head>
 <body><div class="app">
  <div class="top"><h1>PA test</h1><span class="chip" id="state"><i></i><span>connecting</span></span><span class="sp"></span>
+  <select id="sm" aria-label="Graph smoothing (display only)" title="Smoothing for this graph only. Tests and probing use the raw samples."><option value="0">Raw</option><option value="10">10 ms</option><option value="20">20 ms</option><option value="40">40 ms</option></select>
   <span class="seg" id="win" role="group" aria-label="Graph time window"><button data-w="3">3 s</button><button data-w="5">5 s</button><button data-w="10">10 s</button></span></div>
  <div class="prog" aria-hidden="true"><i id="bar"></i></div>
  <div class="mid">
@@ -64,6 +68,13 @@ canvas{position:absolute;inset:0;width:100%;height:100%}
   <div class="kv"><span id="lastk">Last result</span><b id="last">-</b></div>
   <div class="kv"><span id="snm">Sensor</span><b id="now">-</b></div>
  </div>
+ <div class="info pinfo" aria-label="Probing">
+  <div class="kv"><span>Tap</span><b class="big" id="pn">-</b></div>
+  <div class="kv"><span>Z</span><b id="pz">-</b></div>
+  <div class="kv"><span>Quality</span><b id="pq">-</b></div>
+  <div class="kv"><span>Eddy</span><b id="pr">-</b></div>
+  <div class="kv"><span>Note</span><b id="pw" style="font-size:12px;font-weight:400">-</b></div>
+ </div>
  </div>
  <div class="graph"><canvas id="cv" aria-label="Live sensor reading, extruder command dotted, PA changes marked"></canvas><div class="msg" id="msg" hidden></div></div>
  <div class="foot"><span class="legend"><span><s></s> <span id="lgS">sensor</span></span><span><s class="c"></s> extruder command</span><span><s class="p"></s> PA change</span></span><span class="sp"></span><span>Watch only · <a href="/loadcell/?tab=test" target="_blank" rel="noopener">open PIRO-EDGE</a> to start or cancel</span></div>
@@ -74,6 +85,7 @@ const $=s=>document.querySelector(s);
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const ls={get(k,d){try{const v=localStorage.getItem('palc.mini.'+k);return v==null?d:JSON.parse(v)}catch{return d}},set(k,v){try{localStorage.setItem('palc.mini.'+k,JSON.stringify(v))}catch{}}};
 let WIN=[3,5,10].includes(ls.get('win',5))?ls.get('win',5):5;
+let SM=[0,10,20,40].includes(ls.get('smooth',0))?ls.get('smooth',0):0;   /* display only */
 const css=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim();
 let COL={};function colours(){COL={p:css('--primary'),cmd:css('--cmd'),warn:css('--warn'),grid:css('--grid'),dim:css('--faint'),text:css('--dim')}}colours();
 
@@ -86,7 +98,7 @@ const rpc={id:1,pend:new Map(),ws:null,up:false,back:600,auth:false,
  connect(){const ws=this.ws=new WebSocket(WSURL);
   ws.onopen=()=>{this.up=true;this.back=600;start()};
   ws.onmessage=e=>{let m;try{m=JSON.parse(e.data)}catch{return}
-   if(m.method==='notify_status_update'&&m.params&&m.params[0]&&m.params[0].pa_loadcell){Object.assign(ST,m.params[0].pa_loadcell);DIRTY=true;return}
+   if(m.method==='notify_status_update'&&m.params&&m.params[0]){const u=m.params[0];if(u.pa_loadcell)Object.assign(ST,u.pa_loadcell);if(u.piro_tap)Object.assign(PTS,u.piro_tap);if(u.pa_loadcell||u.piro_tap){DIRTY=true;paint()}return}
    const p=this.pend.get(m.id);if(!p)return;this.pend.delete(m.id);clearTimeout(p.to);
    if(m.error){const t=String(m.error.message||'');if(m.error.code===401||/unauthori[sz]ed/i.test(t))this.auth=true;p.rej(new Error(t||'error'))}else p.res(m.result)};
   ws.onclose=()=>{this.up=false;for(const[,p]of this.pend){clearTimeout(p.to);p.rej(new Error('offline'))}this.pend.clear();setTimeout(()=>this.connect(),this.back);this.back=Math.min(this.back*2,8000);paint()};
@@ -100,9 +112,9 @@ async function mainsailLook(){try{const r=await rpc.call('server.database.get_it
   if(typeof v.primary==='string'&&/^#[0-9a-f]{3,8}$/i.test(v.primary))document.documentElement.style.setProperty('--primary',v.primary);
   if(v.mode==='light')document.documentElement.dataset.mode='light';colours();DIRTY=true}catch{}}
 
-let ST={state:'idle'},T={},info={},since=0,legSeq=0,epoch=null,gen=null,DIRTY=true,lastErr='';
+let PTS={},ST={state:'idle'},T={},info={},since=0,legSeq=0,epoch=null,gen=null,DIRTY=true,lastErr='';
 const S={t:[],f:[]},LEGS=[],MARKS=[];let lastPaT=null,FIT=null;
-async function start(){mainsailLook();try{await rpc.call('printer.objects.subscribe',{objects:{pa_loadcell:null}}).then(r=>{if(r&&r.status&&r.status.pa_loadcell)Object.assign(ST,r.status.pa_loadcell)})}catch{}}
+async function start(){mainsailLook();try{await rpc.call('printer.objects.subscribe',{objects:{pa_loadcell:null,piro_tap:['in_session','session_taps','last_tap','rate','mode','streaming','error']}}).then(r=>{const s=r&&r.status||{};if(s.pa_loadcell)Object.assign(ST,s.pa_loadcell);if(s.piro_tap)Object.assign(PTS,s.piro_tap)})}catch{}}
 function keep(){const end=S.t.length?S.t[S.t.length-1]:0,cut=end-12;let k=0;while(k<S.t.length&&S.t[k]<cut)k++;if(k>200){S.t=S.t.slice(k);S.f=S.f.slice(k)}
  while(LEGS.length&&LEGS[0].t1<cut)LEGS.shift();while(MARKS.length&&MARKS[0].t<cut-1)MARKS.shift()}
 /* force = offset + gain * flow from the settled part of finished legs */
@@ -128,7 +140,15 @@ const STAGE={reference:'ref',upper:'upper',area:'near',bracket:'near',refine:'ne
 function stage(){const busy=ST.state&&ST.state!=='idle';if(!busy)return ST.last&&ST.last.pa!=null?'done':null;
  if(ST.state==='analysing')return'result';const st=(T.search&&T.search.steps)||[];if(st.length)return STAGE[st[st.length-1].stage]||'near';
  return ST.phase==='prime'||!ST.values?'prime':'ref'}
-function paint(){const busy=ST.state&&ST.state!=='idle',st=$('#state'),L=ST.last;
+/* PIRO-TAP: while probing (and 15 s after) the strip shows the taps */
+function probing(){const lt=PTS.last_tap;return!!PTS.in_session||!!(lt&&lt.time&&Date.now()/1000-lt.time<15&&!(ST.state&&ST.state!=='idle'))}
+function paintProbe(){const lt=PTS.last_tap||{};$('#pn').textContent=PTS.in_session?(PTS.session_taps||0):(lt.session_tap||'-');
+ $('#pz').textContent=lt.z!=null?(+lt.z).toFixed(4):'-';const q=$('#pq');q.textContent=lt.ok?lt.quality+' %':lt.id?'failed':'-';q.className=!lt.id?'':!lt.ok||lt.quality<40?'bad':lt.quality<70?'warn':'ok';
+ $('#pr').textContent=PTS.rate?PTS.rate+'/s':'-';$('#pw').textContent=lt.why||'-'}
+function paint(){const pr0=probing();document.body.classList.toggle('probing',pr0);$('h1').textContent=pr0?'Probing':'PA test';
+ if(pr0){paintProbe();const st=$('#state');st.className='chip '+(PTS.error?'bad':PTS.in_session?'run':'ok');st.lastElementChild.textContent=PTS.error?'Eddy error':PTS.in_session?'Tap '+(PTS.session_taps||0):'Done';
+  $('#bar').style.width='0';const m=$('#msg');m.hidden=!!S.f.length;m.textContent='Waiting for sensor data';return}
+ const busy=ST.state&&ST.state!=='idle',st=$('#state'),L=ST.last;
  let cls='',txt='Idle';
  if(!rpc.up){cls='bad';txt='Offline'}else if(rpc.auth){cls='bad';txt='Login needed'}
  else if(ST.state==='analysing'){cls='run';txt='Analysing'}
@@ -155,7 +175,9 @@ function draw(){const cv=$('#cv'),w=cv.clientWidth,h=cv.clientHeight;if(!w||!h)r
  const c=cv.getContext('2d');c.setTransform(dpr,0,0,dpr,0,0);c.clearRect(0,0,w,h);
  const n=S.t.length;if(n<2)return;const x1=S.t[n-1],x0=x1-WIN,L=40,R=6,Tp=6,B=16,pw=w-L-R,ph=h-Tp-B;
  const a=Math.max(0,lb(S.t,x0)-1),cols=Math.max(10,Math.floor(pw)),mn=new Float32Array(cols).fill(Infinity),mx=new Float32Array(cols).fill(-Infinity);
- let y0=Infinity,y1=-Infinity;for(let i=a;i<n;i++){const k=Math.floor((S.t[i]-x0)/WIN*(cols-1));if(k<0)continue;const v=S.f[i];if(v<mn[k])mn[k]=v;if(v>mx[k])mx[k]=v;if(v<y0)y0=v;if(v>y1)y1=v}
+ let V=S.f;if(SM){const h=SM/2000,a0=Math.max(0,lb(S.t,x0-h)-1);V=new Float32Array(n);let lo=a0,hi=a0,sum=0;   /* centred moving average */
+  for(let i=a0;i<n;i++){const t=S.t[i];while(hi<n&&S.t[hi]<=t+h){sum+=S.f[hi];hi++}while(S.t[lo]<t-h){sum-=S.f[lo];lo++}V[i]=sum/(hi-lo)}}
+ let y0=Infinity,y1=-Infinity;for(let i=a;i<n;i++){const k=Math.floor((S.t[i]-x0)/WIN*(cols-1));if(k<0)continue;const v=V[i];if(v<mn[k])mn[k]=v;if(v>mx[k])mx[k]=v;if(v<y0)y0=v;if(v>y1)y1=v}
  const cmd=[];if(FIT)for(const g of LEGS){if(g.t1<x0||g.name==='prime')continue;cmd.push(g);const v=FIT.o+FIT.g*g.flow;if(v<y0)y0=v;if(v>y1)y1=v}
  if(!(y1>y0)){y0-=1;y1+=1}const pad=(y1-y0)*.08;y0-=pad;y1+=pad;
  const X=t=>L+(t-x0)/WIN*pw,Y=v=>Tp+ph-(v-y0)/(y1-y0)*ph;
@@ -172,7 +194,8 @@ function draw(){const cv=$('#cv'),w=cv.clientWidth,h=cv.clientHeight;if(!w||!h)r
  c.stroke();c.restore()}
 function niceStep(r,n){const s=r/n,p=Math.pow(10,Math.floor(Math.log10(s||1))),f=s/p;return(f<1.5?1:f<3?2:f<7?5:10)*p}
 function frame(){if(DIRTY&&!document.hidden){DIRTY=false;draw()}requestAnimationFrame(frame)}
-function paintWin(){document.querySelectorAll('#win button').forEach(b=>b.setAttribute('aria-pressed',+b.dataset.w===WIN))}
+function paintWin(){document.querySelectorAll('#win button').forEach(b=>b.setAttribute('aria-pressed',+b.dataset.w===WIN));$('#sm').value=String(SM)}
+$('#sm').onchange=e=>{SM=+e.target.value||0;ls.set('smooth',SM);DIRTY=true};
 document.querySelectorAll('#win button').forEach(b=>b.onclick=()=>{WIN=+b.dataset.w;ls.set('win',WIN);paintWin();DIRTY=true});
 addEventListener('resize',()=>{DIRTY=true});document.addEventListener('visibilitychange',()=>{DIRTY=true});
 paintWin();paint();rpc.connect();poll();requestAnimationFrame(frame);

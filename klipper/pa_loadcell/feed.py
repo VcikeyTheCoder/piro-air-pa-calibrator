@@ -17,9 +17,12 @@ Load cell (verified against klippy/extras/load_cell.py, load_cell_probe.py):
   * grams is None until calibrated and tared (then raw counts are used).
 BTT Eddy / LDC1612 (klippy/extras/ldc1612.py, probe_eddy_current.py):
   * add_client(cb): cb(msg) about every 0.1 s, msg['data'] =
-    [(print_time, frequency_hz, z), ...] at 400 samples/s, plus 'errors' /
-    'overflows'. Reached through [pa_eddy] (object 'pa_eddy') or an
-    existing [probe_eddy_current NAME] (never both on one chip).
+    [(print_time, frequency_hz, z), ...] at the hub's rate (idle / PA test),
+    plus 'errors' / 'overflows'. Reached through [piro_tap] or [pa_eddy]
+    (both use piro_tap's hub: rate per job) or an existing
+    [probe_eddy_current NAME] (fixed 400/s). Never two on one chip.
+Nothing is started before klippy:ready: Klipper's sensor drivers crash (and
+stay stuck) when started while the MCUs are still being configured.
   * The value kept is sign * (Hz - zero): the change from a zero point
     (Tare, or the first sample), with the sign set so more nozzle pressure
     reads higher. Raw Hz (~3 MHz) would lose detail in the page's buffer.
@@ -36,9 +39,27 @@ KINDS = ('load_cell', 'eddy')
 LABEL = {'load_cell': 'Load cell', 'eddy': 'Eddy'}
 
 
+STARTING = "Klipper is still starting: the sensor starts once it is ready"
+
+
+def count_up(total, raw, value):
+    """(new total, new raw): error / overflow counts that only grow,
+    whether the driver sends a running total (Klipper) or a per-batch count
+    (some forks; a running total never shrinks except on a restart)."""
+    try:
+        v = int(value or 0)
+    except (TypeError, ValueError):
+        return total, raw
+    return total + (v - raw if v >= raw else v), v
+
+
 class Channel:
-    def __init__(self, printer, kind, name, ring_size, needed, state=None):
+    def __init__(self, printer, kind, name, ring_size, needed, state=None,
+                 is_ready=None):
         self.printer, self.kind, self.name = printer, kind, name
+        self.is_ready = is_ready or (lambda: True)
+        self.start_error = ''
+        self._raw = {'errors': 0, 'overflows': 0}
         self.reactor = printer.get_reactor()
         self.ring = collections.deque(maxlen=ring_size)
         self.total = 0                  # samples ever stored (sequence no.)
@@ -76,7 +97,7 @@ class Channel:
                             and callable(getattr(holder, 'add_client', None)):
                         return name, holder
             return None, None
-        names = [self.name, 'pa_eddy']
+        names = [self.name, 'piro_tap', 'pa_eddy']
         try:
             names += [n for n, _ in P.lookup_objects('probe_eddy_current')]
         except Exception:
@@ -92,12 +113,15 @@ class Channel:
 
     def missing_text(self):
         if self.kind == 'eddy':
-            return ("No Eddy sensor found. Add [pa_eddy] (see pa_eddy.cfg) or "
-                    "set eddy: to your [probe_eddy_current NAME] section")
+            return ("No Eddy sensor found. Add [piro_tap] or [pa_eddy] (see "
+                    "pa_loadcell.cfg) or set eddy: to your "
+                    "[probe_eddy_current NAME] section")
         return ("No load cell found. Add [load_cell] or [load_cell_probe] "
                 "(looked for '%s', 'load_cell', 'load_cell_probe')" % self.name)
 
     def ensure(self):
+        if not self.is_ready():
+            raise PAError(STARTING)
         now = self.reactor.monotonic()
         stale = self.running and self.last_batch and \
             now - self.last_batch > 5.0
@@ -111,9 +135,31 @@ class Channel:
             if self.kind == 'load_cell' else None
         self.gen += 1
         gen = self.gen
-        lc.add_client(lambda msg: self._on_batch(msg, gen))
+        self._raw = {'errors': 0, 'overflows': 0}
+        try:
+            lc.add_client(lambda msg: self._on_batch(msg, gen))
+        except Exception as e:
+            self.gen += 1               # a half-registered callback goes quiet
+            self.running = False
+            self.start_error = "%s (%s) did not start: %s" % (
+                LABEL[self.kind], name, e)
+            logging.warning("pa_loadcell: %s", self.start_error)
+            raise PAError(self.start_error)
+        self.start_error = ''
         self.running = True
         self.last_batch = now
+
+    def set_mode(self, mode):
+        """Ask the sensor for its PA-test sample rate ('pa') or back to idle
+        (None). Only piro_tap / pa_eddy can; others keep their rate."""
+        fn = getattr(self.lc, 'set_mode', None)
+        if fn is None:
+            return None
+        try:
+            return fn('pa_loadcell', mode)
+        except Exception as e:
+            logging.warning("pa_loadcell: rate change failed: %s", e)
+            return None
 
     # -- data path ----------------------------------------------------
     def _convert(self, rows):
@@ -162,10 +208,10 @@ class Channel:
         if not isinstance(msg, dict):
             return
         for k in ('errors', 'overflows'):
-            try:
-                setattr(self, k, int(msg.get(k) or 0))
-            except (TypeError, ValueError):
-                pass
+            if k in msg:
+                total, self._raw[k] = count_up(getattr(self, k), self._raw[k],
+                                               msg.get(k))
+                setattr(self, k, total)
         out, unit = self._convert(msg.get('data') or [])
         if out and unit != self.unit:
             self._reset(unit)
@@ -228,6 +274,7 @@ class Channel:
                 'unit': self.unit, 'calibrated': cal, 'tared': tared,
                 'rate': round(self.rate, 1), 'streaming': self.running,
                 'stale': bool(stale), 'sign': self.sign,
+                'start_error': self.start_error,
                 'errors': self.errors, 'overflows': self.overflows}
 
 
@@ -254,8 +301,10 @@ class SampleBus:
             if state_dir else None
         self.state = self._load_state()
         names = {'load_cell': lc_name, 'eddy': eddy_name}
+        self.ready = False              # set at klippy:ready
         self.channels = [Channel(printer, k, names[k], ring_size,
-                                 self._needed, self.state.setdefault(k, {}))
+                                 self._needed, self.state.setdefault(k, {}),
+                                 lambda: self.ready)
                          for k in kinds]
         self.main = self.channels[0]
         self.other = self.channels[1] if len(self.channels) > 1 else None
@@ -298,6 +347,14 @@ class SampleBus:
     def available(self):
         return self.main.available()
 
+    def set_ready(self):
+        self.ready = True
+
+    def set_mode(self, mode):
+        for ch in self.channels:
+            if ch.kind == 'eddy' and ch.lc is not None:
+                ch.set_mode(mode)
+
     def ensure(self):
         self.main.ensure()
         if self.other is not None:
@@ -335,6 +392,12 @@ class SampleBus:
         'reset' tells the client to drop its buffer (restart / unit flip).
         With two sensors the second comes as 'other' with its own cursor."""
         self.last_live = self.reactor.monotonic()
+        if not self.ready:
+            out = self.info()
+            out.update(starting=True, note=STARTING, epoch=self.epoch,
+                       first=0, seq=since, reset=False, gap=False,
+                       unit_gen=self.main.unit_gen, samples=[])
+            return out
         self.ensure()
         out = self.info()
         out.update(self._read(self.main, since, limit))

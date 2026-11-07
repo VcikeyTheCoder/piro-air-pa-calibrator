@@ -1,7 +1,12 @@
 #!/usr/bin/env bash
-# PA Load Cell Analyzer installer. Run from the repo folder:
-#   ./install.sh              install or update
-#   ./install.sh --uninstall  remove
+# PIRO installer: the PA calibrator (PIRO-EDGE), the PIRO-TAP probe, or both.
+# Run from the repo folder:
+#   ./install.sh              install or update (asks which part the first
+#                             time; later runs keep your choice)
+#   ./install.sh --pa         PA calibrator only
+#   ./install.sh --probe      PIRO-TAP probe only
+#   ./install.sh --both       both
+#   ./install.sh --uninstall  remove everything
 # The Klipper module and the web page are installed as symlinks into this
 # repo folder, so `git pull` (or the Update button in Mainsail's Machine
 # page) updates everything. Keep the repo folder where it is.
@@ -20,6 +25,7 @@ SUDO="${SUDO-sudo}"; [ "$(id -u)" -eq 0 ] && SUDO=""
 EXTRAS="$KLIPPER_DIR/klippy/extras"
 MARK="# pa_loadcell"
 RESTART_MOONRAKER=0
+MODE_FILE="$REPO/.install_mode"
 
 say()  { printf '\033[1;32m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m!! \033[0m %s\n' "$*"; }
@@ -63,10 +69,54 @@ nginx_remove() {
   $SUDO sed -i "/$MARK begin/,/$MARK end/d" "$NGINX_SITE"
 }
 
+# Is [name] (or [name ...]) active (not commented) in any config file?
+active_section() {
+  grep -rqE "^\[$1( [^]]*)?\]" "$CONFIG_DIR" --include='*.cfg' 2>/dev/null
+}
+# include line in printer.cfg, never below the SAVE_CONFIG block
+add_include() {
+  local PCFG="$CONFIG_DIR/printer.cfg" INC="$1"
+  if grep -qx "\[include $INC\]" "$PCFG"; then echo "    [include $INC] already there"; return; fi
+  [ -f "$PCFG.bak-pa_loadcell" ] || cp "$PCFG" "$PCFG.bak-pa_loadcell"
+  python3 - "$PCFG" "$INC" <<'PY'
+import re, sys
+p, name = sys.argv[1], sys.argv[2]
+lines = open(p).read().split('\n')
+inc = '[include %s]' % name
+for i, l in enumerate(lines):
+    if re.match(r'#\*# <-+ SAVE_CONFIG', l):
+        lines[i:i] = [inc, '']; break
+else:
+    lines += ['', inc, '']
+open(p, 'w').write('\n'.join(lines))
+PY
+  echo "    added [include $INC]"
+}
+remove_include() {
+  [ -f "$CONFIG_DIR/printer.cfg" ] && sed -i "/^\[include $1\]\$/d" "$CONFIG_DIR/printer.cfg" || true
+}
+link() {   # link <repo path> <extras name>
+  rm -rf "$EXTRAS/$2"
+  ln -s "$REPO/$1" "$EXTRAS/$2" || cp -r "$REPO/$1" "$EXTRAS/$2"
+  if [ -d "$KLIPPER_DIR/.git" ] && ! grep -qx "klippy/extras/$2" "$KLIPPER_DIR/.git/info/exclude" 2>/dev/null; then
+    echo "klippy/extras/$2" >> "$KLIPPER_DIR/.git/info/exclude"   # keep Klipper's git clean
+  fi
+}
+
+MODE=""
+case "${1:-}" in
+  --pa) MODE=pa ;; --probe) MODE=probe ;; --both) MODE=both ;;
+  --uninstall|"") ;;
+  *) die "Unknown option ${1}. Use --pa, --probe, --both or --uninstall" ;;
+esac
+
 if [ "${1:-}" = "--uninstall" ]; then
   say "Uninstalling"
-  rm -rf "$EXTRAS/pa_loadcell" "$EXTRAS/pa_eddy.py" "$UI_DIR"
-  [ -f "$CONFIG_DIR/printer.cfg" ] && sed -i -e '/^\[include pa_loadcell.cfg\]$/d' -e '/^\[include pa_auto.cfg\]$/d' "$CONFIG_DIR/printer.cfg"
+  if active_section piro_tap; then
+    die "printer config still has an active [piro_tap] section. Comment it out (and restore your Z endstop) first"
+  fi
+  rm -rf "$EXTRAS/pa_loadcell" "$EXTRAS/pa_eddy.py" "$EXTRAS/piro_tap" "$EXTRAS/piro_eddy.py" "$UI_DIR" "$MODE_FILE"
+  [ -f "$CONFIG_DIR/printer.cfg" ] && sed -i -e '/^\[include pa_loadcell.cfg\]$/d' -e '/^\[include pa_auto.cfg\]$/d' -e '/^\[include piro_tap.cfg\]$/d' "$CONFIG_DIR/printer.cfg"
   python3 - "$CONFIG_DIR/.theme/navi.json" <<'PY' 2>/dev/null || true
 import json, sys
 p = sys.argv[1]; items = json.load(open(p))
@@ -79,25 +129,71 @@ PY
     sed -i "/$MARK begin/,/$MARK end/d" "$MOONRAKER_CONF"; RESTART_MOONRAKER=1
   fi
   restart_services
-  say "Done. Kept $CONFIG_DIR/pa_loadcell.cfg, pa_auto.cfg and ~/printer_data/pa_loadcell"
+  say "Done. Kept $CONFIG_DIR/pa_loadcell.cfg, pa_auto.cfg, piro_tap.cfg, ~/printer_data/pa_loadcell and ~/printer_data/piro_tap"
   exit 0
 fi
 
 [ -d "$EXTRAS" ] || die "Klipper extras folder not found: $EXTRAS (set KLIPPER_DIR)"
 [ -f "$CONFIG_DIR/printer.cfg" ] || die "printer.cfg not found in $CONFIG_DIR (set CONFIG_DIR)"
 
-say "Linking Klipper module"
-rm -rf "$EXTRAS/pa_loadcell" "$EXTRAS/pa_eddy.py"
-ln -s "$REPO/klipper/pa_loadcell" "$EXTRAS/pa_loadcell" || cp -r "$REPO/klipper/pa_loadcell" "$EXTRAS/pa_loadcell"
-# [pa_eddy]: BTT Eddy as a pressure sensor (only used when configured)
-ln -s "$REPO/klipper/pa_eddy.py" "$EXTRAS/pa_eddy.py" || cp "$REPO/klipper/pa_eddy.py" "$EXTRAS/pa_eddy.py"
-# keep Klipper's git tree clean so Moonraker does not flag it as dirty
-for X in klippy/extras/pa_loadcell klippy/extras/pa_eddy.py; do
-  if [ -d "$KLIPPER_DIR/.git" ] && ! grep -qx "$X" "$KLIPPER_DIR/.git/info/exclude" 2>/dev/null; then
-    echo "$X" >> "$KLIPPER_DIR/.git/info/exclude"
+if [ -z "$MODE" ] && [ -f "$MODE_FILE" ]; then MODE="$(cat "$MODE_FILE")"; fi
+if [ -z "$MODE" ]; then
+  if [ -t 0 ]; then
+    echo "What do you want to install?"
+    echo "  1) PA calibrator (PIRO-EDGE)"
+    echo "  2) PIRO-TAP probe (BTT Eddy nozzle probe)"
+    echo "  3) Both"
+    read -r -p "Choice [1-3]: " C
+    case "$C" in 1) MODE=pa ;; 2) MODE=probe ;; 3) MODE=both ;; *) die "Choose 1, 2 or 3" ;; esac
+  else
+    MODE=pa       # updates of older installs (they had only the PA part)
   fi
-done
+fi
+case "$MODE" in pa|probe|both) ;; *) die "Bad install mode '$MODE' in $MODE_FILE" ;; esac
+WANT_PA=0; WANT_PROBE=0
+[ "$MODE" != probe ] && WANT_PA=1
+[ "$MODE" != pa ] && WANT_PROBE=1
+say "Install: $( [ $WANT_PA = 1 ] && echo -n 'PA calibrator ' )$( [ $WANT_PROBE = 1 ] && echo -n 'PIRO-TAP probe' )"
 
+# a part that is still configured cannot be removed (Klipper would not start)
+if [ "$WANT_PROBE" = 0 ] && active_section piro_tap; then
+  die "[piro_tap] is active in your config: comment it out first, or install with --probe / --both"
+fi
+if [ "$WANT_PA" = 0 ] && { active_section pa_loadcell && ! grep -qx '\[include pa_loadcell.cfg\]' "$CONFIG_DIR/printer.cfg"; } ; then
+  die "[pa_loadcell] is active in your config outside pa_loadcell.cfg: remove it first, or install with --pa / --both"
+fi
+if [ "$WANT_PA" = 0 ] && active_section pa_eddy; then
+  die "[pa_eddy] is active in your config: comment it out first, or install with --pa / --both"
+fi
+
+say "Linking Klipper modules"
+link shared/piro_eddy.py piro_eddy.py        # the Eddy hub, used by both parts
+if [ "$WANT_PA" = 1 ]; then
+  link klipper/pa_loadcell pa_loadcell
+  link klipper/pa_eddy.py pa_eddy.py           # [pa_eddy]: Eddy as PA sensor only
+else
+  rm -rf "$EXTRAS/pa_loadcell" "$EXTRAS/pa_eddy.py"
+fi
+if [ "$WANT_PROBE" = 1 ]; then
+  link piro_tap/klipper/piro_tap piro_tap
+  if ! grep -q "setup_trigger_analog" "$EXTRAS/ldc1612.py" 2>/dev/null; then
+    warn "This Klipper is too old for PIRO-TAP (needs v0.13.0-496 or newer): update Klipper before enabling [piro_tap]"
+  fi
+else
+  rm -rf "$EXTRAS/piro_tap"
+fi
+echo "$MODE" > "$MODE_FILE"
+
+if [ "$WANT_PROBE" = 1 ]; then
+  say "Installing PIRO-TAP config"
+  if [ -f "$CONFIG_DIR/piro_tap.cfg" ]; then echo "    kept your piro_tap.cfg (latest: $REPO/piro_tap/piro_tap.cfg)"
+  else cp "$REPO/piro_tap/piro_tap.cfg" "$CONFIG_DIR/piro_tap.cfg"; echo "    $CONFIG_DIR/piro_tap.cfg ([piro_tap] commented out: see the notes in it)"; fi
+  add_include piro_tap.cfg
+else
+  remove_include piro_tap.cfg
+fi
+
+if [ "$WANT_PA" = 1 ]; then
 say "Installing config"
 CFG="$CONFIG_DIR/pa_loadcell.cfg"
 if [ -f "$CFG" ]; then
@@ -190,42 +286,27 @@ else
 fi
 
 say "Adding includes to printer.cfg"
-PCFG="$CONFIG_DIR/printer.cfg"
-BACKED=0
-for INC in pa_loadcell.cfg pa_auto.cfg; do
-  if grep -qx "\[include $INC\]" "$PCFG"; then
-    echo "    [include $INC] already there"
-    continue
-  fi
-  [ "$BACKED" = 1 ] || { cp "$PCFG" "$PCFG.bak-pa_loadcell"; BACKED=1; }
-  python3 - "$PCFG" "$INC" <<'PY'
-import re, sys
-p, name = sys.argv[1], sys.argv[2]
-lines = open(p).read().split('\n')
-inc = '[include %s]' % name
-for i, l in enumerate(lines):             # never write below SAVE_CONFIG
-    if re.match(r'#\*# <-+ SAVE_CONFIG', l):
-        lines[i:i] = [inc, '']; break
-else:
-    lines += ['', inc, '']
-open(p, 'w').write('\n'.join(lines))
-PY
-  echo "    added [include $INC]"
-done
+add_include pa_loadcell.cfg
+add_include pa_auto.cfg
+else
+  remove_include pa_loadcell.cfg
+  remove_include pa_auto.cfg
+fi   # PA part
 
 say "Linking web page: $UI_DIR"
 rm -rf "$UI_DIR"
 ln -s "$REPO/ui" "$UI_DIR" || { mkdir -p "$UI_DIR"; cp "$REPO/ui/index.html" "$REPO/ui/mini.html" "$UI_DIR/"; }
 
-say "Adding 'Load Cell' link to the Mainsail sidebar"
-python3 - "$CONFIG_DIR/.theme/navi.json" <<'PY'
+say "Adding the page to the Mainsail sidebar"
+python3 - "$CONFIG_DIR/.theme/navi.json" "$MODE" <<'PY'
 import json, os, sys
 p = sys.argv[1]; os.makedirs(os.path.dirname(p), exist_ok=True)
 try: items = json.load(open(p))
 except (OSError, ValueError): items = []
 if not isinstance(items, list): items = []
 items = [i for i in items if i.get('href') != '/loadcell/']      # idempotent
-items.append({"title": "Load Cell", "href": "/loadcell/", "target": "_self",
+title = "PIRO-TAP" if sys.argv[2] == "probe" else "Load Cell"
+items.append({"title": title, "href": "/loadcell/", "target": "_self",
               "position": 85,
               "icon": "M16,11.78L20.24,4.45L21.97,5.45L16.74,14.5L10.23,10.75L5.46,19H22V21H2V3H4V17.54L9.5,8L16,11.78Z"})
 json.dump(items, open(p, 'w'), indent=2)
@@ -258,11 +339,19 @@ fi
 
 restart_services
 H="$(hostname)"
-cat <<MSG
-
-Installed. Next:
+echo
+echo "Installed ($MODE). Next:"
+if [ "$WANT_PA" = 1 ]; then cat <<MSG
+  PA calibrator:
   1. Edit $CFG  (park_x/y and test_x/y for your bed)
   2. In the Mainsail console run:  PA_LOADCELL_DIAG
-  3. Open the page:  http://$H.local/loadcell/   (also in the Mainsail sidebar: 'Load Cell', after a browser refresh)
-  4. Auto PA before every print: add  PA_AUTO {rawparams}  to PRINT_START, see $AUTO
+  3. Auto PA before every print: add  PA_AUTO {rawparams}  to PRINT_START, see $AUTO
 MSG
+fi
+if [ "$WANT_PROBE" = 1 ]; then cat <<MSG
+  PIRO-TAP probe:
+  1. Read and edit $CONFIG_DIR/piro_tap.cfg, remove your other probe, uncomment [piro_tap]
+  2. FIRMWARE_RESTART, then  PIRO_TAP_CALIBRATE MODE=THRESHOLD  and  SAVE_CONFIG
+MSG
+fi
+echo "  Page: http://$H.local/loadcell/  (Mainsail sidebar, after a browser refresh)"

@@ -65,7 +65,7 @@ def build(probe_style):
 for style in (False, True):
     p,sensor,lc=build(style)
     name='load_cell_probe' if style else 'load_cell'
-    bus=SampleBus(p,name,60000,15.0)
+    bus=SampleBus(p,name,60000,15.0); bus.set_ready()
     assert bus.available(), 'not found'
     got=[]; bus.subscribe(got.extend)
     # three batches of constant force: counts = tare + 95.783*10 -> 10 g

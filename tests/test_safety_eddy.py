@@ -56,6 +56,7 @@ def make(sensor='eddy', primary='load_cell', tau=0.045, drop=0.0):
     root = tempfile.mkdtemp()
     bus = SampleBus(p, 'load_cell', 60000, 15.0, sensor=sensor,
                     primary=primary, state_dir=root)
+    bus.set_ready()
     store = RunStore(root)
     return p, bus, store, PATestRunner(p, bus, store, LIM)
 

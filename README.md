@@ -20,13 +20,14 @@ Tested on printers with more than 200 runs across several filaments.
 - Adaptive search: up to 7 PA values (`max_values`) placed around the answer, about 1 to 2 minutes per filament
 - PIRO-FALL result with ± uncertainty, a *good / fair / poor* grade and a graph of how the ± narrows with every value; PIRO-AREA and PIRO-EDGE shown beside it
 - Mode and method, chosen separately: **mode** = the rule judging the curve (`fall` PIRO-FALL, default, `area` PIRO-AREA or `edge` PIRO-EDGE); **method** = how each PA value is applied (`push`, default: exactly Klipper's own PA with no XY motion, or `klipper`: Klipper's own PA on a short XY line). No conversion either way
-- Load cell, BTT Eddy (raw Hz over I2C, `[pa_eddy]`) or both at once to compare them on the same pulses
-- Mainsail mini window: read-only test progress and a live 3 / 5 / 10 s graph on the Mainsail dashboard (HTML Iframe webcam)
+- Load cell, BTT Eddy (raw Hz over I2C, `[piro_tap]` or `[pa_eddy]`) or both at once to compare them on the same pulses
+- **PIRO-TAP** (its own part, [`piro_tap/`](piro_tap)): the same Eddy as a nozzle-contact Z probe: bed mesh, Z tilt / QGL, 4-touch Z homing, MCU-side trigger in Hz, Kalico-style pullback fit for Z, ooze checks with retries, nozzle thermal expansion calibration
+- Mainsail mini window: read-only test progress, probing progress and a live 3 / 5 / 10 s graph with display-only smoothing on the Mainsail dashboard (HTML Iframe webcam)
 - Auto PA before every print at the slicer's outer wall flow (OrcaSlicer), set as Klipper's PA, no copying
 - Graphs that show how the value was chosen, from the raw pulse to the final line
 - Live load cell graph, manual recordings, compare across runs, export and import of runs
 - Settings saved to `pa_loadcell.cfg`, six themes (including a tmux + Neovim style Terminal theme) plus custom theme files
-- Works with `[load_cell]`, `[load_cell_probe]`, `[pa_eddy]` and `[probe_eddy_current]`
+- Works with `[load_cell]`, `[load_cell_probe]`, `[piro_tap]`, `[pa_eddy]` and `[probe_eddy_current]`
 - Hard to break: endpoint errors never shut Klipper down, crash-safe saves, heavy analysis in a background process, checked imports
 
 ## Install
@@ -34,15 +35,17 @@ Tested on printers with more than 200 runs across several filaments.
 ```bash
 cd ~
 git clone https://github.com/VcikeyTheCoder/piro-air-pa-calibrator.git
-cd piro-air-pa-calibrator && bash install.sh
+cd piro-air-pa-calibrator && bash install.sh     # asks: PA calibrator, PIRO-TAP probe, or both
 ```
+
+`bash install.sh --pa`, `--probe` or `--both` chooses without asking. Later runs keep the choice.
 
 Set `test_x/test_y` and `park_x/park_y` in `pa_loadcell.cfg`, then refresh Mainsail (Ctrl+F5). **Load Cell**
 appears in the sidebar. Details: [Installation](https://github.com/VcikeyTheCoder/piro-air-pa-calibrator/wiki/Installation).
 
 | | |
 |---|---|
-| Update | `cd ~/piro-air-pa-calibrator && git pull && bash install.sh`, or **Update** on Mainsail's Machine page |
+| Update | `cd ~/piro-air-pa-calibrator && git pull && bash install.sh`, or **Update** on Mainsail's Machine page (run `bash install.sh` once after updates that add files) |
 | Uninstall | `bash install.sh --uninstall` (config and runs are kept) |
 
 ## Commands
@@ -54,6 +57,11 @@ appears in the sidebar. Details: [Installation](https://github.com/VcikeyTheCode
 | `PA_LOADCELL_TEST METHOD=klipper` | Apply PA on a short XY line for this run (default `method: push`) |
 | `PA_LOADCELL_DIAG` | Check the load cell stream: expect about 320 samples/s |
 | `PA_AUTO {rawparams}` | In PRINT_START: auto PA before every print (`pa_auto.cfg`) |
+| `PIRO_TAP_CALIBRATE MODE=THRESHOLD` | PIRO-TAP: `trigger_hz` = 3 × Eddy noise (peak to peak), then `SAVE_CONFIG` |
+| `PIRO_TAP_THERMAL_CALIBRATE START=0 END=200 STEP=50` | PIRO-TAP: nozzle growth per °C |
+| `PIRO_TAP_THERMAL_APPLY TEMP=` | PIRO-TAP: thermal Z offset in PRINT_START, before the first layer |
+| `NOZZLE_CLEAN_CHECK` | PIRO-TAP: tap until 3 clean taps agree |
+| `PIRO_TAP_STATUS` | PIRO-TAP: rate, trigger, last tap. More: [PIRO-TAP probe](https://github.com/VcikeyTheCoder/piro-air-pa-calibrator/wiki/PIRO-TAP-probe) |
 
 The test needs the nozzle at `min_temp`, all axes homed and Z at `required_z` (20 mm). Apply the result with
 `SET_PRESSURE_ADVANCE ADVANCE=<value>`. All parameters: [Commands](https://github.com/VcikeyTheCoder/piro-air-pa-calibrator/wiki/Commands).

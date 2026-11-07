@@ -110,6 +110,9 @@ table{border-collapse:collapse;width:100%;font-size:13px}th,td{text-align:left;p
 .runhead{padding:16px 18px}
 .runhead h2{margin:0 0 4px;font-size:19px;font-weight:650;letter-spacing:-.01em}
 .dim{color:var(--dim)}.small{font-size:12px}
+.ptaps{overflow:auto;max-height:380px}
+body.probe-only #tabs button:not([data-tab=probe]),body.probe-only #cSrc,body.probe-only #cRate,body.probe-only #cState,body.probe-only #setBtn{display:none!important}#pTable tbody tr{cursor:pointer}#pTable tbody tr:hover{background:var(--panel2)}#pTable tbody tr[aria-selected=true]{background:color-mix(in srgb,var(--amber) 14%,transparent)}
+#pTable td.q{white-space:nowrap}#pTable .bad{color:var(--rec)}#pLeg{display:flex;gap:14px;flex-wrap:wrap;color:var(--dim)}#pLeg s{display:inline-block;width:18px;border-top:2px dashed;vertical-align:middle;margin-right:5px}
 .lede{margin:0;color:var(--dim);max-width:68ch}
 .rh-top{display:flex;gap:16px;align-items:flex-start;justify-content:space-between;flex-wrap:wrap}
 button.go{font-size:15px;padding:9px 20px}
@@ -388,6 +391,7 @@ html[data-theme=cat] #tabs .lbl{display:none}}
  <button role="tab" data-tab="live" aria-selected="true"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12h4l3-8 4 16 3-8h6"/></svg><span class="lbl">Live</span></button>
  <button role="tab" data-tab="test" aria-selected="false"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 5v14l11-7z"/></svg><span class="lbl">PA test</span></button>
  <button role="tab" data-tab="hist" aria-selected="false"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5M12 7v5l3 3"/></svg><span class="lbl">History</span></button>
+ <button role="tab" data-tab="probe" aria-selected="false" id="tabProbe" hidden><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 3h6v6l-3 5-3-5z"/><path d="M4 20h16M12 14v3"/></svg><span class="lbl">Probe</span></button>
  <button role="tab" data-tab="cmp" aria-selected="false"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 7h13M17 4l3 3-3 3M17 17H4M7 14l-3 3 3 3"/></svg><span class="lbl">Compare</span><span class="badge num" id="nCmp">0</span></button>
  <button role="tab" data-tab="set" aria-selected="false"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/></svg><span class="lbl">Settings</span></button>
  <div class="navstat" id="navstat"></div>
@@ -412,6 +416,7 @@ html[data-theme=cat] #tabs .lbl{display:none}}
    <input id="markText" placeholder="Note" size="10" hidden aria-label="Mark note">
   </div>
   <div class="grp"><button id="tare" title="Zero the sensor">Tare</button></div>
+  <div class="grp"><label class="dim small" for="smooth">Smoothing</label><select id="smooth" title="Graph only: recordings, tests, probing and the numbers above use the raw samples"><option value="0">Off</option><option value="10">10 ms</option><option value="20">20 ms</option><option value="40">40 ms</option><option value="80">80 ms</option></select></div>
   <span class="sp"></span>
   <span style="font-size:12px;color:var(--dim)">Last 10 min kept. Record to save longer.</span>
  </div>
@@ -467,6 +472,22 @@ html[data-theme=cat] #tabs .lbl{display:none}}
  <div class="row"><div class="seg" id="kind"><button data-k="all" aria-pressed="true">All</button><button data-k="test" aria-pressed="false">Tests</button><button data-k="manual" aria-pressed="false">Recordings</button></div>
   <input id="search" type="search" placeholder="Search name, filament, notes" size="26" aria-label="Search runs"><span class="sp"></span><button id="importBtn" title="Load a .palc.json run">Import run</button><input id="importFile" type="file" accept=".json,.palc.json,application/json" hidden><button id="refresh" class="quiet">Refresh</button></div>
  <div class="runs" id="runs"></div>
+</section>
+
+<section id="probe">
+ <div class="row"><b>PIRO-TAP probe</b><span class="chip" id="pState"><i></i><span>-</span></span><span class="dim small num" id="pInfo"></span><span class="sp"></span><button id="pNewest" class="quiet" title="Follow the newest tap">Newest</button></div>
+ <div class="card" style="padding:12px;margin-top:10px">
+  <div class="row" style="margin-bottom:6px"><b id="pTitle">No taps yet</b><span class="sp"></span><span class="small" id="pWhy"></span></div>
+  <div class="scope"><canvas id="pc" style="height:300px" aria-label="Eddy pressure during the selected tap, with the fitted lines"></canvas><div class="tip" id="pcTip"></div></div>
+  <div class="legend small" id="pLeg" style="margin-top:6px"></div>
+  <div class="num dim small" id="pFeat" style="margin-top:4px"></div>
+ </div>
+ <div class="card" style="padding:12px;margin-top:10px" id="thCard">
+  <div class="row" style="margin-bottom:6px"><b>Nozzle growth</b><span class="sp"></span><span class="small dim" id="thInfo"></span></div>
+  <canvas id="thc" style="width:100%;height:220px;display:block" aria-label="Measured and predicted nozzle growth against nozzle temperature"></canvas>
+  <div class="small dim" id="thNote" style="margin-top:6px"></div>
+ </div>
+ <div class="card ptaps" style="margin-top:10px"><table id="pTable"><thead><tr><th>Tap</th><th>Time</th><th>X</th><th>Y</th><th>Z</th><th>Quality</th><th>Nozzle</th><th>Note</th></tr></thead><tbody></tbody></table></div>
 </section>
 
 <section id="cmp">
@@ -565,7 +586,7 @@ const WSURL=(()=>{const w=Q.get('ws'),h=w&&w.split(':')[0];
  return(location.protocol==='https:'?'wss://':'ws://')+location.host+'/websocket'})();
 const rpc={id:1,pend:new Map(),ws:null,back:500,up:false,
  connect(){const ws=this.ws=new WebSocket(WSURL);
-  ws.onopen=()=>{this.up=true;this.back=500;status();loadThemes();if($('#hist').classList.contains('on')||$('#test').classList.contains('on'))loadRuns()};
+  ws.onopen=()=>{this.up=true;this.back=500;status();loadThemes();probeCheck();if($('#hist').classList.contains('on')||$('#test').classList.contains('on'))loadRuns()};
   ws.onmessage=e=>{let m;try{m=JSON.parse(e.data)}catch{return}const p=this.pend.get(m.id);if(!p)return;this.pend.delete(m.id);clearTimeout(p.to);
    m.error?p.rej(new Error(m.error.message||'Request failed')):p.res(m.result)};
   ws.onclose=()=>{this.up=false;status();for(const[,p]of this.pend){clearTimeout(p.to);p.rej(new Error('disconnected'))}this.pend.clear();setTimeout(()=>this.connect(),this.back);this.back=Math.min(this.back*2,8000)};
@@ -843,7 +864,7 @@ function fitLive(){const xs=[],ys=[];const end=bn?bt[bn-1]:0;
  if(new Set(xs).size<2)return null;const n=xs.length,mx=xs.reduce((a,b)=>a+b)/n,my=ys.reduce((a,b)=>a+b)/n;let sxx=0,sxy=0;
  for(let i=0;i<n;i++){sxx+=(xs[i]-mx)**2;sxy+=(xs[i]-mx)*(ys[i]-my)}const gain=sxy/sxx;return{offset:my-gain*mx,gain}}
 async function pollLoop(){for(;;){
- if(document.hidden||!rpc.up){await sleep(400);continue}
+ if(document.hidden||!rpc.up||!HAS_PA){await sleep(400);continue}
  try{const r=await api('live',{since:seq,leg_seq:legSeq,since2:B2.seq},6000);liveErr='';
   if(r.reset||r.epoch!==epoch||r.unit_gen!==unitGen){resetBuf();epoch=r.epoch;unitGen=r.unit_gen}
   for(const[t,v]of r.samples)pushS(t,v);trimBuf();if(r.samples.length)DIRTY=true;
@@ -897,8 +918,15 @@ async function rememberOffset(run){try{const m=await api('run',{run},60000);cons
 function finishSearch(m){if(!m||m.kind!=='test')return;const r=(m.analysis||{}).result||{};lastSearch=Object.assign({},m.search||{steps:[]},{result:r.pa??null,unc:r.unc,grade:r.grade,run:m.id,error:m.error});liveSearch({state:'idle'})}
 /* the graph data is rebuilt only when samples, legs or settings changed */
 const LD={key:null,d:null};
-function liveData(last){const key=[bn,bn?bt[bn-1]:0,liveLegs.length,paMarks.length,liveFit&&liveFit.gain,SHOWCMD,SHOWPUSH,DELAYMODE,B2.t.length,info.unit].join('|');
- if(LD.key!==key){const sig={t:bt.subarray(0,bn),f:bf.subarray(0,bn),color:css('--trace'),name:B2.t.length?sensorName():''};
+/* display smoothing: a centred moving average over SM ms, for the graph
+   only (stats, recordings, tests and probing keep the raw samples) */
+let SM=[0,10,20,40,80].includes(+store.get('smooth',0))?+store.get('smooth',0):0;const SMC={n:-1,last:0,w:0,f:null};
+function smoothed(){if(!SM||!bn)return null;if(SMC.n===bn&&SMC.last===bt[bn-1]&&SMC.w===SM)return SMC.f;
+ const h=SM/2000;if(!SMC.f||SMC.f.length<CAPN)SMC.f=new Float32Array(CAPN);const f=SMC.f;let lo=0,hi=0,sum=0;
+ for(let i=0;i<bn;i++){const t=bt[i];while(hi<bn&&bt[hi]<=t+h){sum+=bf[hi];hi++}while(bt[lo]<t-h){sum-=bf[lo];lo++}f[i]=sum/(hi-lo)}
+ SMC.n=bn;SMC.last=bt[bn-1];SMC.w=SM;return f}
+function liveData(last){const key=[bn,bn?bt[bn-1]:0,liveLegs.length,paMarks.length,liveFit&&liveFit.gain,SHOWCMD,SHOWPUSH,DELAYMODE,B2.t.length,info.unit,SM].join('|');
+ if(LD.key!==key){const sm=smoothed(),sig={t:bt.subarray(0,bn),f:(sm||bf).subarray(0,bn),color:css('--trace'),name:B2.t.length||sm?sensorName()+(sm?' ('+SM+' ms smoothed)':''):''};
   const legs=liveLegs.map(g=>Object.assign({},g,{pa:paAt(g.t0)})),cmd=commandSeries(legs,liveFit,{shift:DELAYMODE==='adj'?(store.get('offset',0)||0):0,smooth:DEF&&DEF.extruder&&DEF.extruder.smooth_time});
   const o2=scaledB2(),ov=overview();
   LD.d={series:[sig,...(o2?[o2]:[]),...cmd],ovSeries:[{t:ov.t,f:ov.f,color:css('--trace')}],legend:cmdLegend(cmd.length>0).concat(o2?[{label:o2.name,color:o2.color}]:[]),tmin:bn?bt[0]:null,tmax:bn?bt[bn-1]:null,
@@ -916,6 +944,7 @@ document.addEventListener('visibilitychange',()=>{DIRTY=true});
 $('#rec').onclick=async()=>{try{if(rec.active){const r=await api('record_stop');toast('Saved as Run '+r.run);loadRuns()}else await api('record_start',{label:$('#label').value})}catch(e){toast(e.message)}};
 $('#mark').onclick=async()=>{try{await api('mark',{label:$('#markText').value});$('#markText').value='';toast('Marked')}catch(e){toast(e.message)}};
 $('#markText').addEventListener('keydown',e=>{if(e.key==='Enter')$('#mark').click()});
+$('#smooth').value=String(SM);$('#smooth').onchange=e=>{SM=+e.target.value||0;store.set('smooth',SM);DIRTY=true};
 $('#tare').onclick=async()=>{const eddy=info.kind==='eddy';if(!eddy&&!info.tare_name){toast('Load cell not ready');return}
  if(!confirm('Zero the '+sensorName().toLowerCase()+'? Nothing should push on the nozzle.'))return;
  try{if(eddy)await api('tare',{sensor:'eddy'},15000);else await gcode('LOAD_CELL_TARE LOAD_CELL='+info.tare_name,15000);toast('Tared')}catch(e){toast(e.message)}};
@@ -1550,15 +1579,76 @@ function termLine(){if(!isTerm())return;const busy=tst.state&&tst.state!=='idle'
  const c=$('.clk');if(c){const d=new Date();c.textContent=d.toLocaleDateString(undefined,{weekday:'long'})+' '+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0')}}
 setInterval(()=>{if(isTerm())termLine()},30000);
 
+/* ---- PIRO-TAP: recent probe taps ---- */
+const papi=(n,p,ms)=>rpc.call('printer.piro_tap.'+n,p,ms);
+const pchart=new Chart($('#pc'),$('#pcTip'));const PT={list:[],sel:null,det:null,follow:true,busy:false};
+/* which parts are installed and configured: PA calibrator, PIRO-TAP, both */
+let HAS_PA=true;
+async function probeCheck(){let objs=null;try{objs=(await rpc.call('printer.objects.list',{},5000)).objects||[]}catch{}
+ const tap=objs?objs.includes('piro_tap'):await papi('taps',{limit:1},5000).then(()=>true,()=>false);
+ HAS_PA=objs?objs.includes('pa_loadcell'):true;$('#tabProbe').hidden=!tap;
+ const po=!HAS_PA&&tap;document.body.classList.toggle('probe-only',po);if(po){$('#brand').innerHTML='PIRO-TAP<span>Eddy nozzle probe</span>';document.title='PIRO-TAP'}if(!HAS_PA&&tap&&TAB!=='probe')setTab('probe')}
+const qcls=t=>!t.ok?'bad':t.quality>=70?'ok':t.quality>=40?'warn':'bad';
+async function loadTaps(){if(PT.busy)return;PT.busy=true;try{const r=await papi('taps',{limit:200},8000);PT.list=r.taps||[];PT.st=r;renderTaps();
+  const nw=PT.list.length?PT.list[PT.list.length-1].id:null;if(nw!=null&&(PT.sel==null||PT.follow&&PT.sel!==nw))await selectTap(nw,true)}
+ catch(e){$('#pInfo').textContent=e.message}finally{PT.busy=false}}
+function renderTaps(){const r=PT.st||{},s=r.status||{},st=$('#pState');let cls='',txt='Idle';
+ if(s.error){cls='bad';txt='Eddy error'}else if(r.in_session){cls='warn';txt='Probing, tap '+(r.session_taps||0)}else if(s.streaming){cls='ok';txt='Streaming'}
+ st.className='chip '+cls;st.lastElementChild.textContent=txt;
+ $('#pInfo').textContent=(s.rate?s.rate+'/s ('+s.mode+')':'')+(s.error?'  '+s.error:s.note?'  '+s.note:'');
+ const rows=PT.list.slice().reverse().map(t=>`<tr data-id="${t.id}" aria-selected="${t.id===PT.sel}"><td class="num">${t.id}</td><td class="num">${new Date(t.time*1000).toLocaleTimeString()}</td>
+  <td class="num">${fmt(t.x,1)}</td><td class="num">${fmt(t.y,1)}</td><td class="num">${t.z==null?'-':(+t.z).toFixed(4)}</td>
+  <td class="q"><span class="chip ${qcls(t)}"><i></i><span>${t.ok?t.quality+' %':'failed'}</span></span></td><td class="num">${t.temp==null?'-':fmt(t.temp,0)+' °C'}</td><td class="small ${t.ok?'dim':'bad'}">${esc(t.ok&&t.quality>=80?(t.label||''):t.why)}</td></tr>`);
+ $('#pTable tbody').innerHTML=rows.join('')||'<tr><td colspan="8" class="dim">No taps yet. Run PROBE, BED_MESH_CALIBRATE or NOZZLE_CLEAN_CHECK.</td></tr>';
+ $$('#pTable tbody tr[data-id]').forEach(tr=>tr.onclick=()=>{PT.follow=false;selectTap(+tr.dataset.id)})}
+async function selectTap(id,auto){PT.sel=id;if(!auto)renderTaps();else $$('#pTable tbody tr').forEach(tr=>tr.setAttribute('aria-selected',+tr.dataset.id===id));
+ try{PT.det=await papi('tap',{id},8000);drawTap()}catch(e){toast(e.message)}}
+const TAPLINES=[['approach','Approach','--dim'],['compression','Press','--amber'],['decompression','Release','--rec'],['departure','Free air','--cmd']];
+function drawTap(){const d=PT.det;if(!d){pchart.set({series:[],empty:'Pick a tap below'});return}
+ const D=d.detail||{},S=d.summary||{},R=D.result||{},ms=x=>x*1000,t=(D.t||[]).map(ms),sg=R.sign||1;   /* pressure drawn upwards */
+ const series=[{t,f:(D.hz||[]).map(v=>v*sg),color:css('--trace'),name:'Pressure',w:1.5}];
+ for(const[k,lab,c]of TAPLINES){const L=(D.lines||{})[k];if(L&&L.length===2)series.push({t:[ms(L[0][0]),ms(L[1][0])],f:[L[0][1]*sg,L[1][1]*sg],color:css(c),dash:[6,4],w:2,noScale:true,name:lab})}
+ const E=D.events||{},vl=[];if(E.trigger!=null)vl.push({t:ms(E.trigger),label:'stop',color:css('--amber')});if(E.pull0!=null)vl.push({t:ms(E.pull0),label:'pullback',color:css('--dim')});
+ if(D.marks&&D.marks.break!=null)vl.push({t:ms(D.marks.break),label:'contact breaks',color:css('--ok')});
+ pchart.set({series,vlines:vl,unit:'Hz',dec:1,timeAxis:false,xtick:v=>v.toFixed(0)+' ms',tfmt:v=>v.toFixed(1)+' ms',invert:INVERT});
+ $('#pTitle').textContent=`Tap ${S.id}  at X ${fmt(S.x,1)} Y ${fmt(S.y,1)}`+(S.z!=null?`,  Z ${(+S.z).toFixed(4)}`:'');
+ const w=$('#pWhy');w.textContent=S.why||'';w.className='small '+(S.ok?(S.quality>=70?'dim':''):'bad');
+ $('#pLeg').innerHTML=TAPLINES.filter(([k])=>(D.lines||{})[k]).map(([k,lab,c])=>`<span><s style="border-color:${css(c)}"></s>${lab}</span>`).join('');
+ const F=S.features||{},nm={approach:'before contact',departure:'after lift-off',baseline:'baseline shift',dwell:'sank while pressed',stiffness:'release vs press',residual:'noise'};
+ $('#pFeat').textContent=[`peak ${fmt(S.peak,0)} Hz`,`trigger ${fmt(S.trigger_hz,1)} Hz`,`press depth ${S.depth!=null?(S.depth*1000).toFixed(0)+' µm':'-'}`,`${S.rate||'-'}/s`].concat(Object.keys(nm).filter(k=>F[k]!=null).map(k=>nm[k]+' '+Math.round(F[k]*100)+' %')).join(',  ')}
+$('#pNewest').onclick=()=>{PT.follow=true;PT.sel=null;loadTaps();loadThermal()};
+/* nozzle growth: measured points and the fitted line (PIRO_TAP_THERMAL_CALIBRATE) */
+let TH=null;
+async function loadThermal(){try{TH=await papi('thermal',{},8000)}catch{TH=null}drawThermal()}
+function drawThermal(){const cv=$('#thc'),w=cv.clientWidth,h=cv.clientHeight;if(!w||!h)return;const dpr=devicePixelRatio||1;cv.width=Math.round(w*dpr);cv.height=Math.round(h*dpr);
+ const c=cv.getContext('2d');c.setTransform(dpr,0,0,dpr,0,0);c.clearRect(0,0,w,h);c.font='11px '+css('--font');const dim=css('--dim');
+ const cal=TH&&TH.calibration,P=cal&&cal.points||[];
+ $('#thInfo').textContent=TH?(TH.coeff?`${(TH.coeff*1000).toFixed(3)} µm/°C in use`:'thermal_coeff 0: no correction'):'';
+ $('#thNote').textContent=TH?[TH.home_temp!=null?`last Z homing at ${TH.home_temp.toFixed(0)} °C`:'Z not homed with PIRO-TAP yet',
+  TH.applied?`thermal offset now ${TH.applied>0?'+':''}${(TH.applied*1000).toFixed(1)} µm`+(TH.applied_for?` (printing at ${TH.applied_for[0]} °C)`:''):'no thermal offset applied',
+  cal?`calibrated ${new Date(cal.time*1000).toLocaleString()} at X ${fmt(cal.x,0)} Y ${fmt(cal.y,0)}, largest miss ${(cal.max_residual*1000).toFixed(1)} µm`:''].filter(Boolean).join(',  '):'';
+ if(P.length<2){c.fillStyle=dim;c.textAlign='center';c.fillText('Not calibrated. Run PIRO_TAP_THERMAL_CALIBRATE START=0 END=200 STEP=50',w/2,h/2);return}
+ const z0=P[0][1],xs=P.map(p=>p[0]),ys=P.map(p=>(p[1]-z0)*1000),pred=t=>(cal.intercept+cal.coeff*t-z0)*1000;
+ let x0=Math.min(...xs),x1=Math.max(...xs);const pad=(x1-x0)*.05;x0-=pad;x1+=pad;let y0=Math.min(0,...ys,pred(x0),pred(x1)),y1=Math.max(...ys,pred(x0),pred(x1));const yp=(y1-y0)*.1||1;y0-=yp;y1+=yp;
+ const L=54,R=14,T=10,B=24,pw=w-L-R,ph=h-T-B,X=t=>L+(t-x0)/(x1-x0)*pw,Y=v=>T+(1-(v-y0)/(y1-y0))*ph;
+ c.strokeStyle=css('--grid');c.fillStyle=dim;c.lineWidth=1;c.textAlign='right';c.textBaseline='middle';
+ const tk=(a,b,n)=>{const st=nice(b-a,n),o=[];for(let v=Math.ceil(a/st)*st;v<=b+1e-9;v+=st)o.push(+v.toFixed(6));return o};for(const v of tk(y0,y1,5)){c.beginPath();c.moveTo(L,Y(v));c.lineTo(L+pw,Y(v));c.stroke();c.fillText(v.toFixed(Math.abs(y1-y0)<5?1:0)+' µm',L-6,Y(v))}
+ c.textAlign='center';c.textBaseline='top';for(const t of tk(x0,x1,6))c.fillText(t.toFixed(0)+' °C',X(t),T+ph+6);
+ c.strokeStyle=css('--amber');c.setLineDash([6,4]);c.lineWidth=2;c.beginPath();c.moveTo(X(x0),Y(pred(x0)));c.lineTo(X(x1),Y(pred(x1)));c.stroke();c.setLineDash([]);
+ c.fillStyle=css('--trace');for(let i=0;i<P.length;i++){c.beginPath();c.arc(X(xs[i]),Y(ys[i]),4.5,0,7);c.fill();
+  const sd=P[i][2]*1000;if(sd>0){c.strokeStyle=css('--trace');c.lineWidth=1.5;c.beginPath();c.moveTo(X(xs[i]),Y(ys[i]-sd));c.lineTo(X(xs[i]),Y(ys[i]+sd));c.stroke()}}
+ c.textAlign='left';c.textBaseline='top';c.fillStyle=css('--trace');c.fillText('● measured',L+8,T+4);c.fillStyle=css('--amber');c.fillText('- - predicted (line)',L+90,T+4)}
+setInterval(()=>{if(TAB==='probe'&&rpc.up&&!document.hidden)loadTaps()},1500);
+
 /* ---- tabs ---- */
 function setTab(t){TAB=t;setTimeout(term,0);$$('#tabs button').forEach(b=>b.setAttribute('aria-selected',b.dataset.tab===t));$$('section').forEach(s=>s.classList.toggle('on',s.id===t));
  if(t==='set'){renderThemeCards();if(!DEF)loadDefaults()}
- if(t==='hist'){loadRuns();setTimeout(()=>{hv.render();redrawFigs();drawThumbs()},0)}if(t==='cmp')setTimeout(renderCmp,0);if(t==='test'){if(!DEF)loadDefaults();if(!runs.length)loadRuns();setTimeout(()=>liveSearch(tst),0)}}
+ if(t==='hist'){loadRuns();setTimeout(()=>{hv.render();redrawFigs();drawThumbs()},0)}if(t==='cmp')setTimeout(renderCmp,0);if(t==='probe'){loadTaps();loadThermal();setTimeout(()=>pchart.render(),0)}if(t==='test'){if(!DEF)loadDefaults();if(!runs.length)loadRuns();setTimeout(()=>liveSearch(tst),0)}}
 $$('#tabs button').forEach(b=>b.onclick=()=>setTab(b.dataset.tab));
-function redrawAll(){for(const v of viewers)v.render();try{drawViewer();drawThumbs();redrawFigs();renderCmp();liveSearch(tst)}catch{}}
-let rzT=0;addEventListener('resize',()=>{for(const v of viewers){v.chart.render();v.ov.render()}cchart.render();clearTimeout(rzT);rzT=setTimeout(()=>{drawThumbs();redrawFigs();liveSearch(tst)},150)});
+function redrawAll(){for(const v of viewers)v.render();try{drawViewer();drawThumbs();redrawFigs();renderCmp();liveSearch(tst);if(PT.det)drawTap();drawThermal()}catch{}}
+let rzT=0;addEventListener('resize',()=>{for(const v of viewers){v.chart.render();v.ov.render()}cchart.render();pchart.render();drawThermal();clearTimeout(rzT);rzT=setTimeout(()=>{drawThumbs();redrawFigs();liveSearch(tst)},150)});
 $('#ccmd').innerHTML=CMDHTML;$('#setCmd').innerHTML=CMDHTML;paintInvert();paintCmd();window.ready=true;term();renderThemeCards();
 rpc.connect();pollLoop();frame();renderCmp();
-(function waitDefaults(){if(rpc.up){loadDefaults();if(document.documentElement.dataset.theme==='terminal')loadRuns()}else setTimeout(waitDefaults,300)})();
+(function waitDefaults(){if(rpc.up){if(!HAS_PA)return;loadDefaults();if(document.documentElement.dataset.theme==='terminal')loadRuns()}else setTimeout(waitDefaults,300)})();
 setTab(Q.get('tab')||'live');
 </script></body></html>

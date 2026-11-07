@@ -69,7 +69,10 @@ class PALoadCell:
 
     # -- Klipper events -------------------------------------------------
     def _ready(self):
-        """Runs left 'running' by a crash, power cut or restart."""
+        """Sensors may start from now on (not earlier: Klipper's drivers
+        crash while the MCUs are still being configured). Also: runs left
+        'running' by a crash, power cut or restart."""
+        self.bus.set_ready()
         try:
             n = self.store.mark_interrupted(
                 self.runner.run_id if self.runner.state != 'idle' else None)

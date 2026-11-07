@@ -13,6 +13,7 @@ import http.server, socketserver
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, '..', 'klipper'))
 sys.path.insert(0, HERE)
+sys.path.insert(0, os.path.join(HERE, '..', 'piro_tap', 'tests'))
 import test_backend as tb
 import pa_loadcell
 from pa_loadcell.errors import PAError
@@ -135,6 +136,7 @@ def build(data=None):
     p.get_start_args = lambda: {'config_file': os.path.join(cfgdir, 'printer.cfg')}
     p.cfgdir = cfgdir
     plug = pa_loadcell.load_config(Cfg(p, data))
+    plug._ready()                   # as klippy:ready would
     return p, plug
 
 
@@ -192,6 +194,42 @@ def seed_history(p, plug):
     st.finalize(mid, 'complete')
 
 
+def demo_taps():
+    """PIRO-TAP taps from the simulated printer of test_piro_tap (needs a
+    Klipper checkout, KLIPPER_DIR): a clean mesh and two oozing taps."""
+    try:
+        import test_piro_tap as tp
+        if tp.load_package() is None:
+            return None
+        pkg, w, pp, tap = tp.make({'data_dir': tempfile.mkdtemp()},
+                                  growth=0.00023)
+        w.z = 3.0
+        tp.home_z(pp, tap)
+        tp.cmd(pp, 'PIRO_TAP_THERMAL_CALIBRATE', {'START': 0, 'END': 200,
+                                                  'STEP': 50, 'SETTLE': 20})
+        w.heater.set(150.)
+        tp.cmd(pp, 'PIRO_TAP_THERMAL_APPLY', {'TEMP': 215, 'REF': 150})
+        sess = tap.start_probe_session(tp.Gcmd())
+        for i, (x, y) in enumerate([(30, 30), (110, 30), (190, 30), (30, 110),
+                                    (110, 110), (190, 110)]):
+            w.xy[:] = [x, y]
+            w.z_bed = 0.02 * math.sin(x / 50.) + 0.01 * (y / 100.)
+            w.z = w.z_bed + 0.6
+            sess.run_probe(tp.Gcmd())
+        sess.end_probe_session()
+        w.ooze, w.relax = 0.05, 4.
+        w.z = 0.7
+        try:
+            tp.cmd(pp, 'NOZZLE_CLEAN_CHECK', {'MAX_TAPS': 3})
+        except Exception:
+            pass
+        return {'eps': pp.objs['webhooks'].eps, 'tap': tap}
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        return None
+
+
 def main(seed=True, host='127.0.0.1', ws_port=8765, http_port=8080):
     import websockets
     p, plug = build()
@@ -200,6 +238,7 @@ def main(seed=True, host='127.0.0.1', ws_port=8765, http_port=8080):
     eps = p.objs['webhooks'].eps
     lc = p.objs['load_cell_probe']
     state = {'t': 0.0}
+    taps = demo_taps()
 
     async def tick():
         while True:
@@ -238,6 +277,15 @@ def main(seed=True, host='127.0.0.1', ws_port=8765, http_port=8080):
                     p.speeds.append((t, t + 0.6, 12.0)); t += 1.6
                 return 'ok'
             return 'ok'
+        if method == 'printer.objects.list':
+            objs = [] if os.environ.get('PROBE_ONLY') else ['pa_loadcell']
+            return {'objects': objs + (['piro_tap'] if taps else [])}
+        if method.startswith('printer.piro_tap.'):
+            if not taps:
+                raise Exception('piro_tap not configured')
+            r = Req(params)
+            taps['eps']['piro_tap/' + method.split('.')[-1]](r)
+            return r.out
         ep = 'pa_loadcell/' + method.split('.')[-1]
         r = Req(params)
         eps[ep](r)

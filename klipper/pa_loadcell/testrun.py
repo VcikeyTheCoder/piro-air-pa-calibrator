@@ -358,6 +358,7 @@ class PATestRunner:
         status, err, saved = 'complete', '', False
         try:
             self.bus.subscribe(col.on_samples)
+            self.bus.set_mode('pa')       # Eddy: PA-test sample rate
             if col2 is not None:
                 try:
                     self.bus.subscribe(col2.on_samples, self.bus.other.kind)
@@ -1240,7 +1241,7 @@ class PATestRunner:
             except Exception:
                 pass
             self.col2 = None
-        G = []                  # steps that send G-code
+        G = [lambda: self.bus.set_mode(None)]    # Eddy back to its idle rate
         M = [lambda: self.bus.unsubscribe(col.on_samples)]   # in memory only
         G.append(lambda: self._g("SET_PRESSURE_ADVANCE ADVANCE=%.5f%s"
                                  % (orig_pa, (" SMOOTH_TIME=%.4f" % orig_sm)

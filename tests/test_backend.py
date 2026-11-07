@@ -274,6 +274,7 @@ def make(temp=210.0, z=20.0, tau=None, noise=0.15, fill=None):
     p = Printer(temp, z)
     if tau: p.objs['load_cell'] = FillCell(p, tau, fill) if fill else LagCell(p, tau, noise)
     bus = SampleBus(p, 'load_cell', 60000, 15.0)
+    bus.set_ready()                 # klippy:ready has run
     store = RunStore(tempfile.mkdtemp())
     lim = {'min_temp': 200, 'required_z': 20, 'z_tol': 0.5, 'timeout': 3}
     return p, bus, store, PATestRunner(p, bus, store, lim)
