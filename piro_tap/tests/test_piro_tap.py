@@ -2,8 +2,7 @@
 rate switching, stuck driver, counts) and whole probe taps against a
 simulated printer: a nozzle that presses an Eddy-sensed mount, an MCU
 trigger that runs the same filter and trigger rules as Klipper's
-trigger_analog.c, and a toolhead move queue (trapq) with accelerations for
-Kalico's tap analysis.
+trigger_analog.c, and stepper history for the pullback.
 
 The probe tests use Klipper's real probe.py / manual_probe.py:
   KLIPPER_DIR=~/klipper python3 piro_tap/tests/test_piro_tap.py
@@ -21,7 +20,7 @@ REPO = os.path.abspath(os.path.join(HERE, '..', 'klipper'))     # piro_tap/
 SHARED = os.path.abspath(os.path.join(HERE, '..', '..', 'shared'))
 PA = os.path.abspath(os.path.join(HERE, '..', '..', 'klipper'))   # pa_loadcell
 sys.path[:0] = [REPO, SHARED, PA]
-from piro_tap import filters, thermal            # noqa: E402
+from piro_tap import filters, tapfit, thermal    # noqa: E402
 from piro_eddy import LdcHub                     # noqa: E402
 
 KL = os.path.expanduser(os.environ.get('KLIPPER_DIR', '~/klipper'))
@@ -171,7 +170,6 @@ class World:
         s.frame = 0.                # toolhead Z minus nozzle Z
         s.growth = growth           # nozzle growth, mm per degree over 25 C
         s.heater = None
-        s.trapq = []                # toolhead move queue history
 
     def tip(s):
         """How far the hot nozzle reaches below its cold length."""
@@ -193,13 +191,12 @@ class World:
         return 3.0e6 + s.sign * s.force() + s.drift * (s.now - 100.) + \
             s.rnd.gauss(0., s.noise)
 
-    def _sample_until(s, t, zf=None):
+    def _sample_until(s, t, dz_per_s=0.):
         rows = []
         dt = 1. / s.sensor.data_rate
         while s.next_sample <= t:
             tt = s.next_sample
-            if zf is not None:
-                s.z = zf(tt)
+            s.z += dz_per_s * (tt - s.now)
             s.now = tt
             if s.force() > 0:
                 s.pressed_for += dt
@@ -220,73 +217,17 @@ class World:
         s._sample_until(t)
         s.now = max(s.now, t)
 
-    ACCEL = 300.                    # Z max accel, mm/s^2
-
-    def move_z(s, z1, speed, frame=0.):
-        """A trapezoid move (accel, cruise, decel) like Klipper's, recorded
-        in the toolhead move queue (positions in toolhead Z = world Z +
-        frame)."""
-        z0, t0, a = s.z, s.now, s.ACCEL
-        dist = abs(z1 - z0)
+    def move_z(s, z1, speed):
+        z0 = s.z
+        dur = abs(z1 - z0) / speed
+        t_end = s.now + dur
+        v = (z1 - z0) / dur if dur else 0.
         s.stopped = False
-        if dist <= 0:
-            return
-        dirn = 1. if z1 > z0 else -1.
-        v = speed
-        ta = v / a
-        da = 0.5 * a * ta * ta
-        if 2 * da > dist:
-            v = math.sqrt(dist * a)
-            ta = v / a
-            da = dist / 2.
-        tc = (dist - 2 * da) / v
-        phases = [(t0, ta, 0., a, 0.), (t0 + ta, tc, v, 0., da),
-                  (t0 + ta + tc, ta, v, -a, dist - da)]
-        for pt, mt, sv, ac, d0 in phases:
-            if mt > 0:
-                s.trapq.append(types.SimpleNamespace(
-                    print_time=pt, move_t=mt, start_v=sv, accel=ac,
-                    start_x=s.xy[0], start_y=s.xy[1],
-                    start_z=z0 + frame + dirn * d0, x_r=0., y_r=0.,
-                    z_r=dirn))
-
-        def zf(t):
-            u = t - t0
-            if u <= ta:
-                d = 0.5 * a * u * u
-            elif u <= ta + tc:
-                d = da + v * (u - ta)
-            else:
-                w = min(u - ta - tc, ta)
-                d = dist - da + v * w - 0.5 * a * w * w
-            return z0 + dirn * min(d, dist)
-        t_end = t0 + 2 * ta + tc
-        s._sample_until(t_end, zf)
+        s._sample_until(t_end, v)
         if not s.stopped:
             s.z = z1
             s.now = t_end
         s.hist.append((s.now, s.z))
-
-    def set_position(s, t, z):
-        """Klipper's trapq_set_position: drop what was not done after t,
-        add a stationary marker."""
-        keep = []
-        for m in s.trapq:
-            if m.print_time >= t:
-                continue
-            if m.print_time + m.move_t > t:
-                m.move_t = t - m.print_time
-            keep.append(m)
-        keep.append(types.SimpleNamespace(
-            print_time=t, move_t=0., start_v=0., accel=0., start_x=s.xy[0],
-            start_y=s.xy[1], start_z=z, x_r=0., y_r=0., z_r=0.))
-        s.trapq = keep
-
-    def extract_trapq(s, start, end):
-        """motion_report DumpTrapQ.extract_trapq: moves still running after
-        start, oldest first."""
-        return [m for m in s.trapq if m.print_time + m.move_t > start
-                and m.print_time < end], None
 
     def z_at(s, t):
         h = s.hist
@@ -341,7 +282,7 @@ class FakeTrigger:
     def get_last_trigger_time(s):
         return s.last_trigger
 
-    def run(s, world, z_min, speed, frame=0.):
+    def run(s, world, z_min, speed):
         """A probing move: returns trigger time or raises like Klipper."""
         rows = [list(r) for r in s.sos.design.get_filter_sections()]
         state = [[0., 0.] for _ in rows]
@@ -365,7 +306,7 @@ class FakeTrigger:
             return False
         world.mcu_check = check
         try:
-            world.move_z(z_min, speed, frame)
+            world.move_z(z_min, speed)
         finally:
             world.mcu_check = None
         if 'err' in hit:
@@ -485,7 +426,6 @@ class Toolhead:
 
     def set_position(s, pos):
         s.offset = s.w.frame = pos[2] - s.w.z
-        s.w.set_position(s.w.now, pos[2])
 
     def manual_move(s, pos, speed):
         pos = list(pos) + [None] * (3 - len(pos))
@@ -496,10 +436,7 @@ class Toolhead:
             if not -2. <= pos[2] <= Z_MAX:
                 raise CmdError("Move out of range: %.3f %.3f %.3f [0.000]"
                                % (s.w.xy[0], s.w.xy[1], pos[2]))
-            s.w.move_z(pos[2] - s.offset, speed, s.offset)
-
-    def flush_step_generation(s):
-        pass
+            s.w.move_z(pos[2] - s.offset, speed)
 
     def dwell(s, d):
         s.w.advance(s.w.now + d)
@@ -522,14 +459,8 @@ class Homing:
         s.w, s.th = w, th
 
     def probing_move(s, trig, pos, speed, check_movement=True):
-        trig.run(s.w, pos[2] - s.th.offset, speed, s.th.offset)
-        t_stop = s.w.now
-        halt = s.th.get_position()
-        s.w.set_position(t_stop, halt[2])     # toolhead.set_position(halt)
-        # the trigger reaches the host and the next move is planned
-        # (buffer_time_start): the nozzle stays pressed meanwhile
-        s.w.advance(s.w.now + 0.25)
-        return halt
+        trig.run(s.w, pos[2] - s.th.offset, speed)
+        return s.th.get_position()
 
     def check_probe_first_home(s, gcmd):
         return gcmd.get_command() == 'G28' and \
@@ -621,7 +552,7 @@ class Template:
         return {}
 
     def run_gcode_from_command(s, context=None):
-        pass
+        s.ran = getattr(s, 'ran', 0) + 1
 
 
 class Printer:
@@ -640,9 +571,6 @@ class Printer:
                       eps={}, register_endpoint=lambda p, cb: s.objs[
                           'webhooks'].eps.__setitem__(p, cb)),
                   'pins': types.SimpleNamespace(register_chip=lambda *a: None),
-                  'motion_report': types.SimpleNamespace(dtrapqs={
-                      'toolhead': types.SimpleNamespace(
-                          extract_trapq=world.extract_trapq)}),
                   'gcode_macro': types.SimpleNamespace(
                       load_template=lambda c, n, d='': Template(
                           c.get(n, d)))}
@@ -722,12 +650,9 @@ class Config:
                 if n.startswith(prefix)]
 
     def has_section(s, n):
-        return n in ('stepper_z', 'bed_mesh')
+        return n == 'stepper_z'
 
     def getsection(s, n):
-        if n == 'bed_mesh':
-            return Config(s.p, {'speed': 50., 'horizontal_move_z': 2.},
-                          'bed_mesh')
         return Config(s.p, {'position_min': -2., 'position_max': Z_MAX})
 
 
@@ -821,6 +746,13 @@ def test_filter_rejects_bad_frequency():
         assert 'half the sample rate' in str(e)
 
 
+def test_hinge_fit_finds_bend():
+    xs = [i * 0.001 for i in range(200)]
+    ys = [(-3000. * (0.08 - x) if x < 0.08 else 0.) for x in xs]
+    f = tapfit.hinge_fit(xs, ys)
+    assert abs(f['b'] - 0.08) < 2e-5, f
+
+
 # -- tests: the hub ------------------------------------------------------------
 class HubPrinter:
     command_error = CmdError
@@ -908,41 +840,14 @@ def test_probe_finds_the_bed():
     pkg, w, p, tap = make()
     pos, g = probe_once(p, tap)
     assert abs(pos.bed_z - 0.0) < 0.004, pos
-    # Kalico's analysis: valid; no quality without decompression_angle
-    assert tap.last['ok'] and tap.last['quality'] is None, tap.last
+    assert tap.last['ok'] and tap.last['quality'] >= 60, tap.last
     assert not tap.in_session and w.sensor.data_rate == 100   # back to idle
     assert 400 in w.sensor.started_rates                     # probe_rate
     # auto sign found "down"; the status says so
     assert 'pressure_sign: down' in tap.note
-    # Kalico's pullback: 0.2 mm at probe_rate x 0.001 = 0.4 mm/s
-    d = tap.store.get(tap.last['id'])['detail']
-    ev = d['events']
-    assert abs(ev['pull1'] - ev['pull0'] - 0.2 / 0.4) < 0.01, ev
-    # the five Kalico lines, contact before the break
-    assert sorted(d['lines']) == sorted(['approach', 'compression', 'dwell',
-                                         'decompression', 'departure'])
-    assert d['marks']['contact'] < ev['trigger']
-    assert ev['pull0'] < d['marks']['break'] < ev['pull1']
-
-
-@skip_without_klipper
-def test_trapq_is_what_kalico_expects():
-    """6 moves: probe accel, probe cruise, halt, pullback accel/cruise/
-    decel"""
-    pkg, w, p, tap = make()
-    probe_once(p, tap)
-    from piro_tap.kalico_tap_analysis import ProbingMoves
-    mq = types.SimpleNamespace(moves=[m for m in w.trapq[-6:]])
-    pm = ProbingMoves(mq)
-    assert pm.validation_error is None, pm.validation_error
-    assert pm.probe_cruise.start_v == 3. and pm.halt.start_v == 0.
-
-
-@skip_without_klipper
-def test_quality_uses_decompression_angle():
-    pkg, w, p, tap = make({'decompression_angle': 77.8})
-    probe_once(p, tap)
-    assert tap.last['quality'] > 90, tap.last
+    # tare before every touch, fixed pullback at 4 samples per micron
+    ev = tap.store.get(tap.last['id'])['detail']['events']
+    assert abs(ev['pull1'] - ev['pull0'] - 0.2 / 0.1) < 0.02, ev   # 0.1 mm/s
 
 
 @skip_without_klipper
@@ -965,22 +870,68 @@ def test_probe_accuracy_is_tight():
 
 
 @skip_without_klipper
-def test_bad_tap_is_retried_then_fails():
-    # the nozzle sinks while pressed (ooze): Kalico's quality drops
-    opts = {'decompression_angle': 77.8, 'min_tap_quality': 60,
-            'bad_probe_retries': 1}
-    pkg, w, p, tap = make(opts, relax=2.)
+def test_ooze_is_retried_then_fails():
+    # Kalico's bad_probe_strategy: retry, then fail
+    pkg, w, p, tap = make({'min_quality': 80, 'bad_probe_retries': 1},
+                          ooze=0.04, relax=4.)
     try:
         probe_once(p, tap)
         assert False
     except CmdError as e:
         assert 'Probing failed after 2 bad probes' in str(e), e
-    assert [t['code'] for t in tap.store.list(10)] == ['LOW_TAP_QUALITY'] * 2
-    # IGNORE: the bad tap is used
-    pkg, w, p, tap = make(dict(opts, bad_probe_strategy='ignore'), relax=2.)
+    assert len(tap.store.list(10)) == 2
+    assert all(t['quality'] < 80 for t in tap.store.list(10))
+    # ignore: the touch is used anyway
+    pkg, w, p, tap = make({'min_quality': 80, 'bad_probe_strategy': 'ignore'},
+                          ooze=0.04, relax=4.)
     pos, g = probe_once(p, tap)
-    # Kalico keeps the stop position of the probing move then
-    assert len(tap.store.list(10)) == 1 and -0.1 < pos.bed_z < 0.
+    assert len(tap.store.list(10)) == 1 and abs(pos.bed_z) < 0.05
+
+
+@skip_without_klipper
+def test_circle_moves_retries_around_the_point():
+    pkg, w, p, tap = make({'min_quality': 80, 'bad_probe_retries': 3,
+                           'bad_probe_strategy': 'circle'},
+                          ooze=0.04, relax=4.)
+    try:
+        probe_once(p, tap)
+    except CmdError:
+        pass
+    xy = [(t['x'], t['y']) for t in reversed(tap.store.list(10))]
+    assert len(xy) == 4 and len(set(xy)) == 4, xy     # 4 different spots
+    assert all(abs(x - 100.) <= 4.1 and abs(y - 100.) <= 4.1 for x, y in xy)
+
+
+@skip_without_klipper
+def test_pullback_too_short_is_refused():
+    # a soft bed (front edge): contact breaks late in the 0.2 mm pullback
+    pkg, w, p, tap = make({'bad_probe_retries': 0, 'trigger_hz': 250},
+                          k=700.)
+    try:
+        probe_once(p, tap)
+        assert False
+    except CmdError as e:
+        assert 'Probing failed' in str(e), e
+    codes = tap.store.list(1)[0]['codes']
+    assert codes and codes[0] in ('TAP_PULLBACK_TOO_SHORT',
+                                  'BREAK_CONTACT_TOO_LATE'), codes
+    # a longer pullback fixes it
+    pkg, w, p, tap = make({'trigger_hz': 250, 'pullback_distance': 0.6},
+                          k=700.)
+    pos, g = probe_once(p, tap)
+    assert abs(pos.bed_z) < 0.01, pos
+
+
+@skip_without_klipper
+def test_first_homing_touch_starts_above_position_max():
+    """klippy_35: the pullback of the first homing touch went to Z 416.5
+    ("Move out of range"). Z is shifted into range for the touches."""
+    pkg, w, p, tap = make(z_bed=0.3)
+    w.z = 19.0
+    home_z(p, tap)
+    assert abs(p.th.get_position()[2] - (w.z - 0.3)) < 0.003
+    taps = tap.store.list(10)
+    assert len(taps) == 4 and all(t['ok'] for t in taps), taps
 
 
 @skip_without_klipper
@@ -1040,20 +991,6 @@ def home_z(p, tap, fast=5., slow=2.):
             cur[2] += 5.
             th.manual_move(cur, 10.)
     sess.end_probe_session()
-
-
-@skip_without_klipper
-def test_first_homing_touch_starts_above_position_max():
-    """klippy_35: the pullback of the first homing touch went to Z 416.5
-    ("Move out of range"). Z is shifted into range for the touches, and
-    Kalico's analysis still gets the 6 moves of a normal tap."""
-    pkg, w, p, tap = make(z_bed=0.3)
-    w.z = 19.0
-    home_z(p, tap)
-    assert abs(p.th.get_position()[2] - (w.z - 0.3)) < 0.003
-    taps = tap.store.list(10)
-    assert len(taps) == 4 and all(t['ok'] for t in taps), taps
-    assert all(t['z'] is not None for t in taps)     # Kalico's Z found
 
 
 @skip_without_klipper
@@ -1133,30 +1070,14 @@ def test_calibrate_threshold_is_three_times_peak_to_peak():
     assert abs(trig - round(3 * p2p, 1)) < 0.11, (trig, p2p)
     assert 5 <= trig < 60, (trig, g.out)
     assert saved[('piro_tap', 'pressure_sign')] == 'down'
+    w.z = 1.0
+    cmd(p, 'PIRO_TAP_CALIBRATE', {'MODE': 'QUALITY', 'SAMPLES': 6})
+    assert tap.state.limits()['dwell'] > 0
     try:
-        cmd(p, 'PIRO_TAP_CALIBRATE', {'MODE': 'QUALITY'})
+        cmd(p, 'PIRO_TAP_CALIBRATE', {'MODE': 'PULLBACK'})
         assert False
     except CmdError as e:
-        assert 'THRESHOLD, DRIFT or TAP_PERFORMANCE' in str(e)
-
-
-@skip_without_klipper
-def test_calibrate_tap_performance_like_kalico():
-    pkg, w, p, tap = make()
-    pts = [(20., 20.), (100., 20.), (180., 20.), (20., 100.), (100., 100.),
-           (180., 100.)]
-    p.objs['bed_mesh'] = types.SimpleNamespace(bmc=types.SimpleNamespace(
-        probe_mgr=types.SimpleNamespace(get_std_path=lambda: pts)))
-    w.z = 2.0
-    g = cmd(p, 'PIRO_TAP_CALIBRATE', {'MODE': 'TAP_PERFORMANCE'})
-    out = "\n".join(g.out)
-    assert out.count('Decompression distance:') == 6, out
-    saved = p.objs['configfile'].saved
-    pb = float(saved[('piro_tap', 'pullback_distance')])
-    ang = float(saved[('piro_tap', 'decompression_angle')])
-    assert 0.01 <= pb <= 0.2 and 60 < ang < 85, (pb, ang, out)
-    assert tap.opts.pullback == pb               # used from now on
-    assert tap.classifier.config.decompression_angle == ang
+        assert 'THRESHOLD, DRIFT or QUALITY' in str(e)
 
 
 @skip_without_klipper
@@ -1226,8 +1147,7 @@ def test_nozzle_clean_check():
     g = Gcmd()
     p.objs['gcode'].cmds['NOZZLE_CLEAN_CHECK'](g)
     assert 'Nozzle clean' in g.out[-1], g.out
-    pkg, w, p, tap = make({'decompression_angle': 77.8,
-                           'min_tap_quality': 60}, relax=2.)
+    pkg, w, p, tap = make(ooze=0.05, relax=5.)
     try:
         cmd(p, 'NOZZLE_CLEAN_CHECK', {'MAX_TAPS': 4})
         assert False

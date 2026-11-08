@@ -10,23 +10,20 @@ It is a normal Klipper probe: `PROBE`, `PROBE_ACCURACY`, `G28` with `probe:z_vir
 | Part | How |
 |---|---|
 | Contact | The Eddy's MCU filters every sample and stops Z when the pressure passes `trigger_hz` (no Pi delay). Past `force_limit_hz` (2000) the move stops with an error |
-| Z | Kalico's tap analysis, copied 1:1: pullback of `pullback_distance` at `pullback_speed`, five lines fitted in time (approach, press, dwell, release, free air), Z = toolhead position when the release line meets the free-air line |
+| Z | Slow pullback (4 samples per micron). Z = where the release line meets the free-air line. Kalico's break-contact checks: a touch whose contact breaks in the last quarter of the pullback is refused (`TAP_PULLBACK_TOO_SHORT`) |
 | Trigger | `PIRO_TAP_CALIBRATE MODE=THRESHOLD`: tare, noise peak to peak, `trigger_hz` = 3 × noise |
-| Pullback | `PIRO_TAP_CALIBRATE MODE=TAP_PERFORMANCE` (Kalico): `pullback_distance` and `decompression_angle` |
 | Homing | Klipper's own homing: 2 touches at `homing_speed` (5), then 2 at `second_homing_speed` (2). Z = average of the 2 slow touches |
-| Ooze | Kalico's tap quality classifier and `bad_probe_strategy` (retry, circle, ignore, fail). `NOZZLE_CLEAN_CHECK` |
+| Ooze | Every touch is scored; bad touches are handled by Kalico's `bad_probe_strategy` (retry, circle, ignore, fail). `NOZZLE_CLEAN_CHECK` |
 | Thermal | `PIRO_TAP_THERMAL_CALIBRATE START=0 END=200 STEP=50` fits nozzle growth per °C; `PIRO_TAP_THERMAL_APPLY TEMP=` sets the Z offset once before a print |
 | Page | Probe tab: every touch with its curve, and the nozzle growth chart |
 
 Install from the repo folder: `bash install.sh --probe` (probe only) or `--both` (with the PA calibrator).
 Then read `piro_tap.cfg` in your config folder.
 
-Needs Klipper v0.13.0-496 or newer on the Pi and on the board the Eddy is wired to, and numpy in Klipper's
-Python (the installer adds it).
+Needs Klipper v0.13.0-496 or newer on the Pi and on the board the Eddy is wired to.
 
-The files `klipper/piro_tap/kalico_*.py` are copied from [Kalico](https://github.com/KalicoCrew/kalico)
-(GPLv3, © Gareth Farrington and the Klipper authors); only their imports are changed. Each file says what it was
-copied from.
+`klipper/piro_tap/kalico_retry.py` is copied from [Kalico](https://github.com/KalicoCrew/kalico) (GPLv3); only its
+imports are changed.
 
 Wiki: [PIRO-TAP probe](https://github.com/VcikeyTheCoder/piro-air-pa-calibrator/wiki/PIRO-TAP-probe)
 

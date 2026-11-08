@@ -1,18 +1,15 @@
 """One nozzle touch, probe points with retries, and Z homing touches.
 
-A touch is Kalico's tapping move (load_cell_probe.py TappingMove), with the
-Eddy in Hz instead of a load cell in grams:
-  1. tare: Eddy frequency with the nozzle in the air (every touch)
-  2. probing move down until the MCU trigger fires (or the force limit stops
-     the move)
-  3. pullback move: straight up pullback_distance at pullback_speed, then
-     flush_step_generation (no dwell)
-  4. Kalico's tap analysis (kalico_tap_analysis.py, copied 1:1): five lines
-     (approach, compression, dwell, decompression, departure) fitted in the
-     time domain; Z = the toolhead position, from the move queue, at the
-     time the decompression line meets the departure line (contact breaks)
-  5. Kalico's tap quality classifier (kalico_tap_quality_classifier.py)
-A bad tap is retried with Kalico's bad_probe_strategy (kalico_retry.py).
+A touch:
+  1. tare: Eddy frequency with the nozzle in the air (every touch, every
+     retry, every homing touch)
+  2. down until the MCU trigger fires (or the force limit stops the move)
+  3. dwell, then a slow continuous pullback over pullback_distance
+     (4 samples per micron by default)
+  4. tapfit: Z of contact = where the release line meets the free-air line,
+     with Kalico's break-contact checks (TAP_PULLBACK_TOO_SHORT)
+Bad touches are handled by Kalico's bad_probe_strategy (kalico_retry.py):
+retry at the same spot, circle around it, ignore, or fail.
 
 Z homing (G28 with probe:z_virtual_endstop) goes through Klipper's own
 homing code: it calls the probe twice (homing_speed, then after
@@ -21,18 +18,9 @@ call: the two fast touches find the bed, Z is the average of the two slow
 touches, which must agree within home_tolerance."""
 import math
 
+from . import tapfit
 from .errors import TapError
 from .kalico_retry import RetrySession
-
-LINES = ('approach', 'compression', 'dwell', 'decompression', 'departure')
-
-
-def explain(res):
-    """One line for a touch result."""
-    if res.get('ok'):
-        q = res.get('quality')
-        return 'good tap' + ('' if q is None else ' (quality %.0f%%)' % q)
-    return res.get('error') or 'bad tap'
 
 
 class Toucher:
@@ -43,7 +31,6 @@ class Toucher:
         self.o = pt.opts
         self.air = None             # (free-air Hz, reactor time)
         self.warned_temp = False
-        self.tare_end = None        # print time the last tare ended
 
     # -- helpers ------------------------------------------------------------
     def toolhead(self):
@@ -59,6 +46,12 @@ class Toucher:
                     self.reactor.monotonic()).get('temperature')
             except Exception:
                 return None
+
+    def z_at(self, t):
+        kin = self.toolhead().get_kinematics()
+        spos = {s.get_name(): s.mcu_to_commanded_position(
+            s.get_past_mcu_position(t)) for s in kin.get_steppers()}
+        return kin.calc_position(spos)[2]
 
     def wait_samples(self, until, what):
         """Wait until the Eddy has sent samples past print_time `until`."""
@@ -77,16 +70,15 @@ class Toucher:
     def lift(self, gcmd, dist):
         th = self.toolhead()
         cur = th.get_position()
-        th.manual_move([None, None, cur[2] + dist],
-                       self.pt.get_probe_params(gcmd)['lift_speed'])
+        cur[2] += dist
+        th.manual_move(cur, self.pt.get_probe_params(gcmd)['lift_speed'])
 
     def tare(self, what='tare'):
         """-> (tare Hz, raw noise SD) from tare_time of samples from now."""
         th = self.toolhead()
         t0 = th.get_last_move_time()
-        self.tare_end = t0 + self.o.tare_time
-        self.wait_samples(self.tare_end, what)
-        rows = self.pt.collector.window(t0, self.tare_end + 0.5)
+        self.wait_samples(t0 + self.o.tare_time, what)
+        rows = self.pt.collector.window(t0, t0 + self.o.tare_time + 0.5)
         if not rows:
             if self.pt.mcu.is_fileoutput():
                 return 3.0e6, 0.
@@ -95,24 +87,12 @@ class Toucher:
         m = sum(hz) / len(hz)
         return m, math.sqrt(sum((x - m) ** 2 for x in hz) / len(hz))
 
-    # Kalico: TappingMove.pullback_move
-    def pullback_move(self, gcmd):
-        toolhead = self.toolhead()
-        pullback_pos = toolhead.get_position()
-        pullback_pos[2] += self.pt.get_pullback_distance(gcmd)
-        pos = [None, None, pullback_pos[2]]
-        toolhead.manual_move(pos, self.pt.get_pullback_speed(gcmd))
-        toolhead.flush_step_generation()
-        pullback_end = toolhead.get_last_move_time()
-        return pullback_end
-
     # -- one touch ------------------------------------------------------------
     def touch(self, gcmd, speed=None, trigger_hz=None, sign=None, label='',
               keep=True):
         """One touch at the current XY. -> (toolhead pos, result dict).
-        Raises TapError if it cannot be done (and on a bad tap Kalico calls
-        not recoverable); a recoverable bad tap comes back with res['ok']
-        False."""
+        Raises TapError if it cannot be done; a done but poor touch comes
+        back with res['ok'] False or a low res['quality']."""
         pt, o = self.pt, self.o
         th = self.toolhead()
         params = pt.get_probe_params(gcmd)
@@ -122,6 +102,7 @@ class Toucher:
             raise TapError("trigger_hz is not set. Run PIRO_TAP_CALIBRATE "
                            "MODE=THRESHOLD (nozzle in the air) first")
         limit = gcmd.get_float('FORCE_LIMIT_HZ', o.force_limit_hz, above=trig)
+        pull = o.pullback
         sign = o.sign if sign is None else sign
         speed = speed or params['probe_speed']
         temp = self.nozzle_temp()
@@ -132,7 +113,6 @@ class Toucher:
         fo = pt.mcu.is_fileoutput()
         # 1. tare
         tare, noise = self.tare()
-        t_start = self.tare_end
         max_noise = o.max_noise or trig
         if noise > max_noise:
             raise TapError("Eddy too noisy before the touch (%.1f Hz SD, "
@@ -144,7 +124,7 @@ class Toucher:
             raise TapError("the nozzle looks pressed already (%.0f Hz from "
                            "its free-air value). Raise Z and clean the "
                            "nozzle" % (tare - self.air[0]))
-        # 2. arm the MCU trigger, probing move
+        # 2. arm the MCU trigger and move down
         pt.trigger.arm(pt.hub.rate, tare, trig, limit, sign)
         pos = th.get_position()
         pos[2] = pt.z_min
@@ -154,115 +134,75 @@ class Toucher:
             epos = phoming.probing_move(pt.trig, pos, speed)
         except self.printer.command_error as e:
             raise TapError(self.why(str(e), limit))
-        epos = list(epos)
         t_trig = pt.trig.get_last_trigger_time() or th.get_last_move_time()
-        # 3. pullback move
+        # 3. dwell and slow pullback
+        if o.dwell:
+            th.dwell(o.dwell)
         p0 = th.get_last_move_time()
-        pullback_end_time = self.pullback_move(gcmd)
+        up = th.get_position()
+        up[2] += pull
+        th.manual_move(up, pt.pullback_speed())
+        p1 = th.get_last_move_time()
         if fo:
-            res = {'ok': True, 'z': epos[2], 'quality': None}
+            res = {'ok': True, 'z': th.get_position()[2] - pull, 'codes': [],
+                   'quality': 100, 'features': {}, 'lines': {}}
             return epos, self.record(res, {}, tare, noise, trig, temp, label,
                                      keep, speed)
-        # 4. collect the samples of the tap and analyse them (Kalico)
-        self.wait_samples(pullback_end_time, "pullback")
-        rows = pt.collector.window(t_start, pullback_end_time)
+        # 4. fit
+        self.wait_samples(p1 + 0.03, "pullback")
+        rows = pt.collector.window(t_move - o.tare_time, p1 + 0.03)
         samples = [(t, h - tare) for t, h in rows]
-        t_end = pt.mcu.estimated_print_time(self.reactor.monotonic())
-        collection_time = t_end - pullback_end_time
-        if len(samples) < 20:
-            raise TapError("only %d Eddy samples for the tap" % len(samples))
-        ta = pt.tap_helper.analyze(samples, trig, collection_time, gcmd)
-        res = {'ok': ta.is_valid(), 'z': None, 'quality': None,
-               'error': None, 'code': None}
-        if res['ok']:
-            res['z'] = ta.get_tap_pos()[2]
-            if pt.classifier.config.decompression_angle is not None:
-                res['quality'] = round(
-                    pt.classifier.calculate_tap_quality(ta), 1)
-        else:
-            err = ta.get_validation_error()
-            if err is not None:
-                res['code'] = err.error_code
-                res['error'] = "%s - %s" % (err.error_code, err)
-                res['recoverable'] = err.is_recoverable
-        # the tap points exist when the shape was found, also for a tap the
-        # quality classifier turned down (drawn on the web page)
-        pts = ta.get_tap_points()
-        if len(pts) != 6:
-            pts = []
-        if res['ok']:
-            press = pts[2].force - pts[1].force
-            res['sign'] = 1 if press > 0 else -1
-            res['peak'] = round(abs(press), 1)
-            # free-air value after contact broke (for the "pressed already"
-            # check of the next touch)
-            t_break = pts[4].time + float(samples[0][0])
-            after = [h for t, h in rows if t > t_break + 0.02]
-            if len(after) >= 5:
-                self.air = (sum(after) / len(after), self.reactor.monotonic())
-            if not sign:
-                d = 'up' if res['sign'] > 0 else 'down'
-                pt.note = ("pressure moves the frequency %s: set "
-                           "pressure_sign: %s" % (d, d))
-        detail = self.detail(ta, samples, t_move, {
-            'trigger': t_trig, 'pull0': p0, 'pull1': pullback_end_time},
-            res, pts)
-        epos_out = list(epos)
-        if res['ok']:
-            epos_out[2] = res['z']
-        out = epos_out, self.record(res, detail, tare, noise, trig, temp,
-                                    label, keep, speed)
-        # Kalico: a bad tap that is not recoverable stops; a recoverable one
-        # is reported and left to the retry policy
-        if not res['ok'] and res.get('error'):
-            if res.get('recoverable'):
-                gcmd.respond_info(res['error'])
-            else:
-                raise TapError(res['error'])
-        return out
+        ev = {'move': t_move, 'trigger': t_trig, 'pull0': p0, 'pull1': p1,
+              'speed': speed}
+        cache = {}
 
-    def detail(self, ta, samples, t_move, events, res, pts):
-        """The tap for the web page: times in s from the start of the
-        probing move, Hz from the tare."""
-        off = float(samples[0][0])
-        rel = lambda t: round(t + off - t_move, 5)
-        d = {'t': [round(t - t_move, 5) for t, _ in samples],
-             'hz': [round(v, 2) for _, v in samples],
-             'events': {k: round(v - t_move, 5) for k, v in events.items()},
-             'lines': {}, 'marks': {},
-             'result': {'z': res.get('z'), 'sign': res.get('sign'),
-                        'peak': res.get('peak'),
-                        'quality': res.get('quality'),
-                        'error': res.get('error')}}
-        if pts:
-            for i, name in enumerate(LINES):
-                d['lines'][name] = [[rel(pts[i].time), pts[i].force],
-                                    [rel(pts[i + 1].time), pts[i + 1].force]]
-            d['marks'] = {'contact': rel(pts[1].time),
-                          'break': rel(pts[4].time)}
-            d['result']['angles'] = [round(a, 2)
-                                     for a in ta.get_tap_angles()]
-            lines = ta.get_tap_lines()
-            d['result']['decompression_angle'] = round(abs(
-                self.pt.classifier._slope_to_degrees(lines[3].slope)), 2)
-        return d
+        def z_of(t):
+            k = round(t, 4)
+            if k not in cache:
+                cache[k] = self.z_at(t)
+            return cache[k]
+        self.reactor.pause(self.reactor.monotonic() + 0.001)
+        res = tapfit.analyze(samples, z_of, ev, trig, pull,
+                             pt.state.limits(), sign)
+        after = [h for t, h in rows if res.get('t_break') and
+                 t > res['t_break'] + 0.05]
+        if len(after) >= 5:
+            self.air = (sum(after) / len(after), self.reactor.monotonic())
+        if res.get('sign') and not sign and not res['codes']:
+            d = 'up' if res['sign'] > 0 else 'down'
+            pt.note = ("pressure moves the frequency %s: set pressure_sign: "
+                       "%s" % (d, d))
+        detail = {'t': [round(t - t_move, 5) for t, _ in samples],
+                  'hz': [round(v, 2) for _, v in samples],
+                  'events': {k: round(v - t_move, 5) for k, v in ev.items()
+                             if k != 'speed'},
+                  'lines': {k: [[round(a - t_move, 5), b] for a, b in v]
+                            for k, v in res.get('lines', {}).items()},
+                  'marks': {k: round(res[n] - t_move, 5) for k, n in (
+                      ('contact', 't_contact'), ('break', 't_break'))
+                      if res.get(n) is not None},
+                  'result': {k: res.get(k) for k in (
+                      'z', 'z_trigger', 'travel', 'peak', 'sign', 'stiffness',
+                      'worst')}}
+        return epos, self.record(res, detail, tare, noise, trig, temp, label,
+                                 keep, speed)
 
     def record(self, res, detail, tare, noise, trig, temp, label, keep,
                speed):
         pt = self.pt
         pos = self.toolhead().get_position()
         pt.count += 1
-        r = detail.get('result', {}) if detail else {}
         summ = {'x': round(pos[0], 3), 'y': round(pos[1], 3),
                 'z': None if res.get('z') is None else round(res['z'], 5),
-                'ok': bool(res.get('ok')), 'quality': res.get('quality'),
-                'code': res.get('code'), 'why': explain(res),
+                'ok': bool(res.get('ok')), 'quality': res.get('quality', 0),
+                'codes': res.get('codes', []), 'why': tapfit.explain(res),
                 'peak': res.get('peak'), 'noise': round(noise, 2),
                 'tare_hz': round(tare, 1), 'trigger_hz': trig,
                 'temp': None if temp is None else round(temp, 1),
                 'rate': pt.hub.rate, 'speed': speed,
-                'decompression_angle': r.get('decompression_angle'),
-                'label': label, 'session_tap': pt.count}
+                'depth': res.get('press_depth'),
+                'features': res.get('features', {}), 'label': label,
+                'session_tap': pt.count}
         if keep:
             summ = pt.store.add(summ, detail)
         pt.last = summ
@@ -282,27 +222,56 @@ class Toucher:
                     "or position_min too high?" % self.pt.z_min)
         return msg
 
-    # -- probing (Kalico: PrinterProbe._run_probe_with_retries) ---------------
+    # -- probing ----------------------------------------------------------------
+    FATAL = ('force_limit', 'pressed already', 'max_probe_temp', 'not set',
+             'no contact found', 'sent no samples', 'filter:')
+
+    def good(self, res, min_q):
+        return bool(res.get('ok')) and res.get('quality', 0) >= min_q
+
     def probe_point(self, gcmd, label='probe'):
-        """A probe point: bad taps are handled by bad_probe_strategy.
-        -> (pos, res)"""
+        """A probe point. A touch that fails a check or scores under
+        min_quality is a bad probe, handled by Kalico's bad_probe_strategy
+        (Kalico: PrinterProbe._run_probe_with_retries). -> (pos, res)"""
+        o = self.o
+        min_q = gcmd.get_int('MIN_QUALITY', o.min_quality, minval=0,
+                             maxval=100)
         th = self.toolhead()
+        params = self.pt.get_probe_params(gcmd)
         retry_session = RetrySession(self.pt.retry_factory.customize(gcmd),
                                      gcmd)
         retry_session.set_position(th.get_position())
-        params = self.pt.get_probe_params(gcmd)
         while retry_session.can_retry():
             th.manual_move(retry_session.get_probe_position(),
                            retry_session.retry_policy.retry_speed)
-            epos, res = self.touch(gcmd, label=label)
-            if retry_session.evaluate_probe(res.get('ok')):
-                if not res.get('ok'):
-                    # IGNORE: Kalico keeps the probing move's stop position
+            try:
+                epos, res = self.touch(gcmd, label=label)
+                why = tapfit.explain(res)
+            except TapError as e:
+                if any(f in str(e) for f in self.FATAL):
+                    raise
+                epos, res, why = None, {'ok': False}, str(e)
+            good = self.good(res, min_q)
+            if not good:
+                gcmd.respond_info("piro_tap: touch not used (%s)" % why)
+            try:
+                accepted = retry_session.evaluate_probe(good)
+            except self.printer.command_error as e:
+                # FAIL strategy or out of retries: say why the last touch
+                # was not used
+                raise TapError("%s. Last touch: %s" % (e, why))
+            if accepted:
+                if not good and res.get('z') is None:
+                    # IGNORE with no Z from the fit: the stop position
+                    if epos is None:
+                        raise TapError("touch failed: %s" % why)
                     res = dict(res, z=epos[2])
                 if label != 'thermal':
                     self.check_mesh_temp(gcmd, res.get('temp'))
                 x, y = retry_session.get_position()
-                return [x, y, res['z']] + list(epos[3:]), res
+                out = list(epos) if epos else list(th.get_position())
+                out[0], out[1], out[2] = x, y, res['z']
+                return out, res
             # Probe was rejected, retry
             self.lift(gcmd, params['sample_retract_dist'])
             retry_session.scrub_nozzle()
@@ -328,9 +297,7 @@ class Toucher:
         above position_max, so the pullback and the lifts would be refused
         ("Move out of range"). Klipper's idea of Z is shifted into range
         (the nozzle does not move) for the touches and shifted back after;
-        the touch heights are handed back in Klipper's own numbers. The shift
-        is done before the tare, so Kalico's analysis sees the same moves as
-        a normal PROBE."""
+        the touch heights are handed back in Klipper's own numbers."""
         th = self.toolhead()
         pos = th.get_position()
         z_max = self.pt.z_max
@@ -350,7 +317,7 @@ class Toucher:
 
     def _home_touches(self, gcmd):
         """Two touches. Fast: the second touch is used (the first finds the
-        bed). Slow: the average of two touches that agree. A bad tap is
+        bed). Slow: the average of two touches that agree. A failed touch is
         touched again, up to bad_probe_retries times."""
         o = self.o
         attempt = gcmd.get('HOME_ATTEMPT_NUM', '1')
@@ -365,7 +332,7 @@ class Toucher:
             epos, res = self.touch(gcmd, label='home %s' % attempt)
             if not res.get('ok'):
                 gcmd.respond_info("piro_tap: homing touch not used (%s)"
-                                  % explain(res))
+                                  % tapfit.explain(res))
                 continue
             zs.append(res['z'])
             last = (epos, res)

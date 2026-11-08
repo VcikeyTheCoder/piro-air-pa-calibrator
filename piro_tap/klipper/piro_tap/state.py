@@ -1,9 +1,10 @@
-"""Small saved state that does not belong in printer.cfg (the thermal
-calibration points for the web page)."""
+"""Small saved state that does not belong in printer.cfg: the tap quality
+limits found by PIRO_TAP_CALIBRATE MODE=QUALITY."""
 import json
 import logging
 import os
 
+from .tapfit import DEFAULT_LIMITS
 
 
 class State:
@@ -17,6 +18,13 @@ class State:
                 self.data = d
         except (OSError, ValueError):
             pass
+
+    def limits(self):
+        out = dict(DEFAULT_LIMITS)
+        for k, v in (self.data.get('limits') or {}).items():
+            if k in out and isinstance(v, (int, float)) and 0 < v < 10:
+                out[k] = float(v)
+        return out
 
     def set(self, key, value):
         self.data[key] = value

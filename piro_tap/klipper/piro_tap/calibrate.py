@@ -1,4 +1,4 @@
-"""PIRO_TAP_CALIBRATE MODE=THRESHOLD | DRIFT | TAP_PERFORMANCE
+"""PIRO_TAP_CALIBRATE MODE=THRESHOLD | DRIFT | QUALITY
 
 THRESHOLD  Nozzle in the air. Tare first, then watch the Eddy through the
            same filter the MCU trigger uses. Noise = largest minus lowest
@@ -7,18 +7,14 @@ THRESHOLD  Nozzle in the air. Tare first, then watch the Eddy through the
 DRIFT      Nozzle in the air for 10 s: how fast the reading wanders. If it
            moves more than a quarter of trigger_hz during one probe move, a
            slow high-pass (drift_filter_hz) is suggested.
-TAP_PERFORMANCE
-           Kalico's LOAD_CELL_PROBE_CALIBRATE CALIBRATION=TAP_PERFORMANCE:
-           a tap at every [bed_mesh] point with a 1 mm pullback
-           (PULLBACK_DISTANCE=), then pullback_distance = (mean + 3 SD of
-           the decompression distance) x 2 and decompression_angle = the
-           mean angle of the release line (tap quality). Clean nozzle.
-Values for printer.cfg are staged for SAVE_CONFIG, like Klipper's own
-calibrations."""
+QUALITY    10 touches on a clean nozzle: the ooze checks are scaled to what a
+           clean touch looks like on this printer.
+pullback_distance is a fixed setting (no calibration). Values for
+printer.cfg are staged for SAVE_CONFIG, like Klipper's own calibrations."""
 import math
 
+from . import tapfit
 from .errors import TapError
-from .touch import explain
 
 TRIGGER_X_NOISE = 3.
 
@@ -37,8 +33,7 @@ class Calibrator:
         mode = gcmd.get('MODE', 'THRESHOLD').upper()
         fn = getattr(self, 'mode_' + mode.lower(), None)
         if fn is None:
-            raise gcmd.error("MODE must be THRESHOLD, DRIFT or "
-                             "TAP_PERFORMANCE")
+            raise gcmd.error("MODE must be THRESHOLD, DRIFT or QUALITY")
         self.pt.begin_session()
         try:
             fn(gcmd)
@@ -60,7 +55,7 @@ class Calibrator:
         for i in range(n):
             try:
                 _, res = self.pt.toucher.touch(gcmd, label='calibrate', **kw)
-                why = explain(res)
+                why = tapfit.explain(res)
             except TapError as e:
                 res, why = {'ok': False}, str(e)
             gcmd.respond_info("touch %d/%d: %s%s" % (
@@ -134,30 +129,16 @@ class Calibrator:
         pt.opts.drift_hz = val
         pt.save_config(gcmd, 'drift_filter_hz', '%g' % val)
 
-    def mode_tap_performance(self, gcmd):
-        # Kalico: cmd_LOAD_CELL_PROBE_CALIBRATE, CALIBRATION=TAP_PERFORMANCE
-        from .kalico_calibration import PullbackDistanceCalibration
-        pt = self.pt
-        pt.check_homed()
-        pt.end_session()            # the mesh points run their own session
-        cal = PullbackDistanceCalibration(pt.config, PullbackConfig(pt),
-                                          pt.tap_helper.set_calibration_callback)
-        taps = cal.calibrate(gcmd)
-        pt.classifier.calibrate(taps, gcmd)
-
-
-class PullbackConfig:
-    """Kalico's LoadCellProbeConfigHelper pullback_distance methods."""
-    def __init__(self, pt):
-        self.pt = pt
-
-    def get_pullback_distance(self, gcmd=None):
-        return self.pt.get_pullback_distance(gcmd)
-
-    def set_pullback_distance(self, value):
-        self.pt.opts.pullback = value
-
-    def save_pullback_distance(self, value):
-        self.pt.opts.pullback = value
-        self.pt.printer.lookup_object('configfile').set(
-            self.pt.name, 'pullback_distance', value)
+    def mode_quality(self, gcmd):
+        n = gcmd.get_int('SAMPLES', 10, minval=5, maxval=30)
+        gcmd.respond_info("Clean the nozzle first: these touches define a "
+                          "clean touch")
+        res = self._touches(gcmd, n)
+        rows = [r['features'] for r in res if r.get('ok')]
+        if len(rows) < 5:
+            raise TapError("only %d usable touches" % len(rows))
+        lim = tapfit.suggest_limits(rows)
+        self.pt.state.set('limits', lim)
+        gcmd.respond_info("Quality limits saved (%s): %s" % (
+            self.pt.state.path, ", ".join("%s %.3f" % kv
+                                         for kv in sorted(lim.items()))))

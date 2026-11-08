@@ -201,9 +201,8 @@ def demo_taps():
         import test_piro_tap as tp
         if tp.load_package() is None:
             return None
-        pkg, w, pp, tap = tp.make({'data_dir': tempfile.mkdtemp(),
-                                   'decompression_angle': 77.8,
-                                   'min_tap_quality': 60}, growth=0.00023)
+        pkg, w, pp, tap = tp.make({'data_dir': tempfile.mkdtemp()},
+                                  growth=0.00023)
         w.z = 3.0
         tp.home_z(pp, tap)
         tp.cmd(pp, 'PIRO_TAP_THERMAL_CALIBRATE', {'START': 0, 'END': 200,
@@ -218,7 +217,7 @@ def demo_taps():
             w.z = w.z_bed + 0.6
             sess.run_probe(tp.Gcmd())
         sess.end_probe_session()
-        w.ooze, w.relax = 0.02, 2.        # sinks while pressed: low quality
+        w.ooze, w.relax = 0.05, 4.
         w.z = 0.7
         try:
             tp.cmd(pp, 'NOZZLE_CLEAN_CHECK', {'MAX_TAPS': 3})

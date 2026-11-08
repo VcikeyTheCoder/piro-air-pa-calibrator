@@ -1588,7 +1588,7 @@ async function probeCheck(){let objs=null;try{objs=(await rpc.call('printer.obje
  const tap=objs?objs.includes('piro_tap'):await papi('taps',{limit:1},5000).then(()=>true,()=>false);
  HAS_PA=objs?objs.includes('pa_loadcell'):true;$('#tabProbe').hidden=!tap;
  const po=!HAS_PA&&tap;document.body.classList.toggle('probe-only',po);if(po){$('#brand').innerHTML='PIRO-TAP<span>Eddy nozzle probe</span>';document.title='PIRO-TAP'}if(!HAS_PA&&tap&&TAB!=='probe')setTab('probe')}
-const qcls=t=>!t.ok?'bad':t.quality==null||t.quality>=70?'ok':t.quality>=40?'warn':'bad';
+const qcls=t=>!t.ok?'bad':t.quality>=70?'ok':t.quality>=40?'warn':'bad';
 async function loadTaps(){if(PT.busy)return;PT.busy=true;try{const r=await papi('taps',{limit:200},8000);PT.list=r.taps||[];PT.st=r;renderTaps();
   const nw=PT.list.length?PT.list[PT.list.length-1].id:null;if(nw!=null&&(PT.sel==null||PT.follow&&PT.sel!==nw))await selectTap(nw,true)}
  catch(e){$('#pInfo').textContent=e.message}finally{PT.busy=false}}
@@ -1598,23 +1598,24 @@ function renderTaps(){const r=PT.st||{},s=r.status||{},st=$('#pState');let cls='
  $('#pInfo').textContent=(s.rate?s.rate+'/s ('+s.mode+')':'')+(s.error?'  '+s.error:s.note?'  '+s.note:'');
  const rows=PT.list.slice().reverse().map(t=>`<tr data-id="${t.id}" aria-selected="${t.id===PT.sel}"><td class="num">${t.id}</td><td class="num">${new Date(t.time*1000).toLocaleTimeString()}</td>
   <td class="num">${fmt(t.x,1)}</td><td class="num">${fmt(t.y,1)}</td><td class="num">${t.z==null?'-':(+t.z).toFixed(4)}</td>
-  <td class="q"><span class="chip ${qcls(t)}"><i></i><span>${!t.ok?'bad tap':t.quality==null?'good':Math.round(t.quality)+' %'}</span></span></td><td class="num">${t.temp==null?'-':fmt(t.temp,0)+' °C'}</td><td class="small ${t.ok?'dim':'bad'}">${esc(t.ok&&(t.quality==null||t.quality>=80)?(t.label||''):t.why)}</td></tr>`);
+  <td class="q"><span class="chip ${qcls(t)}"><i></i><span>${t.ok?t.quality+' %':'failed'}</span></span></td><td class="num">${t.temp==null?'-':fmt(t.temp,0)+' °C'}</td><td class="small ${t.ok?'dim':'bad'}">${esc(t.ok&&t.quality>=80?(t.label||''):t.why)}</td></tr>`);
  $('#pTable tbody').innerHTML=rows.join('')||'<tr><td colspan="8" class="dim">No taps yet. Run PROBE, BED_MESH_CALIBRATE or NOZZLE_CLEAN_CHECK.</td></tr>';
  $$('#pTable tbody tr[data-id]').forEach(tr=>tr.onclick=()=>{PT.follow=false;selectTap(+tr.dataset.id)})}
 async function selectTap(id,auto){PT.sel=id;if(!auto)renderTaps();else $$('#pTable tbody tr').forEach(tr=>tr.setAttribute('aria-selected',+tr.dataset.id===id));
  try{PT.det=await papi('tap',{id},8000);drawTap()}catch(e){toast(e.message)}}
-const TAPLINES=[['approach','Approach','--dim'],['compression','Press','--amber'],['dwell','Dwell','--ok'],['decompression','Release','--rec'],['departure','Free air','--cmd']];
+const TAPLINES=[['approach','Approach','--dim'],['compression','Press','--amber'],['decompression','Release','--rec'],['departure','Free air','--cmd']];
 function drawTap(){const d=PT.det;if(!d){pchart.set({series:[],empty:'Pick a tap below'});return}
  const D=d.detail||{},S=d.summary||{},R=D.result||{},ms=x=>x*1000,t=(D.t||[]).map(ms),sg=R.sign||1;   /* pressure drawn upwards */
  const series=[{t,f:(D.hz||[]).map(v=>v*sg),color:css('--trace'),name:'Pressure',w:1.5}];
  for(const[k,lab,c]of TAPLINES){const L=(D.lines||{})[k];if(L&&L.length===2)series.push({t:[ms(L[0][0]),ms(L[1][0])],f:[L[0][1]*sg,L[1][1]*sg],color:css(c),dash:[6,4],w:2,noScale:true,name:lab})}
  const E=D.events||{},vl=[];if(E.trigger!=null)vl.push({t:ms(E.trigger),label:'stop',color:css('--amber')});if(E.pull0!=null)vl.push({t:ms(E.pull0),label:'pullback',color:css('--dim')});
- if(D.marks&&D.marks.break!=null)vl.push({t:ms(D.marks.break),label:'contact breaks (Z)',color:css('--ok')});
+ if(D.marks&&D.marks.break!=null)vl.push({t:ms(D.marks.break),label:'contact breaks',color:css('--ok')});
  pchart.set({series,vlines:vl,unit:'Hz',dec:1,timeAxis:false,xtick:v=>v.toFixed(0)+' ms',tfmt:v=>v.toFixed(1)+' ms',invert:INVERT});
  $('#pTitle').textContent=`Tap ${S.id}  at X ${fmt(S.x,1)} Y ${fmt(S.y,1)}`+(S.z!=null?`,  Z ${(+S.z).toFixed(4)}`:'');
- const w=$('#pWhy');w.textContent=S.why||'';w.className='small '+(S.ok?(S.quality==null||S.quality>=70?'dim':''):'bad');
+ const w=$('#pWhy');w.textContent=S.why||'';w.className='small '+(S.ok?(S.quality>=70?'dim':''):'bad');
  $('#pLeg').innerHTML=TAPLINES.filter(([k])=>(D.lines||{})[k]).map(([k,lab,c])=>`<span><s style="border-color:${css(c)}"></s>${lab}</span>`).join('');
- $('#pFeat').textContent=[`press ${fmt(S.peak,0)} Hz`,`trigger ${fmt(S.trigger_hz,1)} Hz`,`release angle ${S.decompression_angle!=null?fmt(S.decompression_angle,1)+'°':'-'}`,`${S.rate||'-'}/s`].join(',  ')}
+ const F=S.features||{},nm={approach:'before contact',departure:'after lift-off',baseline:'baseline shift',dwell:'sank while pressed',stiffness:'release vs press',residual:'noise'};
+ $('#pFeat').textContent=[`peak ${fmt(S.peak,0)} Hz`,`trigger ${fmt(S.trigger_hz,1)} Hz`,`press depth ${S.depth!=null?(S.depth*1000).toFixed(0)+' µm':'-'}`,`${S.rate||'-'}/s`].concat(Object.keys(nm).filter(k=>F[k]!=null).map(k=>nm[k]+' '+Math.round(F[k]*100)+' %')).join(',  ')}
 $('#pNewest').onclick=()=>{PT.follow=true;PT.sel=null;loadTaps();loadThermal()};
 /* nozzle growth: measured points and the fitted line (PIRO_TAP_THERMAL_CALIBRATE) */
 let TH=null;

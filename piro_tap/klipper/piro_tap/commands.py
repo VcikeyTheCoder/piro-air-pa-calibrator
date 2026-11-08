@@ -1,13 +1,12 @@
 """PIRO-TAP G-code commands (other than Klipper's own probe commands)."""
+from . import tapfit
 from .calibrate import Calibrator
 from .errors import TapError
-from .touch import explain
 
 HELP = {
     'PIRO_TAP_STATUS': "PIRO-TAP: rate, trigger, thermal, last touch",
     'PIRO_TAP_TEST': "PIRO-TAP: wait for a hand press on the nozzle",
-    'PIRO_TAP_CALIBRATE': "PIRO-TAP: MODE=THRESHOLD, DRIFT or "
-                          "TAP_PERFORMANCE",
+    'PIRO_TAP_CALIBRATE': "PIRO-TAP: MODE=THRESHOLD, DRIFT or QUALITY",
     'PIRO_TAP_THERMAL_CALIBRATE': "PIRO-TAP: nozzle growth START= END= STEP=",
     'PIRO_TAP_THERMAL_APPLY': "PIRO-TAP: Z offset for TEMP= (first layer)",
     'PIRO_TAP_SET_RATE': "PIRO-TAP: Eddy sample rates PROBE= PA= IDLE=",
@@ -49,7 +48,7 @@ class Commands:
             "pullback: %.3f mm at %.3f mm/s"
             % ('%.1f' % o.trigger_hz if o.trigger_hz else 'NOT SET',
                o.force_limit_hz, {0: 'auto', 1: 'up', -1: 'down'}[o.sign],
-               pt.get_pullback_distance(), pt.get_pullback_speed()),
+               o.pullback, pt.pullback_speed()),
             "thermal_coeff: %.3f um/C  last Z homing at: %s  applied: %+.4f mm"
             % (th['coeff'] * 1000.,
                '-' if th['home_temp'] is None else '%.0f C' % th['home_temp'],
@@ -112,12 +111,14 @@ class Commands:
             pt.reactor.pause(pt.reactor.monotonic() + 0.5)
 
     def NOZZLE_CLEAN_CHECK(self, gcmd):
-        """Touch at this XY until CLEAN touches in a row are good taps
-        (Kalico's tap analysis and quality) and agree within SPREAD."""
+        """Touch at this XY until CLEAN touches in a row are clean and
+        agree within SPREAD."""
         pt = self.pt
         need = gcmd.get_int('CLEAN', 3, minval=1, maxval=10)
         most = gcmd.get_int('MAX_TAPS', 12, minval=need, maxval=50)
         spread = gcmd.get_float('SPREAD', 0.010, above=0.)
+        min_q = gcmd.get_int('MIN_QUALITY', max(pt.opts.min_quality, 60),
+                             minval=0, maxval=100)
         params = pt.get_probe_params(gcmd)
         pt.check_homed()
         pt.begin_session()
@@ -125,8 +126,8 @@ class Commands:
         for i in range(most):
             try:
                 _, res = pt.toucher.touch(gcmd, label='clean check')
-                good = bool(res.get('ok'))
-                why = explain(res)
+                good = res.get('ok') and res['quality'] >= min_q
+                why = tapfit.explain(res)
             except TapError as e:
                 if 'force_limit' in str(e):
                     raise
