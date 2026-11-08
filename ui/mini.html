@@ -143,7 +143,7 @@ function stage(){const busy=ST.state&&ST.state!=='idle';if(!busy)return ST.last&
 /* PIRO-TAP: while probing (and 15 s after) the strip shows the taps */
 function probing(){const lt=PTS.last_tap;return!!PTS.in_session||!!(lt&&lt.time&&Date.now()/1000-lt.time<15&&!(ST.state&&ST.state!=='idle'))}
 function paintProbe(){const lt=PTS.last_tap||{};$('#pn').textContent=PTS.in_session?(PTS.session_taps||0):(lt.session_tap||'-');
- $('#pz').textContent=lt.z!=null?(+lt.z).toFixed(4):'-';const q=$('#pq');q.textContent=lt.ok?lt.quality+' %':lt.id?'failed':'-';q.className=!lt.id?'':!lt.ok||lt.quality<40?'bad':lt.quality<70?'warn':'ok';
+ $('#pz').textContent=lt.z!=null?(+lt.z).toFixed(4):'-';const q=$('#pq');q.textContent=lt.ok?(lt.quality==null?'good':Math.round(lt.quality)+' %'):lt.id?'bad tap':'-';q.className=!lt.id?'':!lt.ok||lt.quality!=null&&lt.quality<40?'bad':lt.quality!=null&&lt.quality<70?'warn':'ok';
  $('#pr').textContent=PTS.rate?PTS.rate+'/s':'-';$('#pw').textContent=lt.why||'-'}
 function paint(){const pr0=probing();document.body.classList.toggle('probing',pr0);$('h1').textContent=pr0?'Probing':'PA test';
  if(pr0){paintProbe();const st=$('#state');st.className='chip '+(PTS.error?'bad':PTS.in_session?'run':'ok');st.lastElementChild.textContent=PTS.error?'Eddy error':PTS.in_session?'Tap '+(PTS.session_taps||0):'Done';

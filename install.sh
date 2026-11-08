@@ -10,7 +10,7 @@
 # The Klipper module and the web page are installed as symlinks into this
 # repo folder, so `git pull` (or the Update button in Mainsail's Machine
 # page) updates everything. Keep the repo folder where it is.
-# Optional env overrides: KLIPPER_DIR CONFIG_DIR UI_DIR NGINX_SITE KLIPPER_SERVICE
+# Optional env overrides: KLIPPER_DIR KLIPPY_ENV CONFIG_DIR UI_DIR NGINX_SITE KLIPPER_SERVICE
 #                         MOONRAKER_CONF NO_RESTART=1 (skip service restarts)
 set -euo pipefail
 
@@ -178,6 +178,16 @@ if [ "$WANT_PROBE" = 1 ]; then
   link piro_tap/klipper/piro_tap piro_tap
   if ! grep -q "setup_trigger_analog" "$EXTRAS/ldc1612.py" 2>/dev/null; then
     warn "This Klipper is too old for PIRO-TAP (needs v0.13.0-496 or newer): update Klipper before enabling [piro_tap]"
+  fi
+  # Kalico's tap analysis (copied into PIRO-TAP) needs numpy
+  PY_ENV="${KLIPPY_ENV:-$HOME/klippy-env}"
+  if [ -x "$PY_ENV/bin/python" ]; then
+    if ! "$PY_ENV/bin/python" -c "import numpy" 2>/dev/null; then
+      say "Installing numpy into $PY_ENV (needed by PIRO-TAP)"
+      "$PY_ENV/bin/pip" install -q numpy || warn "numpy install failed: run  $PY_ENV/bin/pip install numpy"
+    fi
+  else
+    warn "Klipper's Python not found at $PY_ENV: make sure numpy is installed in it (set KLIPPY_ENV)"
   fi
 else
   rm -rf "$EXTRAS/piro_tap"
@@ -352,6 +362,7 @@ if [ "$WANT_PROBE" = 1 ]; then cat <<MSG
   PIRO-TAP probe:
   1. Read and edit $CONFIG_DIR/piro_tap.cfg, remove your other probe, uncomment [piro_tap]
   2. FIRMWARE_RESTART, then  PIRO_TAP_CALIBRATE MODE=THRESHOLD  and  SAVE_CONFIG
+  3. Home, then  PIRO_TAP_CALIBRATE MODE=TAP_PERFORMANCE  and  SAVE_CONFIG
 MSG
 fi
 echo "  Page: http://$H.local/loadcell/  (Mainsail sidebar, after a browser refresh)"
