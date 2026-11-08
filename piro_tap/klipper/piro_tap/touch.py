@@ -322,8 +322,34 @@ class Toucher:
 
     # -- Z homing -------------------------------------------------------------
     def home_attempt(self, gcmd):
-        """Klipper's homing calls this twice (fast, then slow). Each call:
-        two touches. Fast: the second touch is used (the first finds the
+        """Klipper's homing calls this twice (fast, then slow).
+
+        On the first call Z is unknown and Klipper pretends the nozzle is
+        above position_max, so the pullback and the lifts would be refused
+        ("Move out of range"). Klipper's idea of Z is shifted into range
+        (the nozzle does not move) for the touches and shifted back after;
+        the touch heights are handed back in Klipper's own numbers. The shift
+        is done before the tare, so Kalico's analysis sees the same moves as
+        a normal PROBE."""
+        th = self.toolhead()
+        pos = th.get_position()
+        z_max = self.pt.z_max
+        shift = 0.
+        if z_max is not None and pos[2] > z_max:
+            shift = pos[2] - z_max
+            th.set_position(pos[:2] + [z_max] + pos[3:])
+        try:
+            epos, res = self._home_touches(gcmd)
+        finally:
+            if shift:
+                cur = th.get_position()
+                th.set_position(cur[:2] + [cur[2] + shift] + cur[3:])
+        epos = list(epos)
+        epos[2] += shift
+        return epos, res
+
+    def _home_touches(self, gcmd):
+        """Two touches. Fast: the second touch is used (the first finds the
         bed). Slow: the average of two touches that agree. A bad tap is
         touched again, up to bad_probe_retries times."""
         o = self.o

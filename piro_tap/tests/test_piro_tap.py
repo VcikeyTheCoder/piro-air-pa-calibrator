@@ -468,6 +468,9 @@ class Extruder:
         return s.heater.get_status(t)
 
 
+Z_MAX = 290.                       # [stepper_z] position_max, like yours
+
+
 class Toolhead:
     def __init__(s, w):
         s.w = w
@@ -489,6 +492,10 @@ class Toolhead:
         if pos[0] is not None:
             s.w.xy[:2] = [pos[0], pos[1]]
         if pos[2] is not None:
+            # Klipper checks the end of every move against the Z range
+            if not -2. <= pos[2] <= Z_MAX:
+                raise CmdError("Move out of range: %.3f %.3f %.3f [0.000]"
+                               % (s.w.xy[0], s.w.xy[1], pos[2]))
             s.w.move_z(pos[2] - s.offset, speed, s.offset)
 
     def flush_step_generation(s):
@@ -721,7 +728,7 @@ class Config:
         if n == 'bed_mesh':
             return Config(s.p, {'speed': 50., 'horizontal_move_z': 2.},
                           'bed_mesh')
-        return Config(s.p, {'position_min': -2.})
+        return Config(s.p, {'position_min': -2., 'position_max': Z_MAX})
 
 
 # -- loading piro_tap as Klipper would (klippy/extras/piro_tap) ----------------
@@ -1017,7 +1024,9 @@ def home_z(p, tap, fast=5., slow=2.):
     g1 = Gcmd({'HOME_ATTEMPT_NUM': '1', 'SAMPLES': '1',
                'PROBE_SPEED': fast}, 'G28')
     sess = tap.start_probe_session(g1)
-    th.set_position([100, 100, 10., 0])     # Z unknown: forced
+    # Z unknown: Klipper forces position_endstop + 1.5 x travel (above
+    # position_max)
+    th.set_position([100, 100, 0. + 1.5 * (Z_MAX - 0.), 0])
     for attempt, speed in (('1', fast), ('2', slow)):
         g = Gcmd({'HOME_ATTEMPT_NUM': attempt, 'SAMPLES': '1',
                   'PROBE_SPEED': speed}, 'G28')
@@ -1031,6 +1040,20 @@ def home_z(p, tap, fast=5., slow=2.):
             cur[2] += 5.
             th.manual_move(cur, 10.)
     sess.end_probe_session()
+
+
+@skip_without_klipper
+def test_first_homing_touch_starts_above_position_max():
+    """klippy_35: the pullback of the first homing touch went to Z 416.5
+    ("Move out of range"). Z is shifted into range for the touches, and
+    Kalico's analysis still gets the 6 moves of a normal tap."""
+    pkg, w, p, tap = make(z_bed=0.3)
+    w.z = 19.0
+    home_z(p, tap)
+    assert abs(p.th.get_position()[2] - (w.z - 0.3)) < 0.003
+    taps = tap.store.list(10)
+    assert len(taps) == 4 and all(t['ok'] for t in taps), taps
+    assert all(t['z'] is not None for t in taps)     # Kalico's Z found
 
 
 @skip_without_klipper

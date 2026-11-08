@@ -117,6 +117,10 @@ class PiroTap:
         self.trigger = Trigger(self.sensor, self.trig, self.sos, self.opts)
         probe.LookupZSteppers(config, self.trig.get_dispatch().add_stepper)
         self.z_min = probe.lookup_minimum_z(config)
+        self.z_max = None               # [stepper_z] position_max
+        if config.has_section('stepper_z'):
+            self.z_max = config.getsection('stepper_z').getfloat(
+                'position_max', None, note_valid=False)
         # -- Klipper probe interface -----------------------------------------
         self.param_helper = probe.ProbeParameterHelper(config)
         try:
