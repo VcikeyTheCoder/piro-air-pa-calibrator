@@ -2,9 +2,10 @@
 
 Pressure advance calibration for Klipper using the load cell on the **PIRO-AIR** toolhead (HX717, 320 Hz).
 The nozzle extrudes fast and slow pulses into the air while the load cell (or a BTT Eddy) measures the nozzle
-pressure. The result, **PIRO-FALL**, is the PA where the force settles after the slow-down with no lag and no dip
-(fall area 0), with an uncertainty and a grade. **PIRO-AREA** (rise and fall together) and **PIRO-EDGE** (the
-highest PA before the force dips) are computed on the same data and shown beside it.
+pressure. The result, **PIRO-EDGE**, is the highest PA before the force dips after the slow-down, with an
+uncertainty and a grade. With **dual PA** (on by default) the same pulses also give the PA for the speed-up, so one
+run gives a push and a pull value for [dual_pa](https://github.com/VcikeyTheCoder/dual_pa). **PIRO-FALL** (slow-down area 0) and **PIRO-AREA** (rise
+and fall together) are computed on the same data and shown beside it.
 
 Tested on printers with more than 200 runs across several filaments.
 
@@ -17,9 +18,10 @@ Tested on printers with more than 200 runs across several filaments.
 
 ## Features
 
-- Adaptive search: up to 7 PA values (`max_values`) placed around the answer, about 1 to 2 minutes per filament
-- PIRO-FALL result with ± uncertainty, a *good / fair / poor* grade and a graph of how the ± narrows with every value; PIRO-AREA and PIRO-EDGE shown beside it
-- Mode and method, chosen separately: **mode** = the rule judging the curve (`fall` PIRO-FALL, default, `area` PIRO-AREA or `edge` PIRO-EDGE); **method** = how each PA value is applied (`push`, default: exactly Klipper's own PA with no XY motion, or `klipper`: Klipper's own PA on a short XY line). No conversion either way
+- Adaptive search: up to 7 PA values (`max_values`, every mode; repeats of a value are not counted), about 2 minutes per filament
+- PIRO-EDGE result with ± uncertainty, a *good / fair / poor* grade and the graphs it came from; PIRO-FALL and PIRO-AREA shown beside it
+- Dual PA: push (speed-up) and pull (slow-down) PA from one run, no extra PA values. Edge takes push from the overshoot after the speed-up, fall from the speed-up area. Auto PA sets both with `SET_DUAL_PA` when [dual_pa](https://github.com/VcikeyTheCoder/dual_pa) is installed
+- Mode and method, chosen separately: **mode** = the rule judging the curve (`edge` PIRO-EDGE, default, `fall` PIRO-FALL or `area` PIRO-AREA); **method** = how each PA value is applied (`push`, default: exactly Klipper's own PA with no XY motion, or `klipper`: Klipper's own PA on a short XY line). No conversion either way
 - Load cell, BTT Eddy (raw Hz over I2C, `[piro_tap]` or `[pa_eddy]`) or both at once to compare them on the same pulses
 - **PIRO-TAP** (its own part, [`piro_tap/`](piro_tap)): the same Eddy as a nozzle-contact Z probe: bed mesh, Z tilt / QGL, 4-touch Z homing, MCU-side trigger in Hz, Kalico-style pullback fit for Z, ooze checks with retries, nozzle thermal expansion calibration
 - Mainsail mini window: read-only test progress, probing progress and a live 3 / 5 / 10 s graph with display-only smoothing on the Mainsail dashboard (HTML Iframe webcam)
@@ -45,7 +47,7 @@ appears in the sidebar. Details: [Installation](https://github.com/VcikeyTheCode
 
 | | |
 |---|---|
-| Update | `cd ~/piro-air-pa-calibrator && git pull && bash install.sh`, or **Update** on Mainsail's Machine page (run `bash install.sh` once after updates that add files) |
+| Update | `cd ~/piro-air-pa-calibrator && git pull && bash install.sh`, or **Update** on Mainsail's Machine page (run `bash install.sh` once after updates that add files). Your `pa_loadcell.cfg` and `pa_auto.cfg` values are kept |
 | Uninstall | `bash install.sh --uninstall` (config and runs are kept) |
 
 ## Commands
@@ -53,7 +55,8 @@ appears in the sidebar. Details: [Installation](https://github.com/VcikeyTheCode
 | Command | Description |
 |---|---|
 | `PA_LOADCELL_TEST` | Run the test. Parameters override `[pa_loadcell]`, e.g. `PA_LOADCELL_TEST FILAMENT="PETG black" FAST_FLOW=10` |
-| `PA_LOADCELL_TEST MODE=edge` | Judge the curve with PIRO-EDGE for this run (default `mode: fall`) |
+| `PA_LOADCELL_TEST MODE=fall` | Judge the curve with PIRO-FALL for this run (default `mode: edge`) |
+| `PA_LOADCELL_TEST DUAL=0` | One PA only for this run (default `dual: 1`: push and pull) |
 | `PA_LOADCELL_TEST METHOD=klipper` | Apply PA on a short XY line for this run (default `method: push`) |
 | `PA_LOADCELL_DIAG` | Check the load cell stream: expect about 320 samples/s |
 | `PA_AUTO {rawparams}` | In PRINT_START: auto PA before every print (`pa_auto.cfg`) |
@@ -64,12 +67,14 @@ appears in the sidebar. Details: [Installation](https://github.com/VcikeyTheCode
 | `PIRO_TAP_STATUS` | PIRO-TAP: rate, trigger, last tap. More: [PIRO-TAP probe](https://github.com/VcikeyTheCoder/piro-air-pa-calibrator/wiki/PIRO-TAP-probe) |
 
 The test needs the nozzle at `min_temp`, all axes homed and Z at `required_z` (20 mm). Apply the result with
-`SET_PRESSURE_ADVANCE ADVANCE=<value>`. All parameters: [Commands](https://github.com/VcikeyTheCoder/piro-air-pa-calibrator/wiki/Commands).
+`SET_PRESSURE_ADVANCE ADVANCE=<value>`, or with dual PA `SET_DUAL_PA PUSH=<push> PULL=<pull>` (the page shows the
+command to copy). All parameters: [Commands](https://github.com/VcikeyTheCoder/piro-air-pa-calibrator/wiki/Commands).
 
 ## Auto PA before every print
 
 When pressure advance is off in the OrcaSlicer filament profile, PA is measured at the outer wall flow and wall
-temperature, and set. A recent result of the same filament is reused; no usable result sets 0.02.
+temperature, and set: push and pull with `SET_DUAL_PA` when [dual_pa](https://github.com/VcikeyTheCoder/dual_pa) is installed, else one PA (the pull
+value). A recent result of the same filament is reused; no usable result sets 0.02.
 
 OrcaSlicer, Machine start G-code (one line):
 
@@ -85,8 +90,9 @@ PA_AUTO {rawparams}
 
 `pa_auto.cfg` holds four macros, each usable on its own: `PA_AUTO` (called by PRINT_START), `PA_AUTO_POSITION`,
 `PA_AUTO_RUN` (Klipper's PA on a line from the PA location at the slicer's outer wall acceleration, or push) and
-`PA_AUTO_FLICK` (retract, flick, optional push-off of the purge for printers without a bucket). Settings are
-variables at the top of each macro. Details:
+`PA_AUTO_FLICK` (retract and flick, `flick: 1`, and an optional push-off of the purge for printers without a
+bucket). Settings are variables at the top of each macro; `install.sh` carries your values over when the file
+changes. Details:
 [Auto PA before every print](https://github.com/VcikeyTheCoder/piro-air-pa-calibrator/wiki/Auto-PA).
 
 ## Example

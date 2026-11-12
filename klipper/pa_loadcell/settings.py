@@ -8,13 +8,20 @@ fast/slow pulses, all extrude-only with the push method (see testrun.py).
 The search (see testrun.py): PA 0, then PA_MAX (+UPPER_STEP until the force
 dips, failing at PA_LIMIT), then values around the predicted answer.
 
-Two settings shape a run:
-  MODE   the rule that judges the force curve: fall (default, the PA where
-         the area after the slow-down is 0: no lag, no dip), area
+Three settings shape a run:
+  MODE   the rule that judges the force curve: edge (default, PIRO-EDGE,
+         the highest PA without a dip after the slow-down), fall (the PA
+         where the area after the slow-down is 0: no lag, no dip) or area
          (PIRO-AREA, the PA where the gap after every speed change and the
-         overshoot have the same area, rise + fall) or edge (PIRO-EDGE, the
-         highest PA without a dip after the slow-down)
+         overshoot have the same area, rise + fall)
   METHOD how each PA value is applied: push (default) or klipper.
+  DUAL   1 (default) = also estimate the speed-up (push) PA from the same
+         pulses: edge from the overshoot after the speed-up, fall from the
+         speed-up area. No extra PA values. Area averages both and gives
+         one value. APPLY=1 sets both with SET_DUAL_PA when [dual_pa] is
+         installed.
+MAX_VALUES limits the PA values of one search in every mode (repeats of a
+value already tested do not count).
 
 METHOD=push: the nozzle stays still. Extrude-only moves follow exactly the
 extruder position Klipper's own pressure advance would give on a line with
@@ -35,7 +42,8 @@ OBSOLETE = ('sweeps', 'extrude_len', 'slow_speed', 'fast_speed', 'settle',
             'warmup', 'pa_mode', 'pa_start', 'pa_end', 'pa_step',
             'wobble', 'wobble_axis', 'accel', 'model')
 SEARCH_TYPICAL = 7          # PA values a search usually needs
-SEARCH_MAX_TRAINS = 14      # hard stop for one search
+SEARCH_MAX_TRAINS = 14      # hard stop for one search (PA values + repeats)
+EDGE_REPEATS = 4            # edge: most repeats of values already tested
 AREA_WINDOW = 0.15
 
 
@@ -55,7 +63,7 @@ class Settings:
     prime_steady: int = 1         # 1 = keep priming until the pushing force stops rising
     prime_max: float = 100.0      # mm, most filament the prime may use with prime_steady
     rest_time: float = 0.3        # s pause before every PA value
-    max_filament: float = 400.0   # mm, refuse a test that could use more
+    max_filament: float = 550.0   # mm, refuse a test that could use more
     skip_first: int = 1           # 1 = ignore the first pulse of every PA
     park_x: float = 0.0           # nozzle rests here before/after the test
     park_y: float = 0.0
@@ -69,9 +77,10 @@ class Settings:
     line_dir: int = 0             # klipper method: 0 = centred on the test position,
                                   # 1 / -1 = starts there, runs towards + / -
     smooth_time: float = 0.0      # 0 = the extruder's pressure_advance_smooth_time
-    mode: str = "fall"            # fall = slow-down area, area = PIRO-AREA (rise + fall), edge = PIRO-EDGE
+    mode: str = "edge"            # edge = PIRO-EDGE, fall = slow-down area, area = PIRO-AREA (rise + fall)
+    dual: int = 1                 # 1 = also estimate the speed-up (push) PA (edge, fall)
     area_window: float = 0.15     # s of force summed after every speed change (area)
-    max_values: int = 7           # area: most PA values one search tests
+    max_values: int = 7           # most PA values one search tests (repeats not counted)
     apply: int = 0                # 1 = set the result as Klipper's PA (auto PA)
     fail_pa: float = 0.02         # applied when an auto run gives no usable result
     reuse_hours: float = 0.0      # auto: reuse a matching result this recent
@@ -97,7 +106,7 @@ class Settings:
             prime_steady=config.getint('prime_steady', 1, minval=0, maxval=1),
             prime_max=g('prime_max', 100., above=0.),
             rest_time=g('rest_time', 0.3, minval=0.),
-            max_filament=g('max_filament', 400., above=0.),
+            max_filament=g('max_filament', 550., above=0.),
             skip_first=config.getint('skip_first_pulse', 1, minval=0,
                                      maxval=1),
             park_x=g('park_x'), park_y=g('park_y'),
@@ -114,7 +123,8 @@ class Settings:
             smooth_time=g('smooth_time', 0., minval=0., maxval=0.1),
             mode=config.getchoice('mode', {'fall': 'fall', 'area': 'area',
                                            'edge': 'edge', 'fit': 'area'},
-                                  config.get('pick', 'fall')),
+                                  config.get('pick', 'edge')),
+            dual=config.getint('dual', 1, minval=0, maxval=1),
             area_window=g('area_window', AREA_WINDOW, minval=0.05, maxval=0.5),
             max_values=config.getint('max_values', 7, minval=3,
                                      maxval=SEARCH_MAX_TRAINS),
@@ -195,8 +205,9 @@ class Settings:
             raise PAError("AREA_WINDOW must be 0.05 to 0.5 s")
         if not 3 <= self.max_values <= SEARCH_MAX_TRAINS:
             raise PAError("MAX_VALUES must be 3 to %d" % SEARCH_MAX_TRAINS)
-        if self.apply not in (0, 1) or self.restrict not in (0, 1):
-            raise PAError("APPLY and RESTRICT must be 0 or 1")
+        if self.apply not in (0, 1) or self.restrict not in (0, 1) or \
+                self.dual not in (0, 1):
+            raise PAError("APPLY, RESTRICT and DUAL must be 0 or 1")
         if not 0 <= self.fail_pa <= 2.0:
             raise PAError("FAIL_PA must be between 0 and 2")
         if self.reuse_hours < 0:
@@ -221,10 +232,16 @@ class Settings:
         return slow + self.cycles * (fast + slow)      # lead-in + pulses
 
     def max_trains(self):
-        """Most PA values one test can measure: area MAX_VALUES (PA 0 once),
-        edge SEARCH_MAX_TRAINS."""
+        """Most PA values one test can measure: area and fall MAX_VALUES
+        (PA 0 once), edge MAX_VALUES plus up to 4 repeats (PA 0 while the
+        step is not settled, close calls), at most SEARCH_MAX_TRAINS."""
         return self.max_values if self.mode in ('area', 'fall') \
-            else SEARCH_MAX_TRAINS
+            else min(SEARCH_MAX_TRAINS, self.max_values + EDGE_REPEATS)
+
+    def typical(self):
+        """PA values a search usually needs."""
+        return self.max_values if self.mode in ('area', 'fall') \
+            else min(SEARCH_TYPICAL, self.max_values)
 
     def filament_mm(self, area, trains=None):
         return self.per_pa_mm(area) * (trains or self.max_trains()) + \

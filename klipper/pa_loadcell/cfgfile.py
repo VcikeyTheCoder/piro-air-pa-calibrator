@@ -22,7 +22,7 @@ EDITABLE = {
     'move_axis': 'move_axis', 'test_accel': 'test_accel',
     'line_length': 'line_length', 'line_dir': 'line_dir', 'mode': 'mode',
     'smooth_time': 'smooth_time', 'area_window': 'area_window',
-    'max_values': 'max_values'}
+    'max_values': 'max_values', 'dual': 'dual'}
 
 _SECTION = re.compile(r'^\s*\[([^\]]+)\]')
 
