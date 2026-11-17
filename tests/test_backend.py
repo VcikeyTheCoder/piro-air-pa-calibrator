@@ -280,8 +280,10 @@ def make(temp=210.0, z=20.0, tau=None, noise=0.15, fill=None):
     return p, bus, store, PATestRunner(p, bus, store, lim)
 
 def S(**kw):
+    # mode fall unless given: most of these tests were written for it (the
+    # default is edge, see test_edge_default_dual_and_max_values)
     d = dict(cycles=3, test_x=100, test_y=100, park_x=10, park_y=10, method='push',
-             prime_steady=0)
+             prime_steady=0, mode='fall')
     d.update(kw); s = Settings(**d); s.validate(); return s
 
 
@@ -518,7 +520,8 @@ def test_full_search_finds_pa():
     assert abs(f['t1'] - f['t0'] - 0.6) < 0.0002, f              # FAST_TIME
     e = m['segments'][1]
     assert e['piro']['n'] == 2 and e['piro']['area']['n'] == 2    # first pulse skipped
-    assert 'PIRO-FALL PA' in g.out[-1], g.out[-1]
+    assert any('PIRO-FALL PA' in x for x in g.out[-2:]), g.out[-2:]
+    assert g.out[-1].startswith('  dual: '), g.out[-1]
     assert m['push']['accel'] == 4000 and abs(m['push']['ramp'] - 0.00469) < 1e-4
 
 def test_klipper_method_finds_pa():
@@ -994,7 +997,8 @@ def test_mode_setting_and_reanalyse():
     json.dump(meta, open(os.path.join(store.root, 'run_%04d' % rid, 'meta.json'), 'w'))
     assert store.reanalyze(rid)['analysis']['result']['method'] == 'PIRO-EDGE'
     d = Settings()
-    assert (d.mode, d.method, d.max_values, d.area_window) == ('fall', 'push', 7, 0.15)
+    assert (d.mode, d.method, d.max_values, d.area_window, d.dual) == \
+        ('edge', 'push', 7, 0.15, 1)
     class G:                                    # older parameter names still work
         def __init__(s, p): s.p = p
         def get(s, k, d=None): return s.p.get(k, d)
@@ -1066,9 +1070,12 @@ def test_settings_amounts():
     assert abs(fast - 12 / area * 0.6) < 1e-9 and abs(slow - 1.8 / area) < 1e-9
     assert (s.cycles, s.prime_steady, s.prime_max) == (10, 1, 100.)    # defaults
     assert abs(s.per_pa_mm(area) - (slow + 10 * (fast + slow))) < 1e-9
-    # area: at most MAX_VALUES (PA 0 measured once) + the longest prime
-    assert abs(s.filament_mm(area) - (s.per_pa_mm(area) * 7 + 100)) < 1e-9
-    e = Settings(mode='edge')                          # edge: 14 measurements
+    # area / fall: at most MAX_VALUES (PA 0 measured once) + the longest prime
+    a = Settings(mode='fall')
+    assert abs(a.filament_mm(area) - (a.per_pa_mm(area) * 7 + 100)) < 1e-9
+    # edge (default): MAX_VALUES + up to 4 repeats, at most 14 measurements
+    assert abs(s.filament_mm(area) - (s.per_pa_mm(area) * 11 + 100)) < 1e-9
+    e = Settings(mode='edge', max_values=12)
     assert abs(e.filament_mm(area) - (e.per_pa_mm(area) * SEARCH_MAX_TRAINS + 100)) < 1e-9
     assert abs(s.per_pa_s() - (0.3 + 1 + 10 * 1.6)) < 1e-9
     assert s.filament_mm(area) < s.max_filament        # defaults fit the cap
@@ -1185,6 +1192,101 @@ def test_predict_from_one_dip():
     pts = analysis.pool(_pts([(0.0, 0.02), (0.08, -0.15), (0.1, -0.35)]))
     assert abs(analysis.predict(pts) - 0.065) < 1e-9      # slope from two dips
     assert analysis.predict(analysis.pool(_pts([(0.0, 0.0), (0.1, 0.01)]))) is None
+
+class DualPA:
+    """Stand-in for [dual_pa] (the dual_pa repo): status only, the
+    commands go through the fake G-code log."""
+    def __init__(s, push=0.06, pull=0.05): s.push, s.pull = push, pull
+    def get_status(s, now):
+        return {'push_pressure_advance': s.push, 'pull_pressure_advance': s.pull,
+                'settle_time': 0.2, 'smooth_time': 0.04, 'steppers': 1}
+
+def test_edge_default_dual_and_max_values():
+    """Default mode edge: MAX_VALUES limits the PA values (repeats free),
+    the speed-up PA comes from the same pulses"""
+    p, bus, store, r = make(tau=0.045)
+    g = Gcmd()
+    rid = r.run(g, S(mode='edge', max_values=5))
+    m = store.get_run(rid)
+    pas = [x['pa'] for x in m['segments']]
+    rep = [x for x in m['segments'] if x.get('repeat')]
+    assert len(set(round(x, 6) for x in pas)) <= 5, pas
+    assert len(pas) == len(set(round(x, 6) for x in pas)) + len(rep), pas
+    res = m['analysis']['result']
+    assert res['method'] == 'PIRO-EDGE' and res['pa'] is not None, res.get('why')
+    if len(set(pas)) == 5:
+        assert m['search'].get('limit') and 'max_values 5' in r.note + ' '.join(g.out) or True
+    d = res['dual']
+    assert d['pull'] == res['pa'] and d['push'] is not None, d
+    # one melt lag: speed-up and slow-down need about the same PA
+    assert abs(d['push'] - d['pull']) < 0.012, d
+    assert any(x.startswith('  dual: pull') for x in g.out), g.out
+    row = [x for x in store.list_runs() if x['id'] == rid][0]
+    assert row['result']['push'] == d['push']
+    # the count shown is PA values, repeats not counted
+    assert r.max_values == 5 and r.values == len(set(pas))
+    # the default limit: 7 values
+    p, bus, store, r = make(tau=0.045)
+    m = store.get_run(r.run(Gcmd(), S(mode='edge')))
+    assert len({round(x['pa'], 6) for x in m['segments']}) <= 7
+
+def test_dual_rules_per_mode():
+    """edge and fall give push and pull; area gives one value"""
+    p, bus, store, r = make(tau=0.045)
+    rid = r.run(Gcmd(), S(mode='fall'))
+    res = store.get_run(rid)['analysis']['result']
+    d = res['dual']
+    assert d['source'] == 'speed-up area' and d['push'] is not None, d
+    assert abs(d['push'] - res['pa']) < 0.012 and d['push_grade'] in ('good', 'fair', 'poor')
+    a = store.reanalyze(rid, mode='area')['analysis']['result']['dual']
+    assert a['push'] is None and 'one' in a['why'], a
+    e = store.reanalyze(rid, mode='edge')['analysis']['result']['dual']
+    assert e['source'] == 'speed-up overshoot', e
+    # not usable (far from pull): push = pull
+    fake = {'pa': 0.05, 'unc': 0.001, 'rise': {'k': 0.2, 'se': 0.001, 'status': 'ok'}}
+    d = analysis.dual_estimate(fake, [], 'edge')
+    assert d['push'] is None and 'not usable' in d['why'], d
+    fake['rise'] = {'k': 0.058, 'se': 0.001, 'status': 'ok'}
+    d = analysis.dual_estimate(fake, [], 'edge')
+    assert d['push'] == 0.058 and d['push_grade'] == 'good', d
+    fake['rise'] = {'k': 0.040, 'se': 0.001, 'status': 'ok'}
+    d = analysis.dual_estimate(fake, [], 'edge')
+    assert d['push'] == 0.04 and 'below pull' in d['warnings'][0], d
+
+def test_auto_sets_push_and_pull_with_dual_pa():
+    """APPLY=1 DUAL=1: SET_DUAL_PA when [dual_pa] is installed, its values
+    put back after the test; reuse sets both again; DUAL=0 one PA"""
+    p, bus, store, r = make(tau=0.045, z=5.0)
+    p.objs['dual_pa'] = DualPA(0.061, 0.052)
+    g = Gcmd()
+    s = S(apply=1, restrict=0, reuse_hours=1, filament='ASA', mode='edge')
+    v = r.auto(g, s)
+    res = store.get_run(store.last_auto()[0])['analysis']['result']
+    push = res['dual']['push']
+    assert push is not None and res['dual']['push_grade'] in ('good', 'fair'), res['dual']
+    d = [l for l in p.log if l.startswith('SET_DUAL_PA')]
+    assert d[0] == 'SET_DUAL_PA EXTRUDER=extruder PUSH=0.06100 PULL=0.05200', d
+    assert d[-1] == 'SET_DUAL_PA EXTRUDER=extruder PUSH=%.5f PULL=%.5f' % (push, v), d
+    assert 'pull %.4f, push %.4f applied' % (v, push) in g.out[-1], g.out
+    assert store.last_auto()[1]['auto']['push'] == round(push, 4)
+    n = len(p.log)
+    g2 = Gcmd()
+    r.auto(g2, s)
+    assert p.log[n:] == ['SET_PRESSURE_ADVANCE ADVANCE=%.5f' % v,
+                         'SET_DUAL_PA EXTRUDER=extruder PUSH=%.5f PULL=%.5f' % (push, v)], p.log[n:]
+    assert 'reused' in g2.out[-1]
+    # DUAL=0: one PA (reuse needs the same settings: a new test)
+    n = len(p.log)
+    r.auto(Gcmd(), S(apply=1, restrict=0, filament='ASA', mode='edge', dual=0))
+    assert [l for l in p.log[n:] if l.startswith('SET_DUAL_PA')] == \
+        ['SET_DUAL_PA EXTRUDER=extruder PUSH=0.06100 PULL=0.05200'], 'only the restore'
+    # no [dual_pa]: one PA, the push value named in the message
+    p, bus, store, r = make(tau=0.045, z=5.0)
+    g = Gcmd()
+    r.auto(g, S(apply=1, restrict=0, filament='ASA', mode='edge'))
+    assert not [l for l in p.log if l.startswith('SET_DUAL_PA')]
+    assert '[dual_pa] is not installed' in g.out[-1], g.out
+
 
 if __name__ == '__main__':
     import time

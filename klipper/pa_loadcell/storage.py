@@ -176,8 +176,8 @@ def clean_meta(meta):
     au = meta.get('auto')
     if isinstance(au, dict):
         out['auto'] = {k: _num(au.get(k)) for k in (
-            'applied', 'target_temp', 'wall_flow', 'smooth', 'reused', 'time',
-            'last_used')}
+            'applied', 'push', 'target_temp', 'wall_flow', 'smooth', 'reused',
+            'time', 'last_used')}
         out['auto'].update({k: _txt(au.get(k), 120) for k in (
             'reason', 'filament', 'pa_method', 'mode')})
         out['auto']['fallback'] = bool(au.get('fallback'))
@@ -194,7 +194,7 @@ def clean_meta(meta):
                     'stage': _txt(st.get('stage'), 20),
                     'verdict': _txt(st.get('verdict'), 20)})
         out['search'] = {'steps': steps}
-        for k in ('result', 'unc', 'prediction', 'floor'):
+        for k in ('result', 'unc', 'prediction', 'floor', 'push', 'push_unc'):
             out['search'][k] = _num(se.get(k))
         out['search']['grade'] = _txt(se.get('grade'), 10)
     return out
@@ -260,12 +260,16 @@ class RunStore:
     def _row(cls, m):
         row = {k: m.get(k) for k in ROW_KEYS if k != 'settings'}
         st = m.get('settings') or {}
-        row['settings'] = {k: st.get(k) for k in ('mode', 'method', 'fast_flow')
-                           if k in st}
+        row['settings'] = {k: st.get(k) for k in ('mode', 'method', 'fast_flow',
+                                                  'dual') if k in st}
         row['segments'] = len(m.get('segments', []))
         r = (m.get('analysis') or {}).get('result') or {}
         row['result'] = {k: r.get(k) for k in ('pa', 'unc', 'grade')} \
             if r.get('pa') is not None else None
+        d = r.get('dual') or {}
+        if row['result'] and d.get('push') is not None:
+            row['result'].update(push=d['push'], push_unc=d.get('push_unc'),
+                                 push_grade=d.get('push_grade'))
         row['stale'] = cls._needs_analysis(m)
         return row
 
@@ -588,12 +592,14 @@ class RunStore:
     @staticmethod
     def _needs_analysis(meta):
         """Made by an older version: no stored answer, no PIRO-AREA pulse
-        data or no fall result -> re-analysed once when opened."""
+        data, no fall result or no push / pull result -> re-analysed once
+        when opened."""
         if meta.get('kind') != 'test' or meta.get('status') == 'running' \
                 or not meta.get('segments'):
             return False
         a = meta.get('analysis') or {}
         if 'area_fall' not in (a.get('result') or {}) or \
+                'dual' not in (a.get('result') or {}) or \
                 a.get('boot', 500) < 500:            # quick summary only
             return True
         return any(('piro' not in e or 'area' not in e['piro'])

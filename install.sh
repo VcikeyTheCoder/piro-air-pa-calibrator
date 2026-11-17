@@ -210,10 +210,14 @@ OBSOLETE = ('sweeps', 'extrude_len', 'slow_speed', 'fast_speed', 'settle', 'warm
 OLD_DEFAULTS = {'cycles': ('3', '4', '6'), 'prime_steady': ('0',), 'fast_flow': ('19.24',), 'fast_time': ('0.25',),
                 'slow_flow': ('1.92',), 'prime_length': ('40',), 'prime_flow': ('5',),
                 'prime_rest': ('0',), 'rest_time': ('0',), 'pa_max': ('0.08',),
-                'method': ('klipper',), 'mode': ('fit', 'area')}
-# 'mode: area' was the default only with the old comment: a value you chose
-# later (Settings writes the new comment) is never changed again
-ONLY_WITH = {'mode': ('algorithm judging the force curve', '')}
+                'max_filament': ('400',),
+                'method': ('klipper',), 'mode': ('fit', 'area', 'fall')}
+# an old mode default only moves with its old comment: a value you chose
+# later (Settings keeps the comment of the line) is kept
+ONLY_WITH = {('mode', 'area'): 'algorithm judging the force curve',
+             ('mode', 'fall'): 'rule judging the force curve: fall = slow-down area is 0'}
+# comments that changed: the value is kept, the comment updated
+NEW_COMMENT = {'max_values': '# area: most PA values one search tests'}
 key = lambda l: (re.match(r'^([a-z_]+)\s*:', l) or [None, None])[1]
 RENAMED = {'pa_method': 'method', 'pick': 'mode'}   # older option names
 for i, l in enumerate(lines):
@@ -234,10 +238,18 @@ for k, olds in OLD_DEFAULTS.items():              # untouched old default -> new
     for i, l in enumerate(lines):
         m = re.match(r'^%s\s*:\s*([^\s#]+)' % k, l)
         if key(l) == k and m and m.group(1) in olds and k in newl and newl[k] != l:
-            if k in ONLY_WITH and m.group(1) == 'area' and \
-                    ONLY_WITH[k][0] not in l:
+            need = ONLY_WITH.get((k, m.group(1)))
+            if need is not None and need not in l:
                 continue
             lines[i] = newl[k]; moved.append(k)
+for k, old in NEW_COMMENT.items():
+    for i, l in enumerate(lines):
+        if key(l) == k and old in l and k in newl:
+            val = re.match(r'^[a-z_]+\s*:\s*([^\s#]*)', l).group(1)
+            nl = newl[k]
+            c = nl.index('#') if '#' in nl else len(nl)
+            head = '%s: %s' % (k, val)
+            lines[i] = head + ' ' * max(1, c - len(head)) + nl[c:]
 add = [newl[k] for k in newl if k not in have]
 if add:
     # at the end of the [pa_loadcell] section, never below another section
@@ -272,14 +284,76 @@ if [ -f "$AUTO" ]; then
   if cmp -s "$AUTO" "$REPO/klipper/pa_auto.cfg"; then
     echo "    up to date"
   else
-    # the old default rule (area) moves to the new default (fall); a mode
-    # you changed to edge stays
-    if grep -qE '^variable_mode:[[:space:]]*"area"[[:space:]]*# area = PIRO-AREA, edge = PIRO-EDGE' "$AUTO"; then
-      cp "$AUTO" "$AUTO.bak-pa_loadcell"
-      sed -i -E 's/^variable_mode:[[:space:]]*"area"[[:space:]]*# area = PIRO-AREA, edge = PIRO-EDGE.*/variable_mode: "fall"           # fall = slow-down area (default), area = PIRO-AREA, edge = PIRO-EDGE/' "$AUTO"
-      echo "    mode area -> fall in your $AUTO (backup: pa_auto.cfg.bak-pa_loadcell)"
-    fi
-    echo "    kept your $AUTO (the latest version is $REPO/klipper/pa_auto.cfg)"
+    # a newer pa_auto.cfg: the new file with every variable_ value of yours
+    # (position, flick, push, ...) carried over; the old one is backed up
+    python3 - "$AUTO" "$REPO/klipper/pa_auto.cfg" <<'PY'
+import re, shutil, sys, time
+mine_p, new_p = sys.argv[1], sys.argv[2]
+mine, new = open(mine_p).read().split('\n'), open(new_p).read().split('\n')
+ver = lambda ls: max([int(m.group(1)) for m in (re.match(r'^# pa_auto version:\s*(\d+)', l) for l in ls) if m] or [1])
+if ver(mine) >= ver(new):
+    print('    kept your %s (version %d)' % (mine_p, ver(mine))); sys.exit(0)
+SEC = re.compile(r'^\[gcode_macro\s+([^\]]+)\]')
+VAR = re.compile(r'^variable_([a-z0-9_]+)\s*:\s*(.*?)(\s+#.*)?$')
+def sections(ls):
+    out, cur = {}, None
+    for i, l in enumerate(ls):
+        m = SEC.match(l)
+        if m:
+            cur = m.group(1).strip(); out[cur] = []
+        elif cur and l.startswith('variable_'):
+            v = VAR.match(l)
+            if v:
+                out[cur].append((v.group(1), v.group(2).strip(), v.group(3) or '', i))
+    return out
+ms, ns = sections(mine), sections(new)
+# old defaults that move to the new default: mode fall (and area with
+# its old comment) -> edge
+MOVE = {('PA_AUTO_RUN', 'mode'): lambda val, c: val in ('"fall"',) or
+        (val == '"area"' and 'area = PIRO-AREA, edge = PIRO-EDGE' in c)}
+kept, moved, extra = [], [], []
+for sec, vars_ in ns.items():
+    mine_v = {k: (v, c) for k, v, c, _ in ms.get(sec, [])}
+    last = None
+    for k, v, c, i in vars_:
+        last = i
+        if k not in mine_v:
+            continue
+        mv, mc = mine_v[k]
+        if MOVE.get((sec, k), lambda a, b: False)(mv, mc):
+            moved.append('%s %s' % (k, mv)); continue
+        if mv != v:
+            head = 'variable_%s: %s' % (k, mv)
+            col = len(new[i]) - len(c.lstrip()) if c else 0
+            new[i] = head + (' ' * max(1, col - len(head)) + c.strip() if c else '')
+            kept.append(k)
+    # your own variables the new file does not have: kept in the same macro
+    own = [(k, v, c) for k, v, c, _ in ms.get(sec, []) if k not in {x[0] for x in vars_}]
+    if own and last is not None:
+        new[last + 1:last + 1] = ['variable_%s: %s%s' % (k, v, c) for k, v, c in own]
+        extra += [k for k, _, _ in own]
+        for s2, vs in ns.items():        # line numbers below moved down
+            ns[s2] = [(a, b, cc, j + len(own) if j > last else j) for a, b, cc, j in vs]
+# macros of yours that are not in the new file: added at the end
+text_m = '\n'.join(mine)
+for sec in ms:
+    if sec not in ns:
+        blk = re.search(r'^\[gcode_macro\s+%s\].*?(?=^\[|\Z)' % re.escape(sec), text_m, re.M | re.S)
+        if blk:
+            new += ['', '# kept from your old pa_auto.cfg', blk.group(0).rstrip()]
+            extra.append(sec)
+bak = '%s.bak-%s' % (mine_p, time.strftime('%Y%m%d-%H%M%S'))
+shutil.copy(mine_p, bak)
+out = '\n'.join(new)
+open(mine_p, 'w').write(out if out.endswith('\n') else out + '\n')
+print('    updated %s to version %d, backup %s' % (mine_p, ver(new), bak))
+print('    your values kept: %s' % (', '.join(kept) or 'none (all defaults)'))
+if moved:
+    print('    moved to the new default: %s -> edge' % ', '.join(moved))
+if extra:
+    print('    your extra variables / macros kept: %s' % ', '.join(extra))
+print('    gcode: parts are the new version; copy your own edits over from the backup')
+PY
   fi
 else
   cp "$REPO/klipper/pa_auto.cfg" "$AUTO"; echo "    $AUTO"

@@ -789,12 +789,15 @@ def piro_area(segments, boot=BOOT, part='both'):
         W.append('Fewer than 2 values within %.3f %s the result'
                  % (AREA_NEAR, 'on each side of' if max(above, below) < 2
                     else 'above' if above < 2 else 'below'))
-    # the two edges on their own (checked here, not shown)
+    # the two edges on their own (checked here, not shown). Only for the
+    # balance: fall judges the slow-down alone, and with dual PA a speed-up
+    # that needs another PA is the point (dual_estimate)
     sides = []
     for j in (0, 1):
         cs = _cross(use, [_avg([q[j] for q in parts[p]]) for p in use])
         sides.append(cs[0] if cs else None)
-    if None not in sides and abs(sides[0] - sides[1]) > max(0.006, 0.1 * k):
+    if part == 'both' and None not in sides and \
+            abs(sides[0] - sides[1]) > max(0.006, 0.1 * k):
         W.append('Speed-up and slow-down areas disagree. Check pulse settings')
     out.update(k=round(k, 5), se=round(se, 5), fit=_r(t['fit'], 5),
                bootstrap=_r(t['bootstrap'], 5), chi2=round(t['chi2'], 2),
@@ -822,6 +825,7 @@ def run_result(segments, mode='fall', boot=BOOT):
     for key, ar in (('area_result', both), ('fall_result', fall)):
         out[key] = {'pa': _r(ar.get('k'), 4), 'unc': _r(ar.get('se'), 4)}
     if mode == 'edge':
+        out['dual'] = dual_estimate(out, segments, 'edge', boot)
         return out
     ar = fall if mode == 'fall' else both
     out.update(method=RULE_NAME[mode], rule=mode, pa=None, unc=None,
@@ -838,6 +842,112 @@ def run_result(segments, mode='fall', boot=BOOT):
                why='%s crosses 0 at %.4f (line through %d PA values)'
                % ('Slow-down area' if mode == 'fall' else 'Area balance', k,
                   len(ar['used'])))
+    out['dual'] = dual_estimate(out, segments, mode, boot)
+    return out
+
+
+# -- dual PA: the speed-up (push) PA from the same pulses -----------------
+#
+# The search aims at the slow-down (pull) PA. The speed-up PA comes from
+# the values already measured, no extra ones:
+#   edge  the overshoot after the speed-up, the same rule as the dip
+#         (edge_estimate on 'over': where the overshoot starts to grow)
+#   fall  the speed-up area: a line through the rise area of the values the
+#         fall line used, where it crosses 0. Outside the tested values it
+#         is extrapolated: allowed up to DUAL_REACH beyond them, with a
+#         wider +- and a warning
+#   area  rise + fall averaged: one value, no dual result
+# A speed-up value that is not usable (none, at or below 0, or more than
+# DUAL_RATIO away from the slow-down value) gives push = pull.
+DUAL_REACH = 0.02       # PA, furthest a fall-mode push value may be extrapolated
+DUAL_RATIO = 2.0        # push must be within pull / 2 .. pull * 2
+
+
+def _grade(k, se, warnings):
+    lvl = 0 if se <= max(0.0015, 0.04 * k) else \
+        1 if se <= max(0.003, 0.08 * k) else 2
+    return ('good', 'fair', 'poor')[min(2, lvl + len(warnings))]
+
+
+def _rise_line(segments, use, boot):
+    """Fall mode: the speed-up area through the values in `use` -> dict."""
+    by, _, _ = _area_values(segments, 'rise')
+    use = [p for p in use if p in by]
+    if len(use) < 2:
+        return {'k': None, 'why': 'Not enough PA values for the speed-up line'}
+    c = _cross(use, [_avg(by[p]) for p in use])
+    if not c:
+        return {'k': None, 'why': 'Speed-up area does not grow with PA'}
+    k, b, a = c
+    t = area_tolerance(by, use, random.Random(2), boot) if len(use) >= 2 \
+        else None
+    se = t['se'] if t else 0.003
+    out = {'k': k, 'se': se, 'used': use,
+           'line': {'a': round(a, 4), 'b': round(b, 3)},
+           'points': [[pa, round(_avg(by[pa]), 3), round(_se(by[pa]) or 0., 3),
+                       len(by[pa])] for pa in sorted(by)]}
+    lo, hi = min(use), max(use)
+    m = max(0.003, 0.05 * abs(k))
+    if k > hi + m or k < lo - m:
+        d = k - hi if k > hi else lo - k
+        out['extrapolated'] = round(d, 5)
+        out['se'] = max(se, 0.5 * d)
+    return out
+
+
+def dual_estimate(res, segments, mode, boot=BOOT):
+    """Push (speed-up) and pull (slow-down) PA from one run -> dict."""
+    pull = res.get('pa')
+    out = {'pull': pull, 'pull_unc': res.get('unc'), 'push': None,
+           'push_unc': None, 'push_grade': None, 'warnings': []}
+    if mode == 'area':
+        out['why'] = ('PIRO-AREA averages the speed-up and slow-down: one '
+                      'value. Use edge or fall for push and pull')
+        return out
+    if pull is None:
+        out['why'] = 'No slow-down result'
+        return out
+    if mode == 'edge':
+        r = res.get('rise') or {}
+        out['source'] = 'speed-up overshoot'
+        k, se = r.get('k'), r.get('se')
+        if k is None:
+            out['why'] = {'no_dip': 'No overshoot after the speed-up up to '
+                          'PA %.3f' % (r.get('k_ok') or 0),
+                          'low': 'Overshoot at the lowest PA'
+                          }.get(r.get('status'), r.get('why') or
+                                'No speed-up result')
+            return out
+        out['k_ok'], out['k_bad'] = r.get('k_ok'), r.get('k_bad')
+    else:
+        ar = res.get('area_fall') or {}
+        r = _rise_line(segments, ar.get('used') or [], max(100, boot // 2))
+        out['source'] = 'speed-up area'
+        out['line'], out['points'] = r.get('line'), r.get('points')
+        out['used'] = r.get('used')
+        k, se = r.get('k'), r.get('se')
+        if k is None:
+            out['why'] = r.get('why')
+            return out
+        if r.get('extrapolated') is not None:
+            if r['extrapolated'] > DUAL_REACH:
+                out['why'] = ('Speed-up area crosses 0 at %.4f, too far from '
+                              'the tested values' % k)
+                return out
+            out['extrapolated'] = r['extrapolated']
+            out['warnings'].append('Push %.4f is outside the tested values '
+                                   '(extrapolated)' % k)
+    if k <= 0 or not pull / DUAL_RATIO <= k <= pull * DUAL_RATIO:
+        out['why'] = ('Speed-up estimate %.4f is not usable next to the '
+                      'slow-down value %.4f' % (k, pull))
+        return out
+    se = max(se or 0., 0.0002)
+    sc = math.sqrt(se ** 2 + (res.get('unc') or 0.) ** 2)
+    if k < pull - 2. * sc:
+        out['warnings'].append('Push below pull. Check pulse settings')
+    out.update(push=round(k, 4), push_unc=round(se, 4),
+               push_grade=_grade(k, se, out['warnings']),
+               why='%s gives %.4f' % (out['source'].capitalize(), k))
     return out
 
 

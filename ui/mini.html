@@ -163,7 +163,7 @@ function paint(){const pr0=probing();document.body.classList.toggle('probing',pr
  $('#pa').textContent=busy&&ST.pa!=null?fpa(ST.pa):'-';
  $('#n').textContent=busy&&ST.values?`${ST.values} of ${ST.max_values||'?'}`:'-';
  const pr=busy?(T.search&&T.search.prediction)??ST.prediction:null;$('#est').textContent=pr!=null?fpa(pr):'-';
- $('#last').innerHTML=L&&L.pa!=null?`${esc(fpa(L.pa))} <span style="color:var(--faint);font-size:12px">± ${esc(L.unc)} ${esc(L.grade||'')}</span>`:'-';
+ $('#last').innerHTML=L&&L.pa!=null?(L.push!=null&&L.dual!==0?`${esc(fpa(L.push))} / ${esc(fpa(L.pa))} <span style="color:var(--faint);font-size:12px">push / pull ${esc(L.grade||'')}</span>`:`${esc(fpa(L.pa))} <span style="color:var(--faint);font-size:12px">± ${esc(L.unc)} ${esc(L.grade||'')}</span>`):'-';
  const unit=info.unit==='g'||info.unit==='Hz'?info.unit:'';$('#snm').textContent=info.label||'Sensor';$('#lgS').textContent=(info.label||'sensor').toLowerCase()+(unit?' ('+unit+')':'');
  const n=S.f.length;if(n){let a=0,k=Math.min(n,30);for(let i=n-k;i<n;i++)a+=S.f[i];$('#now').textContent=(a/k).toFixed(1)+(unit?' '+unit:'')}else $('#now').textContent='-';
  const m=$('#msg');const why=!rpc.up?'Connecting to the printer':rpc.auth?'Moonraker asks for a login. Open this page from a trusted network (moonraker.conf trusted_clients).':lastErr?'No data: '+lastErr:!n?'Waiting for sensor data':'';

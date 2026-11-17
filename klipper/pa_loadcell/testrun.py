@@ -21,8 +21,8 @@ too) are lifted while a train is queued, with no XY motion, and put back
 right after; the motor only sees the smoothed motion.
 Markers sit at the middle of each ramp, as with the klipper method.
 
-Search (_search), MODE=fall (default) and MODE=area (same search; fall
-judges by the slow-down area alone, area by rise + fall):
+Search (_search), MODE=fall and MODE=area (same search; fall judges by the
+slow-down area alone, area by rise + fall):
   1. PA 0: reference
   2. PA_MAX, then +UPPER_STEP until the area balance is above 0; still
      below 0 at PA_LIMIT -> the test fails
@@ -32,7 +32,8 @@ judges by the slow-down area alone, area by rise + fall):
      until 2 values sit within 0.015 on each side or MAX_VALUES are tested.
      PA 0 is measured once (PRIME_STEADY fills an empty nozzle first)
   4. the answer: analysis.run_result over everything measured
-MODE=edge:
+MODE=edge (default), at most MAX_VALUES PA values (repeats of a tested
+value are free; the last value is kept for step 5):
   1. PA 0: reference (noise floor, pressure step size)
   2. upper limit: PA_MAX, then +UPPER_STEP until the force dips after the
      slow-down; no dip at PA_LIMIT -> the test fails
@@ -40,7 +41,13 @@ MODE=edge:
      just below it (higher one first: a mixed order spreads slow drift)
   4. two values inside the remaining gap, one more above it if the line
      needs it, and a second measurement of values close to their limit
-  5. the answer: analysis.piro_pick over everything measured
+  5. a clean value close below the corner, if the repeats left none
+  6. the answer: analysis.piro_pick over everything measured
+DUAL=1: the speed-up (push) PA is estimated from the same pulses after the
+run (analysis.dual_estimate); no extra PA values. APPLY=1 sets push and
+pull with SET_DUAL_PA when [dual_pa] is installed. A [dual_pa] push / pull
+is put back after the test (the test itself sets one PA with
+SET_PRESSURE_ADVANCE, which sets both there).
 
 METHOD=klipper: Klipper's own PA acts on a real line. The nozzle
 runs back and forth on a short line along MOVE_AXIS with a constant amount
@@ -65,7 +72,7 @@ import time
 from dataclasses import asdict
 from .errors import PAError
 from . import analysis
-from .settings import SEARCH_MAX_TRAINS, SEARCH_TYPICAL
+from .settings import SEARCH_MAX_TRAINS
 
 DEFAULT_AREA = math.pi * 0.875 ** 2      # 1.75 mm filament
 AREA_OFFSETS = (0.004, 0.010, 0.007, 0.013, 0.015)   # from the estimate
@@ -318,13 +325,24 @@ class PATestRunner:
         temp, area = self.precheck(s)
         self.state, self.cancel_flag, self.progress = 'running', False, 0.0
         self.dead, self.values = False, 0
-        self.max_values = s.max_trains()
+        self.max_values = s.max_values      # repeats are not counted
         self.started = self.reactor.monotonic()
         now = self.reactor.monotonic()
         ext = self.toolhead.get_extruder()
         est = ext.get_status(now)
         orig_pa = est.get('pressure_advance', 0.)
         orig_sm = est.get('smooth_time')
+        # [dual_pa]: the test sets one PA (SET_PRESSURE_ADVANCE sets push =
+        # pull there); its push and pull are put back after the test
+        self.orig_dual = None
+        dpa = self._dual_pa()
+        if dpa is not None:
+            try:
+                d = dpa.get_status(now)
+                self.orig_dual = (d['push_pressure_advance'],
+                                  d['pull_pressure_advance'])
+            except Exception:
+                self.orig_dual = None
         fast_mm, slow_mm = s.leg_mm(area)
         sm = self.window(ext, s)
         klip = s.method == 'klipper'
@@ -408,13 +426,21 @@ class PATestRunner:
             # the answer is stored (run, search, last) before the state goes
             # back to idle, so every viewer that sees 'idle' sees the result
             res = (meta.get('analysis') or {}).get('result') or {}
+            dual = res.get('dual') or {}
             self.last = {'run': self.run_id, 'status': status,
                          'pa': res.get('pa'), 'unc': res.get('unc'),
                          'grade': res.get('grade'), 'method': res.get('method'),
-                         'why': res.get('why') or err}
+                         'why': res.get('why') or err,
+                         'push': dual.get('push'),
+                         'push_unc': dual.get('push_unc'),
+                         'push_grade': dual.get('push_grade'),
+                         'dual': s.dual}
             if self.search is not None:
                 self.search.update(result=res.get('pa'), unc=res.get('unc'),
                                    grade=res.get('grade'),
+                                   push=dual.get('push') if s.dual else None,
+                                   push_unc=dual.get('push_unc'),
+                                   push_grade=dual.get('push_grade'),
                                    error=None if res.get('pa') is not None
                                    else (err or res.get('why') or status))
                 try:
@@ -430,6 +456,15 @@ class PATestRunner:
                               % (res.get('method', 'PIRO-EDGE'), res['pa'],
                                  res['unc'], res['grade']))
                              if res.get('pa') is not None else ''))
+        dual = res.get('dual') or {}
+        if s.dual and res.get('pa') is not None and s.mode != 'area':
+            gcmd.respond_info(
+                ("  dual: pull %.4f, push %.4f +- %.4f (%s, from the %s)"
+                 % (res['pa'], dual['push'], dual['push_unc'],
+                    dual['push_grade'], dual.get('source')))
+                if dual.get('push') is not None else
+                "  dual: no push value (%s), push = pull"
+                % (dual.get('why') or 'no speed-up result'))
         for name, r in ((meta.get('analysis') or {}).get('channels') or
                         {}).items():
             gcmd.respond_info("  %s (compared, not applied): %s"
@@ -444,7 +479,8 @@ class PATestRunner:
     # -- auto PA (APPLY=1) ----------------------------------------------
     def auto(self, gcmd, s):
         """Test (or reuse) and set the result as Klipper's PA. Never raises:
-        a print start must go on, with FAIL_PA when there is no good value."""
+        a print start must go on, with FAIL_PA when there is no good value.
+        DUAL=1 with [dual_pa] installed: push and pull with SET_DUAL_PA."""
         now = self.reactor.monotonic()
         try:
             ext = self.toolhead.get_extruder()
@@ -460,15 +496,17 @@ class PATestRunner:
                 hit = None
         if hit:
             rid, a = hit
-            self._apply(a['applied'])
+            push = a.get('push') if s.dual else None
+            done = self._apply(a['applied'], push)
             try:
                 self.store.update_auto(rid, {'reused': int(a.get('reused', 0)) + 1,
                                              'last_used': time.time()})
             except Exception:
                 pass
             gcmd.respond_info(
-                "PIRO-EDGE: PA %.4f reused from Run %d (%s, %.0f °C, %.1f mm³/s, "
-                "%.0f min ago)" % (a['applied'], rid, a.get('filament') or '-',
+                "PIRO-EDGE: %s reused from Run %d (%s, %.0f °C, %.1f mm³/s, "
+                "%.0f min ago)" % (self._applied_text(a['applied'], push, done),
+                                   rid, a.get('filament') or '-',
                                    a.get('target_temp', 0), a.get('wall_flow', 0),
                                    (time.time() - a.get('time', 0)) / 60.))
             return a['applied']
@@ -495,11 +533,18 @@ class PATestRunner:
             reason = ("grade %s" % res['grade']) if res.get('pa') is not None \
                 else "no result"
         value = float(res['pa']) if good else s.fail_pa
-        self._apply(value)
+        dual = res.get('dual') or {}
+        push = None
+        if good and s.dual and dual.get('push') is not None and \
+                dual.get('push_grade') in ('good', 'fair'):
+            push = float(dual['push'])
+        done = self._apply(value, push)
         if rid is not None:
             try:
                 self.store.update_auto(rid, {
                     'applied': round(value, 4), 'fallback': not good,
+                    'push': round(push, 4) if push is not None and done
+                    else None,
                     'reason': reason, 'time': time.time(),
                     'filament': s.filament, 'target_temp': round(target, 1),
                     'wall_flow': round(s.fast_flow, 3), 'pa_method': s.method,
@@ -508,8 +553,15 @@ class PATestRunner:
             except Exception:
                 pass
         if good:
-            gcmd.respond_info("PIRO-EDGE: PA %.4f applied (%s, +- %.4f)"
-                              % (value, res['grade'], res.get('unc') or 0))
+            gcmd.respond_info("PIRO-EDGE: %s applied (%s, +- %.4f)"
+                              % (self._applied_text(value, push, done),
+                                 res['grade'], res.get('unc') or 0))
+            if s.dual and push is None and s.mode != 'area':
+                why = dual.get('why') or 'no speed-up result'
+                if dual.get('push') is not None:
+                    why = 'push %.4f graded %s' % (dual['push'],
+                                                   dual.get('push_grade'))
+                gcmd.respond_info("PIRO-EDGE: push = pull (%s)" % why)
         else:
             gcmd.respond_info(("PIRO-EDGE: test cancelled, PA %.4f applied" % value)
                               if reason == 'cancelled' else
@@ -517,17 +569,52 @@ class PATestRunner:
                               % (reason, value))
         return value
 
+    @staticmethod
+    def _applied_text(pull, push, done):
+        if push is None:
+            return "PA %.4f" % pull
+        if done:
+            return "pull %.4f, push %.4f" % (pull, push)
+        return ("PA %.4f (push %.4f not set: [dual_pa] is not installed)"
+                % (pull, push))
+
     def fallback(self, gcmd, value, reason):
         """APPLY=1 with settings that cannot run: FAIL_PA, no error."""
         self._apply(value)
         gcmd.respond_info("PIRO-EDGE: test failed (%s), PA %.4f applied"
                           % (reason, value))
 
-    def _apply(self, value):
+    def _dual_pa(self):
+        """The [dual_pa] object of the active extruder, or None."""
+        try:
+            name = self.toolhead.get_extruder().get_name()
+        except Exception:
+            name = 'extruder'
+        obj = self.printer.lookup_object(
+            'dual_pa' if name == 'extruder' else 'dual_pa ' + name, None)
+        return obj if obj is not None and hasattr(obj, 'get_status') else None
+
+    def _dual_cmd(self, push, pull):
+        try:
+            name = self.toolhead.get_extruder().get_name()
+        except Exception:
+            name = 'extruder'
+        return "SET_DUAL_PA EXTRUDER=%s PUSH=%.5f PULL=%.5f" % (name, push, pull)
+
+    def _apply(self, value, push=None):
+        """Set the PA. push: the speed-up PA, set with [dual_pa] (if it is
+        not installed only value is set). -> True when push was set."""
         try:
             self._g("SET_PRESSURE_ADVANCE ADVANCE=%.5f" % value)
         except Exception:
             pass
+        if push is None or self._dual_pa() is None:
+            return False
+        try:
+            self._g(self._dual_cmd(push, value))
+            return True
+        except Exception:
+            return False
 
     def _reuse(self, s, target, sm):
         """The last auto run, when recent and made under the same
@@ -730,9 +817,10 @@ class PATestRunner:
             raise PAError("Stopped at MAX_FILAMENT %.0f mm" % s.max_filament)
         self.used += fil
         self.current_pa = pa
-        self.values += 1
-        self._display("PA test %d/%d: PA %.4f" % (self.values,
-                                                  self.max_values, pa))
+        if not repeat:
+            self.values += 1
+        self._display("PA test %d/%d: PA %.4f%s" % (
+            self.values, self.max_values, pa, " (repeat)" if repeat else ""))
         if ln:
             self._set_klipper_pa(pa)          # Klipper's own PA from here on
             self._line_start(s, ln)
@@ -1008,7 +1096,7 @@ class PATestRunner:
         steps, segs = [], []
         self.search = {'steps': steps, 'result': None}
         area_mode = s.mode in ('area', 'fall')
-        typical = s.max_values if area_mode else SEARCH_TYPICAL
+        typical = s.typical()
         snap = lambda x: max(0.0005, round(x * 2000.) / 2000.)
         st = {'floor': 0.}
 
@@ -1023,12 +1111,20 @@ class PATestRunner:
         def too_high(p):
             return p['pa'] > 0 and -p['dip'] > max(p['limit'], st['floor'])
 
+        def distinct():
+            return len({round(g['pa'], 6) for g in segs})
+
         def measure(k, stage, repeat=False, pred=None):
             if self.cancel_flag:
                 raise _Cancelled()
             if len(segs) >= SEARCH_MAX_TRAINS:
                 raise _Budget()
             k = round(k, 5)
+            # edge: MAX_VALUES PA values; a repeat of a tested value is
+            # free (area and fall stop at MAX_VALUES in _area_search)
+            if not area_mode and distinct() >= s.max_values and \
+                    not any(abs(g['pa'] - k) < 1e-6 for g in segs):
+                raise _Budget()
             idx, sc = self._measure(ctx, k, stage, repeat)
             if sc is None:
                 if self.cancel_flag:
@@ -1054,7 +1150,7 @@ class PATestRunner:
                 say("PA %.4f %s: %s (dip %+.0f%%, limit %.0f%%)"
                     % (k, stage, "too high" if dips else "no dip",
                        100. * p['dip'], 100. * lim))
-            self.progress = min(0.95, len(segs) / float(typical + 1))
+            self.progress = min(0.95, distinct() / float(typical + 1))
             return dips
 
         def balance(k):
@@ -1076,6 +1172,12 @@ class PATestRunner:
 
         def tested(x):
             return any(abs(x - g['pa']) < 0.0012 for g in segs)
+
+        def room():
+            """edge: a new value in steps 3 and 4 only while one more is
+            left after it, for step 5 (a clean value close below the
+            corner: without it the gap, and the +-, stays wide)"""
+            return s.max_values - distinct() > 1
         try:
             # 1. reference (area: once, prime_steady fills the nozzle;
             #    edge: repeated while the step is not settled, it sets the floor)
@@ -1113,7 +1215,7 @@ class PATestRunner:
                 for x in (pred + d, pred - d):
                     x = snap(x)
                     k_ok, k_bad, _ = bracket()
-                    if k_ok < x < k_bad and not tested(x):
+                    if k_ok < x < k_bad and not tested(x) and room():
                         measure(x, 'bracket', pred=round(pred, 5))
             # 4. refine inside the gap (upper third first), make sure the
             #    line has two values above the corner, re-measure close calls
@@ -1123,13 +1225,13 @@ class PATestRunner:
                 for x in (k_ok + 2. * gap / 3., k_ok + gap / 3.):
                     x = snap(x)
                     a, b, _ = bracket()
-                    if a < x < b and not tested(x):
+                    if a < x < b and not tested(x) and room():
                         measure(x, 'refine')
             k_ok, k_bad, pts = bracket()
             reach = k_bad + max(0.012, 2. * (k_bad - k_ok))
             if sum(1 for p in pts if too_high(p) and p['pa'] <= reach) < 2:
                 x = snap(k_bad + max(0.006, k_bad - k_ok))
-                if not tested(x) and x <= s.pa_limit:
+                if not tested(x) and x <= s.pa_limit and room():
                     measure(x, 'confirm')
             k_ok, k_bad, pts = bracket()
             close = [p for p in pts if p['times'] == 1 and p['pa'] > 0
@@ -1159,7 +1261,9 @@ class PATestRunner:
         except _Cancelled:
             return
         except _Budget:
-            say("search limit reached (%d PA values)" % SEARCH_MAX_TRAINS)
+            say("search limit reached (%d PA values, max_values %d)"
+                % (len({round(g['pa'], 6) for g in segs}), s.max_values))
+            self.search['limit'] = True
         # the answer itself comes from the full analysis when the run is
         # finalised (in the background), see run()
         say("measuring done, analysing")
@@ -1246,6 +1350,9 @@ class PATestRunner:
         G.append(lambda: self._g("SET_PRESSURE_ADVANCE ADVANCE=%.5f%s"
                                  % (orig_pa, (" SMOOTH_TIME=%.4f" % orig_sm)
                                     if s.smooth_time and orig_sm else "")))
+        od = getattr(self, 'orig_dual', None)
+        if od is not None:
+            G.append(lambda: self._g(self._dual_cmd(od[0], od[1])))
         if orig_lim:
             G.append(lambda: self._restore_limits(orig_lim))
         if getattr(self, 'e_lim', None):
