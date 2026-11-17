@@ -6,6 +6,7 @@ import time
 import uuid
 from dataclasses import asdict
 from .errors import PAError
+from . import paths
 from .feed import SampleBus
 from .recorder import ManualRecorder
 from .settings import Settings
@@ -20,7 +21,8 @@ class PALoadCell:
         self.printer = printer = config.get_printer()
         self.reactor = printer.get_reactor()
         self.defaults = Settings.from_config(config)
-        data_dir = config.get('data_dir', '~/printer_data/pa_loadcell')
+        data_dir = paths.resolve(config.get('data_dir', None), 'pa_auto',
+                                 '~/printer_data/pa_loadcell')
         # which sensor(s): load_cell, eddy or both (primary judges the test,
         # the other is recorded alongside and compared)
         sensor = config.getchoice('sensor', {k: k for k in (

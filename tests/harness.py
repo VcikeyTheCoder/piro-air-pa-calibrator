@@ -8,7 +8,7 @@ Fake physics: nozzle flow follows the pushed filament with a melt lag of
 TAU (0.045 s, so the right PA is 0.045); force = K * flow. Lower PA responds
 slowly, higher PA overshoots. REAL_RUNS=<folder with run_000N> adds those
 recorded runs to History too."""
-import asyncio, json, math, os, random, re, shlex, sys, tempfile, threading
+import asyncio, json, math, os, random, re, shlex, sys, tempfile, threading, time
 import http.server, socketserver
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, '..', 'klipper'))
@@ -230,6 +230,58 @@ def demo_taps():
         return None
 
 
+def demo_lc():
+    """PIRO-LC page data: accuracy tests drifting with nozzle temperature,
+    homing repeats, and two mesh tests with one weak spot."""
+    rnd = random.Random(7)
+    t0 = 1794800000.0
+    sess, sid = [], 0
+
+    def add(kind, touches, start):
+        nonlocal sid
+        sid += 1
+        zs = [t['z'] for t in touches]
+        m = sum(zs) / len(zs)
+        sd = math.sqrt(sum((z - m) ** 2 for z in zs) / len(zs))
+        sess.append({'id': sid, 'kind': kind, 'start': start, 'end': start + 60,
+                     'n': len(zs), 'ok': True, 'touches': touches,
+                     'summary': {'n': len(zs), 'mean': m, 'range': max(zs) - min(zs),
+                                 'std': sd}})
+    for k, temp in enumerate([30, 80, 130, 180, 230, 250]):
+        tt = t0 + k * 900
+        add('accuracy', [{'t': tt + i * 6, 'x': 165, 'y': 165, 'nozzle': temp + rnd.uniform(-1, 1),
+                          'z': 0.000045 * (temp - 30) + rnd.gauss(0, 0.0012), 'force': 210 + rnd.gauss(0, 5)}
+                         for i in range(10)], tt)
+        if k % 2 == 0:
+            add('homing', [{'t': tt + 300 + i * 9, 'x': 165, 'y': 165, 'nozzle': temp,
+                            'z': rnd.gauss(0, 0.0018 if i % 2 == 0 else 0.0009), 'force': 205}
+                           for i in range(10)], tt + 300)
+    for rep_ in range(2):
+        tt = t0 + 7000 + rep_ * 600
+        T = []
+        for ix, x in enumerate(range(10, 330, 35)):
+            for iy, y in enumerate(range(10, 330, 35)):
+                weak = abs(x - 255) < 20 and abs(y - 115) < 20
+                base = 0.02 * math.sin(x / 90.) + 0.015 * math.cos(y / 70.)
+                for smp in range(2):
+                    T.append({'t': tt + len(T), 'x': x, 'y': y, 'nozzle': 150,
+                              'z': base + rnd.gauss(0, 0.009 if weak else 0.0012),
+                              'force': (140 if weak else 210) + rnd.gauss(0, 6)})
+        add('mesh', T, tt)
+    status = {'paper_offset': 0.0712, 'paper_thickness': 0.08, 'paper_active': False,
+              'nozzle_growth': 0.000045, 'home_temp': 150.2, 'home_time': time.time() - 340,
+              'growth_offset': 0.0042, 'collecting': False,
+              'homing': {'first_speed': 10, 'second_speed': 2, 'first_samples': 2,
+                         'second_samples': 2, 'tolerance': 0.01},
+              'paper': {'z_paper': 0.151, 'thickness': 0.08, 'offset': 0.0712, 'time': time.time() - 86400},
+              'notes': []}
+    pts = [[t, 0.000045 * t + rnd.gauss(0, 0.0004), 0.0006, t] for t in (30, 80, 130, 180, 230, 250)]
+    growth = {'coeff': 0.000045, 'home_temp': 150.2, 'applied': 0.0042, 'applied_for': [245, 150.2],
+              'calibration': {'points': pts, 'coeff': 0.000045, 'intercept': 0.0, 'max_residual': 0.0006,
+                              'time': time.time() - 90000, 'x': 165, 'y': 165}}
+    return status, growth, sess
+
+
 def main(seed=True, host='127.0.0.1', ws_port=8765, http_port=8080):
     import websockets
     p, plug = build()
@@ -239,6 +291,7 @@ def main(seed=True, host='127.0.0.1', ws_port=8765, http_port=8080):
     lc = p.objs['load_cell_probe']
     state = {'t': 0.0}
     taps = demo_taps()
+    lc_status, lc_growth, lc_sess = demo_lc() if os.environ.get('LC') else (None, None, None)
 
     async def tick():
         while True:
@@ -262,6 +315,8 @@ def main(seed=True, host='127.0.0.1', ws_port=8765, http_port=8080):
                 finally:
                     p.busy = False
                 return 'ok'
+            if cmd == 'LC_DEMO_PAPER' and lc_status:
+                lc_status['paper_active'] = True; return 'ok'
             if cmd == 'LOAD_CELL_TARE':
                 lc.tared = True; return 'ok'
             if cmd == 'PA_DEMO_RUNNING':         # UI screenshots: a test in progress
@@ -279,7 +334,17 @@ def main(seed=True, host='127.0.0.1', ws_port=8765, http_port=8080):
             return 'ok'
         if method == 'printer.objects.list':
             objs = [] if os.environ.get('PROBE_ONLY') else ['pa_loadcell']
-            return {'objects': objs + (['piro_tap'] if taps else [])}
+            return {'objects': objs + (['piro_tap'] if taps and not lc_status else [])
+                    + (['piro_lc'] if lc_status else [])}
+        if method == 'printer.objects.query':
+            return {'status': {'toolhead': {'position': [165, 165, 0.214, 0]}}}
+        if method.startswith('printer.piro_lc.') and lc_status:
+            n = method.split('.')[-1]
+            if n == 'status': return lc_status
+            if n == 'growth': return lc_growth
+            if n == 'sessions': return {'sessions': [{k: x[k] for k in ('id', 'kind', 'n')} for x in lc_sess]}
+            if n == 'series': return {'sessions': lc_sess}
+            raise Exception('no ' + n)
         if method.startswith('printer.piro_tap.'):
             if not taps:
                 raise Exception('piro_tap not configured')

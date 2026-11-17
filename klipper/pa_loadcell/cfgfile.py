@@ -7,6 +7,7 @@ import os
 import re
 from .errors import PAError
 from .fileio import atomic_write
+from . import paths
 
 # page / Settings field -> config key
 EDITABLE = {
@@ -22,7 +23,7 @@ EDITABLE = {
     'move_axis': 'move_axis', 'test_accel': 'test_accel',
     'line_length': 'line_length', 'line_dir': 'line_dir', 'mode': 'mode',
     'smooth_time': 'smooth_time', 'area_window': 'area_window',
-    'max_values': 'max_values', 'dual': 'dual'}
+    'max_values': 'max_values'}
 
 _SECTION = re.compile(r'^\s*\[([^\]]+)\]')
 
@@ -97,6 +98,9 @@ def save(path, values):
     with open(path) as f:
         text = f.read()
     new = update_text(text, values)
-    atomic_write(path + '.bak-pa_loadcell-ui', text)
+    try:
+        paths.backup(path, text)        # outside the config folder
+    except OSError:
+        pass
     atomic_write(path, new)
     return path

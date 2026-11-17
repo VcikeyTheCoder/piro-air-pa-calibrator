@@ -22,6 +22,19 @@ def test_live_has_printer_status():
 
 
 def test_config_save_writes_file_and_defaults():
+    import glob, tempfile
+    home = tempfile.mkdtemp()
+    old_home = os.environ.get('HOME')
+    os.environ['HOME'] = home             # backups go to ~/printer_data/prio_edge
+    try:
+        _config_save(home)
+    finally:
+        if old_home is not None:
+            os.environ['HOME'] = old_home
+
+
+def _config_save(home):
+    import glob
     p, plug = h.build()
     out = call(p, 'config_save', values={'fast_flow': 15, 'cycles': 8,
                                          'filament': 'ASA CF', 'skip_first': 0})
@@ -32,7 +45,10 @@ def test_config_save_writes_file_and_defaults():
     assert 'min_temp: 200' in text                         # safety untouched
     assert plug.defaults.fast_flow == 15.0 and plug.defaults.cycles == 8
     assert out['defaults']['fast_flow'] == 15.0
-    assert os.path.isfile(os.path.join(p.cfgdir, 'pa_loadcell.cfg.bak-pa_loadcell-ui'))
+    # the backup is outside the config folder
+    assert not glob.glob(os.path.join(p.cfgdir, '*.bak*'))
+    assert glob.glob(os.path.join(home, 'printer_data', 'prio_edge', 'backups',
+                                  'pa_loadcell.cfg.*.bak'))
     assert call(p, 'defaults')['fast_flow'] == 15.0         # page sees it
     for bad in ({'min_temp': 150}, {'slow_flow': 50}, {'fast_flow': 'x'},
                 {'cycles': 1}, {'filament': 'a#b'}):

@@ -34,6 +34,7 @@ from .collector import Collector
 from .kalico_retry import RetryPolicyFactory
 from .commands import Commands
 from .errors import TapError
+from . import paths
 from .state import State
 from .tapstore import TapStore
 from .thermal import Thermal
@@ -41,7 +42,7 @@ from .touch import Toucher
 from .trigger import Trigger, MAX_SECTIONS, sections_needed
 
 SIGNS = {'auto': 0, 'up': 1, 'down': -1}
-DATA_DIR = '~/printer_data/piro_tap'
+OLD_DATA_DIR = '~/printer_data/piro_tap'
 
 
 class Options:
@@ -70,7 +71,8 @@ class Options:
         self.z_offset = g('z_offset', 0.)
         self.thermal_coeff = g('thermal_coeff', 0., minval=-0.01,
                                maxval=0.01)
-        self.data_dir = config.get('data_dir', DATA_DIR)
+        self.data_dir = paths.resolve(config.get('data_dir', None), 'eddy',
+                                      OLD_DATA_DIR)
         if sections_needed(self.lowpass_order, self.drift_hz) > MAX_SECTIONS:
             raise config.error("[%s] filter too large" % config.get_name())
 

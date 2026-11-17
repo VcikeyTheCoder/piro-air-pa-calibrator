@@ -33,6 +33,7 @@ header h1 span{font-weight:400;color:var(--dim);font-size:13px;letter-spacing:0}
 .chip{display:inline-flex;align-items:center;gap:6px;padding:2px 10px;border:1px solid var(--rule);border-radius:99px;font-size:12px;color:var(--dim);white-space:nowrap}
 .chip i{width:7px;height:7px;border-radius:50%;background:var(--dim)}.chip.ok i{background:var(--ok)}.chip.bad i{background:var(--rec)}.chip.warn i{background:var(--amber)}
 .chip.ok{color:var(--text)}.chip.bad{color:var(--rec)}
+.lcgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}.lcgrid div{display:flex;flex-direction:column;gap:2px}.lcgrid b{font-size:16px;font-weight:500}
 .sp{flex:1}
 nav{display:flex;gap:2px;padding:0 12px;background:var(--panel);border-bottom:1px solid var(--rule);overflow-x:auto}
 nav button{border:0;border-bottom:2px solid transparent;border-radius:0;background:none;padding:10px 14px;color:var(--dim)}
@@ -164,10 +165,6 @@ canvas.fig{display:block;width:100%}
 .answer .cmdline{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
 .answer code{background:var(--bg);border:1px solid var(--rule);border-radius:4px;padding:4px 8px;font-size:12.5px;overflow-wrap:anywhere}
 .answer.none .pav{font-size:22px;font-weight:600;letter-spacing:0;line-height:1.3}
-.answer .pp{display:flex;gap:10px 30px;align-items:flex-end;flex-wrap:wrap}
-.answer .push .pav{font-size:30px}
-.answer .push .pav small{font-size:15px}
-.answer .push.off .pav{color:var(--dim)}
 .grade{display:inline-flex;align-items:center;gap:6px;font-size:12px;padding:2px 9px;border-radius:99px;border:1px solid var(--rule)}
 .grade i{width:8px;height:8px;border-radius:50%}
 .grade.good i{background:var(--ok)}.grade.fair i{background:var(--amber)}.grade.poor i{background:var(--rec)}
@@ -479,6 +476,42 @@ html[data-theme=cat] #tabs .lbl{display:none}}
 </section>
 
 <section id="probe">
+ <div id="lcPart" hidden>
+  <div class="row"><b>Load cell probe</b><span class="chip" id="lcState"><i></i><span>-</span></span><span class="dim small" id="lcNotes"></span></div>
+  <div class="card lcgrid" style="padding:12px;margin-top:10px">
+   <div><span class="dim small">Paper offset</span><b class="num" id="lcPaper">-</b></div>
+   <div><span class="dim small">Nozzle growth</span><b class="num" id="lcGrowth">-</b></div>
+   <div><span class="dim small">Last Z homing</span><b class="num" id="lcHome">-</b></div>
+   <div><span class="dim small">Growth offset now</span><b class="num" id="lcApplied">-</b></div>
+   <div><span class="dim small">G28 Z touches</span><b class="num" id="lcTouch">-</b></div>
+  </div>
+  <div class="card" style="padding:12px;margin-top:10px">
+   <div class="row"><b>Calibrate</b><span class="sp"></span>
+    <button id="lcHomeZ" class="quiet" title="G28 Z">Home Z</button>
+    <button id="lcCal" title="Home Z, then the paper test">Home Z + paper test</button>
+    <button id="lcCalG" class="quiet" title="Home Z, paper test, then nozzle growth">+ nozzle growth</button></div>
+   <div class="row small" style="margin-top:8px"><label>Paper <input id="lcThick" type="number" step="0.01" min="0" max="1" style="width:76px"> mm</label>
+    <label class="dim">Growth: start <input id="lcGS" type="number" value="0" style="width:58px"> end <input id="lcGE" type="number" value="250" style="width:58px"> step <input id="lcGT" type="number" value="50" style="width:52px"> °C</label></div>
+   <div id="lcPaperBox" class="row" style="margin-top:10px" hidden>
+    <span class="small">Lower until the paper just drags:</span><b class="num" id="lcZ">Z -</b>
+    <span class="seg" id="lcStep"><button data-z="-0.1">-0.1</button><button data-z="-0.05">-0.05</button><button data-z="-0.01">-0.01</button><button data-z="0.01">+0.01</button><button data-z="0.05">+0.05</button><button data-z="0.1">+0.1</button></span>
+    <button id="lcAccept">Accept</button><button id="lcAbort" class="quiet">Abort</button></div>
+   <div class="small dim" id="lcCalNote" style="margin-top:6px"></div>
+  </div>
+  <div class="card" style="padding:12px;margin-top:10px">
+   <div class="row"><b>Tests</b><span class="small dim">only these runs are recorded, prints and macros are not</span><span class="sp"></span>
+    <button data-lct="accuracy" title="PROBE_ACCURACY at the current XY">Accuracy</button><label class="small"><input id="lcAccN" type="number" value="10" min="2" max="100" style="width:56px"> taps</label>
+    <button data-lct="homing" title="G28 Z repeated">Homing repeat</button><label class="small"><input id="lcHomN" type="number" value="5" min="1" max="50" style="width:52px"> times</label>
+    <button data-lct="mesh" title="Full BED_MESH_CALIBRATE">Bed mesh</button><button data-lct="ztilt">Z tilt</button></div>
+  </div>
+  <div class="card" style="padding:12px;margin-top:10px">
+   <div class="row" style="margin-bottom:6px"><span class="seg" id="lcPlotSel"><button data-p="drift" aria-pressed="true">Drift</button><button data-p="acc" aria-pressed="false">Repeatability</button><button data-p="bed" aria-pressed="false">Bed weak spots</button></span><span class="sp"></span><span class="small dim" id="lcPlotInfo"></span></div>
+   <canvas id="lcc" style="width:100%;height:260px;display:block" aria-label="Load cell probe data"></canvas>
+   <canvas id="lcc2" style="width:100%;height:200px;display:block;margin-top:8px" aria-label="Load cell probe data, second view"></canvas>
+   <div class="small dim" id="lcPlotNote" style="margin-top:6px"></div>
+  </div>
+ </div>
+ <div id="tapPart">
  <div class="row"><b>PIRO-TAP probe</b><span class="chip" id="pState"><i></i><span>-</span></span><span class="dim small num" id="pInfo"></span><span class="sp"></span><button id="pNewest" class="quiet" title="Follow the newest tap">Newest</button></div>
  <div class="card" style="padding:12px;margin-top:10px">
   <div class="row" style="margin-bottom:6px"><b id="pTitle">No taps yet</b><span class="sp"></span><span class="small" id="pWhy"></span></div>
@@ -486,12 +519,13 @@ html[data-theme=cat] #tabs .lbl{display:none}}
   <div class="legend small" id="pLeg" style="margin-top:6px"></div>
   <div class="num dim small" id="pFeat" style="margin-top:4px"></div>
  </div>
+ </div>
  <div class="card" style="padding:12px;margin-top:10px" id="thCard">
   <div class="row" style="margin-bottom:6px"><b>Nozzle growth</b><span class="sp"></span><span class="small dim" id="thInfo"></span></div>
   <canvas id="thc" style="width:100%;height:220px;display:block" aria-label="Measured and predicted nozzle growth against nozzle temperature"></canvas>
   <div class="small dim" id="thNote" style="margin-top:6px"></div>
  </div>
- <div class="card ptaps" style="margin-top:10px"><table id="pTable"><thead><tr><th>Tap</th><th>Time</th><th>X</th><th>Y</th><th>Z</th><th>Quality</th><th>Nozzle</th><th>Note</th></tr></thead><tbody></tbody></table></div>
+ <div class="card ptaps tapOnly" style="margin-top:10px"><table id="pTable"><thead><tr><th>Tap</th><th>Time</th><th>X</th><th>Y</th><th>Z</th><th>Quality</th><th>Nozzle</th><th>Note</th></tr></thead><tbody></tbody></table></div>
 </section>
 
 <section id="cmp">
@@ -966,8 +1000,8 @@ const ADV=[
  ['Prime','fg3',[['prime_length','Prime length','mm',1,'0 disables','prime'],['prime_flow','Prime flow','mm³/s',.5,'','prime'],['prime_rest','Prime rest','s',.5,''],
    ['prime_steady','Prime until steady','',[['0','Off'],['1','On']],'Keeps priming until the push stops rising'],['prime_max','Prime max','mm',5,'Limit with Prime until steady']]],
  ['Search','fg3',[['upper_step','Upper step','',.005,'Added until above the answer'],['pa_limit','PA limit','',.01,'Fails if still below'],['skip_first','First pulse','',[['1','Skip'],['0','Use']],'']]],
- ['Mode and method','fg',[['mode','Mode','',[['edge','Edge: no dip after slow-down'],['fall','Fall: slow-down area 0'],['area','Area: gap and overshoot equal']],'Rule that judges the curve'],['dual','Dual PA','',[['1','On: push and pull'],['0','Off: one PA']],'Edge and fall: speed-up PA from the same pulses. Auto PA sets both with [dual_pa]'],['method','Method','',[['push','Push: Klipper PA, no XY'],['klipper','Klipper: Klipper PA, XY line']],'How each PA value is applied'],
-   ['area_window','Area window','s',.01,'Force summed after each speed change'],['max_values','Max values','',1,'Most PA values per test, every mode (repeats not counted)'],
+ ['Mode and method','fg',[['mode','Mode','',[['fall','Fall: slow-down area 0'],['area','Area: gap and overshoot equal'],['edge','Edge: no dip after slow-down']],'Rule that judges the curve'],['method','Method','',[['push','Push: Klipper PA, no XY'],['klipper','Klipper: Klipper PA, XY line']],'How each PA value is applied'],
+   ['area_window','Area window','s',.01,'Force summed after each speed change'],['max_values','Max values','',1,'Area: most PA values per test'],
    ['move_axis','Line axis','',[['Y','Y'],['X','X']],'Klipper method'],['test_accel','Test accel','mm/s²',100,'Capped at max_accel. Push copies it'],['smooth_time','Smooth time','s',.005,'0 = printer value'],
    ['line_length','Line length','mm',1,'0 = automatic. Sets filament per mm'],['line_dir','Line start','',[['0','Centred on test position'],['1','At test position, towards +'],['-1','At test position, towards −']],'']]],
  ['Position and safety','fg',[['test_x','Test X','mm',1,''],['test_y','Test Y','mm',1,''],['park_x','Park X','mm',1,''],['park_y','Park Y','mm',1,''],
@@ -1004,17 +1038,16 @@ function renderSettings(only){if(!DEF)return;
  const L=DEF.limits||{};$('#safeForm').innerHTML=[['Min temp',L.min_temp,'°C'],['Required Z',L.required_z,'mm'],['Z tolerance',L.z_tol,'mm'],['Sample timeout',L.timeout,'s']].map(([l,v,u])=>`<label class="f">${l}<div class="inp"><input value="${esc(v??'')}" disabled><em>${u}</em></div></label>`).join('');
  if(!only||only==='#defForm'){$$('#defForm input,#defForm select').forEach(i=>i.addEventListener('input',()=>{const v=Object.assign({},DEF,setVals('#defForm'));drawPulse(v);methodInfo(v);$('#defMsg').textContent='Unsaved changes'}));
  drawPulse(DEF);methodInfo(DEF);$('#defMsg').textContent=''}
- $('#advLine').innerHTML=`Fast ${fmt(DEF.fast_flow,1)} mm³/s, ${fmt(DEF.fast_time,2)} s. Slow ${fmt(DEF.slow_flow,1)} mm³/s. ${DEF.cycles} cycles, ${RULE[DEF.mode]||'PIRO-EDGE'}${+(DEF.dual??1)&&DEF.mode!=='area'?' (push and pull)':''}, ${DEF.method==='klipper'?'Klipper PA on a line':'push'} at X${fmt(DEF.test_x,0)} Y${fmt(DEF.test_y,0)}. <a href="#" id="advEdit" style="color:var(--amber)">Edit in Settings</a>`;
+ $('#advLine').innerHTML=`Fast ${fmt(DEF.fast_flow,1)} mm³/s, ${fmt(DEF.fast_time,2)} s. Slow ${fmt(DEF.slow_flow,1)} mm³/s. ${DEF.cycles} cycles, ${RULE[DEF.mode]||'PIRO-FALL'}, ${DEF.method==='klipper'?'Klipper PA on a line':'push'} at X${fmt(DEF.test_x,0)} Y${fmt(DEF.test_y,0)}. <a href="#" id="advEdit" style="color:var(--amber)">Edit in Settings</a>`;
  $('#advEdit').onclick=e=>{e.preventDefault();setTab('set');$('#setDef').scrollIntoView({block:'start',behavior:'smooth'})}}
-const setVals=sel=>Object.fromEntries($$(sel+' input,'+sel+' select').map(i=>[i.name,['skip_first','prime_steady','dual'].includes(i.name)?parseInt(i.value):numv(i)]));
+const setVals=sel=>Object.fromEntries($$(sel+' input,'+sel+' select').map(i=>[i.name,['skip_first','prime_steady'].includes(i.name)?parseInt(i.value):numv(i)]));
 async function saveDefaults(sel){if(!DEF)return;const v=setVals(sel),ch={};for(const[k,x]of Object.entries(v))if(String(x)!==String(DEF[k]))ch[k]=x;
  if(!Object.keys(ch).length){toast('No changes');return}
  try{const r=await api('config_save',{values:ch},15000);Object.assign(DEF,r.defaults);renderSettings(sel);summary();toast('Saved to '+(r.saved||'pa_loadcell.cfg').split('/').pop())}
  catch(e){toast('Not saved: '+e.message,8000)}}
 $('#defSave').onclick=()=>saveDefaults('#defForm');$('#posSave').onclick=()=>saveDefaults('#posForm');$('#defReset').onclick=()=>renderSettings('#defForm');
 $$('#setnav button').forEach(b=>b.onclick=()=>{$$('#setnav button').forEach(x=>x.classList.toggle('on',x===b));$('#'+b.dataset.to).scrollIntoView({block:'start',behavior:'smooth'})});
-const MAXN=14,mvOf=v=>Math.min(+v.max_values||7,MAXN),typOf=v=>v.mode==='edge'?Math.min(7,mvOf(v)):mvOf(v),
- trainsOf=v=>v.mode==='edge'?Math.min(MAXN,mvOf(v)+4):mvOf(v);   /* edge: up to 4 repeats */
+const MAXN=14,typOf=v=>v.mode==='edge'?7:Math.min(+v.max_values||7,MAXN);
 const RULE={fall:'PIRO-FALL',area:'PIRO-AREA',edge:'PIRO-EDGE'};
 /* result rules that use the area line: fall (slow-down area) and area (rise + fall) */
 const isArea=res=>!!res&&(res.method==='PIRO-AREA'||res.method==='PIRO-FALL');
@@ -1022,7 +1055,7 @@ const areaOf=res=>res?(res.rule==='fall'||res.method==='PIRO-FALL'?res.area_fall
 function plan(v){const A=area(),TYP=typOf(v),fast=v.fast_flow/A*v.fast_time,slow=v.slow_flow/A*v.slow_time,per=slow+v.cycles*(fast+slow),
   prime=v.prime_length>0?v.prime_length:0,primeMax=+v.prime_steady?Math.max(prime,+v.prime_max||0):prime,primeT=prime&&v.prime_flow>0?prime*A/v.prime_flow:0,perS=v.rest_time+v.slow_time+v.cycles*(v.fast_time+v.slow_time),
   vf=v.fast_flow/A,vs=v.slow_flow/A,sm=v.smooth_time>0?v.smooth_time:smoothT(),line=lineOf(v,A,sm),push=line?null:pushOf(v,A);
- return{A,TYP,fast,slow,per,prime,primeT,perS,vf,vs,sm,line,push,filTyp:per*TYP+prime,filMax:per*trainsOf(v)+primeMax,secs:perS*TYP+primeT+(v.prime_rest||0)}}
+ return{A,TYP,fast,slow,per,prime,primeT,perS,vf,vs,sm,line,push,filTyp:per*TYP+prime,filMax:per*(v.mode==='edge'?MAXN:TYP)+primeMax,secs:perS*TYP+primeT+(v.prime_rest||0)}}
 /* filament mm per toolhead mm of the line (Settings.line in settings.py) */
 function ratioOf(v,A){const ex=DEF&&DEF.extruder||{},cap=.64/A,mr=ex.max_extrude_ratio||cap,L=+v.line_length||0;return L>0?(v.fast_flow*v.fast_time+v.slow_flow*v.slow_time)/(A*L):.85*Math.min(mr,cap)}
 /* push method: the line it copies (Settings.push_plan) */
@@ -1048,15 +1081,7 @@ function drawPulse(v){const sv=$('#pulse');if(!sv)return;const W=420,x0=10,x1=W-
   <text x="${x0+v.slow_time*sx/2}" y="${base+14}" text-anchor="middle">lead-in</text>
   <text x="${x1}" y="${base+14}" text-anchor="end">${v.cycles} cycles per PA value${v.cycles>shown?' (first '+shown+' shown)':''}</text>
   <text x="${x0}" y="${base+32}">&#9650; PA push, &#9660; PA pull-back</text>`}
-/* PA test intro and steps for the chosen mode */
-const LEDE={edge:'The result is the highest PA with no dip in the force after the slow-down.',
- fall:'The result is the PA where the force settles after the slow-down with no lag and no dip (fall area 0).',
- area:'The result is the PA where the gap and the overshoot after both speed changes have the same area. One PA for both.'};
-const TRACK={edge:['above the answer','from the dip depth','values at the corner'],fall:['above the answer','where it crosses','values beside it'],area:['above the answer','where it crosses','values beside it']};
-function ledeFor(v){const m=LEDE[v.mode]?v.mode:'edge',dual=+(v.dual??1)&&m!=='area';
- $('#lede').textContent='Extrudes fast and slow pulses into the air at a few PA values. '+LEDE[m]+(dual?' Dual PA: that is the pull value; the push value comes from the speed-up of the same pulses.':'');
- $$('#track li').forEach((li,i)=>{const t=TRACK[m][i-1];if(t)li.lastChild.textContent=t;if(i===4)li.lastChild.textContent=dual?'push and pull':'PA \u00b1 error'})}
-function summary(){if(!$('#form input')||!DEF)return;const v=formVals(),p=plan(v),bad=[],warn=[],ex=DEF&&DEF.extruder||{};ledeFor(v);
+function summary(){if(!$('#form input')||!DEF)return;const v=formVals(),p=plan(v),bad=[],warn=[],ex=DEF&&DEF.extruder||{};
  $$('#form .inp').forEach(e=>e.classList.remove('bad'));const mark=k=>{const e=$(`#form .inp[data-k="${k}"]`);if(e)e.classList.add('bad')};
  if(!(v.pa_limit>0&&v.pa_limit<=2)){bad.push('PA limit must be between 0 and 2');mark('pa_limit')}
  if(!(v.pa_max>0&&v.pa_max<=v.pa_limit)){bad.push('PA max must be above 0 and at most PA limit');mark('pa_max')}
@@ -1077,7 +1102,7 @@ function summary(){if(!$('#form input')||!DEF)return;const v=formVals(),p=plan(v
  if(v.fast_flow>30)warn.push(`Fast flow ${fmt(v.fast_flow,1)} mm³/s exceeds most hotends`);
  if(v.fast_time<.4)warn.push('Fast time under 0.4 s weakens the rise check');
  const m=Math.floor(p.secs/60),sc=Math.round(p.secs%60),pct=Math.min(100,p.filMax/v.max_filament*100);
- $('#sum').innerHTML=`${SI(TI.list)}<div>PA values <b>${v.mode==='edge'?'~'+p.TYP:'up to '+p.TYP}</b> <span class="sub">${v.mode==='edge'?'max '+mvOf(v)+' + repeats':esc(RULE[v.mode]||'PIRO-EDGE')}${+(v.dual??1)&&v.mode!=='area'?' · push and pull':''}</span></div>
+ $('#sum').innerHTML=`${SI(TI.list)}<div>PA values <b>${v.mode==='edge'?'~'+p.TYP:'up to '+p.TYP}</b> <span class="sub">${v.mode==='edge'?'max '+MAXN:esc(RULE[v.mode]||'PIRO-FALL')}</span></div>
   ${SI(TI.clock)}<div>Duration <b>~${m}:${String(sc).padStart(2,'0')}</b> <span class="sub">${fmt(p.perS,1)} s per PA value</span></div>
   ${SI(TI.spool)}<div>Filament <b>~${p.filTyp.toFixed(0)} mm</b> <span class="sub">max ${p.filMax.toFixed(0)} / ${fmt(v.max_filament,0)}</span><div class="meter ${pct>=100?'bad':pct>80?'warn':''}"><i style="width:${pct}%"></i></div></div>
   ${SI(TI.drop)}<div>Fast pulse <b>${p.fast.toFixed(2)} mm</b> at ${p.vf.toFixed(1)} mm/s <span class="sub">Smooth time ${Math.round(p.sm*1000)} ms</span></div>
@@ -1100,7 +1125,7 @@ function paintTrack(sr,running,failed){const steps=((sr&&sr.steps)||[]).map((x,i
 function liveSearch(T){const running=T.state&&T.state!=='idle';if(running&&T.search)lastSearch=T.search;const sr=lastSearch;
  paintTrack(sr,running,false);
  if($('#test').classList.contains('on'))figPath($('#tpath'),sr,null,{live:true});
- $('#tres').innerHTML=sr?(sr.result!=null?`${sr.push!=null?'Pull':'Result'} <b style="color:var(--text)">${esc(sr.result)}</b> &plusmn; ${esc(sr.unc)} (${esc(sr.grade)}).${sr.push!=null?` Push <b style="color:var(--text)">${esc(sr.push)}</b> &plusmn; ${esc(sr.push_unc)} (${esc(sr.push_grade)}).`:''}`:sr.error?`<span style="color:var(--rec)">${esc(sr.error)}</span>`:sr.prediction!=null?`Estimate: ${esc(sr.prediction)}`:''):'No test run yet';
+ $('#tres').innerHTML=sr?(sr.result!=null?`Result <b style="color:var(--text)">${esc(sr.result)}</b> &plusmn; ${esc(sr.unc)} (${esc(sr.grade)}).`:sr.error?`<span style="color:var(--rec)">${esc(sr.error)}</span>`:sr.prediction!=null?`Estimate: ${esc(sr.prediction)}`:''):'No test run yet';
  if(!running&&sr&&(sr.result!=null||sr.error))paintTrack(sr,false,sr.result==null)}
 
 /* ---- history ---- */
@@ -1132,10 +1157,9 @@ $('#thFile').onchange=async e=>{const f=e.target.files[0];e.target.value='';if(!
  catch(err){toast('Import failed: '+(err instanceof SyntaxError?'not a JSON file':err.message),8000)}};
 /* last finished test on the PA test tab */
 function renderLastRes(){const box=$('#lastres');if(!box)return;const r=(runs||[]).find(x=>x.kind==='test'&&x.result&&x.result.pa!=null);box.hidden=!r;if(!r)return;
- const R=r.result,dual=dualOn(r.settings)&&R.push!=null,cmd=dual?dualCmd(R.push,R.pa):'SET_PRESSURE_ADVANCE ADVANCE='+R.pa;
+ const cmd='SET_PRESSURE_ADVANCE ADVANCE='+r.result.pa;
  box.innerHTML=`<div class="row"><b style="font-size:13px">Last result</b><span class="sp"></span><span class="small dim">${esc(r.filament||r.name)} · ${esc(r.date||'')}</span></div>
-  <div class="row" style="margin-top:8px;align-items:flex-end;gap:12px">${dual?'<span class="small dim">Pull</span>':''}<span class="pav num"><span class="pvt">${esc(R.pa)}</span><span class="pxv">${pixel(String(R.pa),7)}</span></span><span class="dim num">± ${esc(R.unc)}</span>${gradeHTML(R.grade)}</div>
-  ${R.push!=null?`<div class="row" style="margin-top:6px;align-items:baseline;gap:10px"><span class="small dim">Push</span><b class="num" style="font-size:20px">${esc(R.push)}</b><span class="dim num">± ${esc(R.push_unc)}</span>${gradeHTML(R.push_grade)}${dual?'':'<span class="small dim">dual PA off</span>'}</div>`:''}
+  <div class="row" style="margin-top:8px;align-items:flex-end;gap:12px"><span class="pav num"><span class="pvt">${esc(r.result.pa)}</span><span class="pxv">${pixel(String(r.result.pa),7)}</span></span><span class="dim num">± ${esc(r.result.unc)}</span>${gradeHTML(r.result.grade)}</div>
   <div class="row" style="margin-top:10px"><code style="background:var(--bg);border:1px solid var(--rule);border-radius:4px;padding:4px 8px;font-size:12px">${esc(cmd)}</code><button class="quiet cpl" data-cp="${esc(cmd)}">Copy</button></div>`;
  box.querySelector('.cpl').onclick=e=>{const t=e.target.dataset.cp;navigator.clipboard?navigator.clipboard.writeText(t).then(()=>toast('Copied'),()=>toast(t)):toast(t)}}
 /* auto PA (PA_AUTO before a print): what was applied */
@@ -1149,7 +1173,7 @@ const STATUS={error:['bad','Failed'],interrupted:['bad','Interrupted'],cancelled
 function statusChip(st){const[c,t]=STATUS[st]||['warn',st||'-'];return`<span class="chip ${c}"><i></i>${esc(t)}</span>`}
 function renderRuns(){const q=$('#search').value.toLowerCase();const list=runs.filter(r=>(kind==='all'||r.kind===kind)&&(!q||(r.name+' '+(r.filament||'')+' '+(r.notes||'')).toLowerCase().includes(q)));
  $('#runs').innerHTML=list.map(r=>`<div class="run card${r.id===SELRUN?' sel':''}" data-id="${esc(r.id)}"><div class="runline" role="button" tabindex="0" aria-pressed="${r.id===SELRUN}"><b>${esc(r.name)}</b><span style="color:var(--dim)">${[esc(r.filament||''),r.nozzle_temp!=null?fmt(+r.nozzle_temp,0)+' °C':''].filter(Boolean).join(' · ')}</span>
-  ${r.kind==='test'?(r.result?`<span class="res">${r.result.push!=null?'Pull':'PA'} ${esc(r.result.pa)}</span><span class="num dim">&plusmn; ${esc(r.result.unc)}</span>${gradeHTML(r.result.grade)}${r.result.push!=null?`<span class="res">Push ${esc(r.result.push)}</span><span class="num dim">&plusmn; ${esc(r.result.push_unc)}</span>`:''}`:statusChip(r.status)):'<span class="chip">Recording</span>'}
+  ${r.kind==='test'?(r.result?`<span class="res">PA ${esc(r.result.pa)}</span><span class="num dim">&plusmn; ${esc(r.result.unc)}</span>${gradeHTML(r.result.grade)}`:statusChip(r.status)):'<span class="chip">Recording</span>'}
   <span class="sp"></span>${r.sensor&&r.sensor!=='load_cell'?`<span class="chip">${r.sensor==='both'?'2 sensors':'Eddy'}</span>`:''}${autoChip(r.auto)}${r.imported?'<span class="chip">imported</span>':''}<span class="num dim">${esc(r.segments)} ${r.kind==='test'?'PA values':'segment'}${r.pa_pick!=null?', pick '+esc(r.pa_pick):''}</span><span class="num dim">${esc(r.date)}</span></div></div>`).join('')||
   '<div class="empty">'+(runs.length?'No runs match.':'No runs. Start a PA test or Record on Live.')+'</div>';
  $$('#runs .run').forEach(d=>{const ln=d.querySelector('.runline'),id=+d.dataset.id;ln.onclick=()=>selectRun(id,true);
@@ -1304,28 +1328,18 @@ function stepsHTML(m,res){const sr=m.search,P=res.points||[],fe=res.fall||{},ar=
  if(cmpR.length)L.push(`<b>Other rules, same data.</b> ${cmpR.join(', ')}. Not used.`);
  if(fe.k!=null)L.push(`<b>Edge.</b> Clean ${esc(fe.k_ok)}, dip ${esc(fe.k_bad)}. Line fit (${fe.line?fe.used.length:2} values): <b>${fe.k.toFixed(4)}</b>${isArea(res)?'. Not used: the result rule is '+esc(res.method):''}.`);
  if(res.measured!=null&&res.pa!=null)L.push(`<b>Smooth time correction (${Math.round((res.smooth||.04)*1000)} ms).</b> ${esc(res.measured)} &rarr; <b>${esc(res.pa)}</b>.`);
- const re=res.rise||{};if(!isArea(res)&&!(res.dual&&res.dual.push!=null)){if(re.k!=null)L.push(`<b>Rise check.</b> Overshoot from ${re.k.toFixed(4)}, ${res.check==='lower'?'<span style="color:var(--amber)">below the edge</span>':res.check==='agrees'?'agrees':'above the edge'}.`);
+ const re=res.rise||{};if(!isArea(res)){if(re.k!=null)L.push(`<b>Rise check.</b> Overshoot from ${re.k.toFixed(4)}, ${res.check==='lower'?'<span style="color:var(--amber)">below the edge</span>':res.check==='agrees'?'agrees':'above the edge'}.`);
   else if(fe.k!=null)L.push('<b>Rise check.</b> No overshoot in range.')}
- const d=res.dual;if(d&&res.method!=='PIRO-AREA'){if(d.push!=null)L.push(`<b>Push (speed-up).</b> ${d.source==='speed-up area'?`Line through the speed-up area of the values the fall line used crosses 0 at <b>${(+d.push).toFixed(4)}</b>`:`Overshoot after the speed-up starts at <b>${(+d.push).toFixed(4)}</b> (clean ${esc(d.k_ok)}, overshoot ${esc(d.k_bad)})`} &plusmn; ${(+d.push_unc).toFixed(4)}. No extra PA values.${(d.warnings||[]).length?' <span style="color:var(--amber)">'+d.warnings.map(esc).join('. ')+'.</span>':''}`);
-  else L.push(`<b>Push (speed-up).</b> ${esc(d.why||'No result')}. Push = pull.`)}
- else if(d&&d.why)L.push(`<b>Push and pull.</b> ${esc(d.why)}.`);
  return`<ol class="steps">${L.map(x=>'<li>'+x+'</li>').join('')}</ol>`}
 
 /* the other sensor of a 'both' run: its own answer, never applied */
 function channelHTML(m){const ch=(m.analysis||{}).channels;if(!ch)return'';const nm={eddy:'Eddy',load_cell:'Load cell'};
  return Object.entries(ch).map(([k,r])=>`<div class="small dim">${esc(nm[k]||k)} (compared, not applied): ${r.pa!=null?`<b>${esc(r.pa)}</b> &plusmn; ${esc(r.unc)} ${gradeHTML(r.grade)}`:esc(r.why||'no result')}</div>`).join('')}
-/* dual PA: push (speed-up) and pull (slow-down) from one run */
-const dualOn=st=>!st||st.dual==null||+st.dual===1;
-const dualCmd=(push,pull)=>`SET_DUAL_PA PUSH=${push} PULL=${pull}`;
-function pushHTML(m,res){const d=res.dual;if(!d||res.method==='PIRO-AREA')return'';const on=dualOn(m.settings);
- if(d.push==null)return`<div class="push off"><div class="k">Push · speed-up</div><div class="pav">= pull</div><div class="small dim">${esc(d.why||'no speed-up result')}</div></div>`;
- return`<div class="push${on?'':' off'}"><div class="k">Push · speed-up ${gradeHTML(d.push_grade)}</div><div class="pav"><span class="pvt">${esc(d.push)}</span><small>&plusmn; ${esc(d.push_unc)}</small></div><div class="small dim">${on?'From the '+esc(d.source||'same pulses'):'Dual PA off for this run'}</div></div>`}
 function answerHTML(m,res){if(!res||res.pa==null){const st=m.status;return`<div class="answer none"><div class="side"><div class="k">${esc(res&&res.method||'PIRO-EDGE')}</div><div class="pav">${{cancelled:'Cancelled',interrupted:'Interrupted'}[st]||'No result'}</div>${isArea(res)&&(res.edge_result||{}).pa!=null?`<div class="small dim">No-dip edge ${esc(res.edge_result.pa)}</div>`:''}
   <div>${esc(m.error||res&&res.why||'not enough data')}</div>${res&&!isArea(res)&&res.fall&&res.fall.status==='no_dip'?'<div class="small dim">No dip at any value. Check for filament slip or a partial clog, then raise PA limit in Settings.</div>':''}${channelHTML(m)}</div></div>`}
- const d=res.dual||{},dual=dualOn(m.settings)&&d.push!=null&&res.method!=='PIRO-AREA',pa=esc(res.pa),cmd=dual?dualCmd(esc(d.push),pa):'SET_PRESSURE_ADVANCE ADVANCE='+pa,er=res.edge_result||{},fr=res.fall_result||{},arr=res.area_result||{},O=[];
+ const pa=esc(res.pa),cmd='SET_PRESSURE_ADVANCE ADVANCE='+pa,er=res.edge_result||{},fr=res.fall_result||{},arr=res.area_result||{},O=[];
  if(res.method!=='PIRO-FALL'&&fr.pa!=null)O.push('Fall '+esc(fr.pa));if(res.method!=='PIRO-AREA'&&arr.pa!=null)O.push('Area '+esc(arr.pa));if(res.method!=='PIRO-EDGE'&&er.pa!=null)O.push('No-dip edge '+esc(er.pa));
- const ph=pushHTML(m,res);
- return`<div class="answer"><div><div class="pp"><div><div class="k">${ph?'Pull · slow-down':'Pressure advance'} · ${esc(res.method||'PIRO-EDGE')}</div><div class="pav"><span class="pvt">${pa}</span><span class="pxv">${pixel(String(res.pa),11)}</span><small>&plusmn; ${esc(res.unc)}</small></div></div>${ph}</div>${O.length?`<div class="small dim">${O.join(' · ')}</div>`:''}${channelHTML(m)}</div>
+ return`<div class="answer"><div><div class="k">Pressure advance · ${esc(res.method||'PIRO-EDGE')}</div><div class="pav"><span class="pvt">${pa}</span><span class="pxv">${pixel(String(res.pa),11)}</span><small>&plusmn; ${esc(res.unc)}</small></div>${O.length?`<div class="small dim">${O.join(' · ')}</div>`:''}${channelHTML(m)}</div>
   <div class="side"><div class="row">${gradeHTML(res.grade)}<span class="small dim">${res.grade==='good'?'Ready to use':res.grade==='fair'?'Verify with a print':'Low confidence, repeat the test'}</span></div>
    <div class="cmdline"><code>${cmd}</code><button class="quiet cp" data-cp="${cmd}">Copy</button><button class="quiet usepick" data-pa="${pa}">Set as pick</button></div>
    ${res.warnings&&res.warnings.length?`<ul class="warns">${res.warnings.map(w=>'<li>'+esc(w)+'</li>').join('')}</ul>`:''}</div></div>`}
@@ -1367,10 +1381,10 @@ function renderRun(id,box){const m=meta[id],st=m.settings||{},test=m.kind==='tes
     <figure><div class="ft">Tolerance narrowing</div><canvas class="fig f-narrow" style="height:200px"></canvas><figcaption>The area result and its &plusmn; after each PA value, in the order tested. Faded: PA 0 and PA max were still in the line.</figcaption></figure>
     <figure><div class="ft">Pulse trace</div><canvas class="fig f-pulse" style="height:200px"></canvas><figcaption class="cap-pulse">Loading</figcaption></figure>
     <figure><div class="ft">Slow-down response</div><canvas class="fig f-curves" style="height:200px"></canvas><figcaption>Median per PA value, as a fraction of the step. Red dashed: noise limit.</figcaption></figure>
-    <figure><div class="ft">Dip vs PA</div><canvas class="fig f-dips" style="height:200px"></canvas><figcaption>&plusmn;2 SE, ringed: tested twice. Amber: line fit${res&&res.measured!=null?' before smooth time correction':''}.</figcaption></figure>${riseFigHTML(res)}`:`
+    <figure><div class="ft">Dip vs PA</div><canvas class="fig f-dips" style="height:200px"></canvas><figcaption>&plusmn;2 SE, ringed: tested twice. Amber: line fit${res&&res.measured!=null?' before smooth time correction':''}.</figcaption></figure>`:`
     <figure><div class="ft">Pulse trace</div><canvas class="fig f-pulse" style="height:200px"></canvas><figcaption class="cap-pulse">Loading</figcaption></figure>
     <figure><div class="ft">Slow-down response</div><canvas class="fig f-curves" style="height:200px"></canvas><figcaption>Median per PA value, as a fraction of the step. Red dashed: noise limit.</figcaption></figure>
-    <figure><div class="ft">Dip vs PA</div><canvas class="fig f-dips" style="height:200px"></canvas><figcaption>&plusmn;2 SE, ringed: tested twice. Amber: line fit${res&&res.measured!=null?' before smooth time correction':''}.</figcaption></figure>${riseFigHTML(res)}
+    <figure><div class="ft">Dip vs PA</div><canvas class="fig f-dips" style="height:200px"></canvas><figcaption>&plusmn;2 SE, ringed: tested twice. Amber: line fit${res&&res.measured!=null?' before smooth time correction':''}.</figcaption></figure>
     <figure><div class="ft">Area balance vs PA</div><canvas class="fig f-area" style="height:200px"></canvas><figcaption>Gap and overshoot after both speed changes, in ms of the full step. &plusmn;2 SE. Amber: the line through the values beside the answer (hollow: left out) and where it crosses 0. Teal dashed: no-dip edge.</figcaption></figure>
     <figure><div class="ft">Pulse at the result</div><canvas class="fig f-shape" style="height:200px"></canvas><figcaption class="cap-shape">Speed-up and slow-down overlaid, at the tested value nearest the result.</figcaption></figure>
     <figure><div class="ft">Tolerance narrowing</div><canvas class="fig f-narrow" style="height:200px"></canvas><figcaption>The area result and its &plusmn; after each PA value, in the order tested. Faded: PA 0 and PA max were still in the line.</figcaption></figure>`}
@@ -1382,7 +1396,7 @@ function renderRun(id,box){const m=meta[id],st=m.settings||{},test=m.kind==='tes
    ${test?`<button class="add quiet" data-add="${s.idx}" aria-pressed="${inCmp(id,s.idx)}" title="Add to Compare">+</button>`:''}</div>`}).join('')}</div>
   <div class="tagrow"><label class="f" style="width:130px">Pick<input class="pick" value="${esc(m.pa_pick??'')}" placeholder="e.g. 0.045"></label>
    <label class="f" style="width:180px">Name<input class="nm" value="${esc(m.name)}"></label>
-   ${test?`<label class="f" style="width:120px">First pulse<select class="o-skip"><option value="1"${(m.analysis||{}).skip_first!==false?' selected':''}>Skip</option><option value="0"${(m.analysis||{}).skip_first===false?' selected':''}>Use</option></select></label><label class="f" style="width:130px">Mode<select class="o-mode">${(()=>{const md=(st.mode||st.pick||'edge')==='fit'?'area':(st.mode||st.pick||'edge');return['edge','fall','area'].map(x=>`<option value="${x}"${md===x?' selected':''}>${RULE[x]}</option>`).join('')})()}</select></label><button class="o-run" title="Analyse again">Re-analyse</button>`:''}
+   ${test?`<label class="f" style="width:120px">First pulse<select class="o-skip"><option value="1"${(m.analysis||{}).skip_first!==false?' selected':''}>Skip</option><option value="0"${(m.analysis||{}).skip_first===false?' selected':''}>Use</option></select></label><label class="f" style="width:130px">Mode<select class="o-mode">${(()=>{const md=(st.mode||st.pick||'edge')==='fit'?'area':(st.mode||st.pick||'edge');return['fall','area','edge'].map(x=>`<option value="${x}"${md===x?' selected':''}>${RULE[x]}</option>`).join('')})()}</select></label><button class="o-run" title="Analyse again">Re-analyse</button>`:''}
    <span class="sp"></span><button class="save">Save</button><button class="exp" title="Download run (.palc.json)">Export run</button><button class="del danger quiet">Delete run</button></div>
   <label class="f" style="margin-top:8px">Notes<textarea class="notes">${esc(m.notes)}</textarea></label>
   <details class="raw"><summary>Run settings</summary><div class="kv">${[['Nozzle',m.nozzle_temp!=null?m.nozzle_temp+' °C':'-'],['Smooth time',m.smooth_time!=null?Math.round(m.smooth_time*1000)+' ms':'-'],...Object.entries(st)].map(([k,v])=>`<span>${esc(k)} <b>${esc(v)}</b></span>`).join('')}</div></details>`;
@@ -1402,31 +1416,7 @@ function renderRun(id,box){const m=meta[id],st=m.settings||{},test=m.kind==='tes
  if(m.kind==='manual'&&m.segments.length)box.querySelector('.pa').click()}
 const openFigs=new Map();
 function drawFigs(box,m,res){openFigs.set(box,[m,res]);const q=s=>box.querySelector(s);if(!q('.f-path'))return;
- if(m.search&&m.search.steps&&m.search.steps.length)figPath(q('.f-path'),m.search,res);else figDips(q('.f-path'),res,true);figCurves(q('.f-curves'),m,res);figDips(q('.f-dips'),res);figPulse(q('.f-pulse'),m,res,q('.cap-pulse'));figArea(q('.f-area'),res);figRise(q('.f-rise'),res);figShape(q('.f-shape'),m,res,q('.cap-shape'));figNarrow(q('.f-narrow'),res)}
-/* dual PA: the speed-up side. Edge: overshoot after the speed-up per PA
-   value, the line and where it starts to grow. Fall: speed-up area per PA
-   value and the line through the values the fall line used */
-function riseFigHTML(res){const d=res&&res.dual;if(!d||res.method==='PIRO-AREA'||(d.push==null&&!d.points&&!(res.rise||{}).k_ok))return'';const ar=d.source==='speed-up area';
- return`<figure><div class="ft">Push: ${ar?'speed-up area':'overshoot'} vs PA</div><canvas class="fig f-rise" style="height:200px"></canvas><figcaption>${ar?'Area after the speed-up, in ms of the full step: above 0 it overshoots. Amber: the line through the values the fall line used, and where it crosses 0 (dashed: outside the tested values).':'Overshoot above the fast level after the speed-up. Amber: the line through the values just past the corner, and where the overshoot starts.'} Grey dashed: pull.</figcaption></figure>`}
-function figRise(cv,res){if(!cv)return;const d=res&&res.dual||{},ar=d.source==='speed-up area',re=res.rise||{};
- let P;if(ar)P=(d.points||[]).map(([pa,v,se])=>({pa,v,se}));else P=(res.points||[]).filter(p=>p.over!=null).map(p=>({pa:p.pa,v:p.over*100,se:(p.over_se||0)*100}));
- if(P.length<2){emptyFig(cv,'No speed-up data');return}
- const k=d.push,pull=res.pa,used=new Set(((ar?d.used:re.used)||[]).map(v=>+(+v).toFixed(6)));
- const near=[...used,k,pull].filter(v=>v!=null);let x0=0,x1=Math.max(...P.map(p=>p.pa))*1.06||.1;
- if(near.length>1){const span=Math.max(.02,Math.max(...near)-Math.min(...near));x0=Math.max(0,Math.min(...near)-span*.7);x1=Math.max(...near)+span*.6}
- const V=P.filter(p=>p.pa>=x0-1e-9&&p.pa<=x1+1e-9);if(!V.length){emptyFig(cv,'No speed-up data near the result');return}
- const lo=V.map(p=>p.v-2*p.se),hi=V.map(p=>p.v+2*p.se),y0=Math.min(-3,...lo)-1,y1=Math.max(3,...hi)+1;
- const F=fig(cv,{x0,x1,y0,y1,zero:true,yt:v=>(v>0?'+':'')+Math.round(v)+(ar?'':'%'),xt:v=>v.toFixed(x1-x0<.06?3:2),L:44});if(!F)return;const c=F.c,am=css('--amber');
- const line=ar?d.line:(re.line?{a:re.line.a*100,b:re.line.b*100}:null),tgt=ar?0:(re.target||0)*100;
- if(k!=null&&d.push_unc){c.fillStyle=am;c.globalAlpha=.13;c.fillRect(F.X(k-d.push_unc),F.T,Math.max(2,F.X(k+d.push_unc)-F.X(k-d.push_unc)),F.ph);c.globalAlpha=1}
- if(line&&used.size){const U=[...used],xa=Math.max(x0,Math.min(...U,k??1)-.004),xb=Math.min(x1,Math.max(...U,k??0)+.004);c.save();c.beginPath();c.rect(F.L,F.T,F.pw,F.ph);c.clip();
-  c.strokeStyle=am;c.lineWidth=1.8;c.beginPath();c.moveTo(F.X(xa),F.Y(line.a+line.b*xa));c.lineTo(F.X(xb),F.Y(line.a+line.b*xb));c.stroke();c.restore()}
- if(pull!=null)vline(c,F,pull,F.dim,[4,4]);
- for(const p of V){const x=F.X(p.pa),bad=p.v>tgt+(ar?0:3),col=bad?css('--rec'):css('--trace'),u=used.has(+(+p.pa).toFixed(6));
-  if(p.se){c.strokeStyle=col;c.lineWidth=1;c.beginPath();c.moveTo(x,F.Y(p.v-2*p.se));c.lineTo(x,F.Y(p.v+2*p.se));c.stroke()}
-  u?dot(c,x,F.Y(p.v),4,col):dot(c,x,F.Y(p.v),4,css('--panel2'),col)}
- if(k!=null){vline(c,F,k,am,d.extrapolated?[3,3]:null);const right=F.X(k)>F.L+F.pw*.6;label(c,'push '+(+k).toFixed(4),F.X(k)+(right?-6:6),F.T+12,am,right?'right':'left',css('--panel2'))}
- label(c,'overshoot',F.L+6,F.T+12,F.dim)}
+ if(m.search&&m.search.steps&&m.search.steps.length)figPath(q('.f-path'),m.search,res);else figDips(q('.f-path'),res,true);figCurves(q('.f-curves'),m,res);figDips(q('.f-dips'),res);figPulse(q('.f-pulse'),m,res,q('.cap-pulse'));figArea(q('.f-area'),res);figShape(q('.f-shape'),m,res,q('.cap-shape'));figNarrow(q('.f-narrow'),res)}
 /* PIRO-AREA: mean area balance per PA value, the line and its zero crossing */
 function figArea(cv,res){if(!cv)return;const ar=res&&areaOf(res);if(!ar||!ar.points||ar.points.length<2){emptyFig(cv,'No area data (re-analyse)');return}
  const P=ar.points,used=new Set((ar.used||[]).map(v=>+(+v).toFixed(6))),k=ar.k,e=(res.edge_result||{}).pa;
@@ -1605,7 +1595,7 @@ function term(){if(!isTerm())return;
  const line=(r,last)=>{const res=r.result&&r.result.pa!=null&&isFinite(+r.result.pa),nm='run_'+String(r.id).padStart(4,'0')+' '+(r.filament||'').replace(/\(.*?\)/g,'').trim().slice(0,11);
   return`<a data-run="${r.id}" class="${TAB==='hist'&&openId===r.id?'sel':''}">   ${last?'└':'├'} ${res?'●':'○'} ${esc(nm)}<span class="s ${res?'':'bad'}">${res?esc(r.result.pa):(r.kind==='test'?'✗':'')}</span></a>`};
  const shown=tests.slice(0,14);
- $('#tree').innerHTML=`<div class="path">  ~/printer_data/pa_loadcell</div>
+ $('#tree').innerHTML=`<div class="path">  ~/printer_data/prio_edge/pa_auto</div>
   <a data-go="hist">▾  runs<span class="s">${tests.length}</span></a>${shown.map((r,i)=>line(r,i===shown.length-1)).join('')}${tests.length>shown.length?`<div class="h">      (${tests.length-shown.length} more)</div>`:''}
   <a data-go="hist" data-k="rec">▸  recordings<span class="s">${recs.length||''}</span></a>
   <a data-go="set" data-sec="setApp">▸  themes</a>
@@ -1629,13 +1619,18 @@ setInterval(()=>{if(isTerm())termLine()},30000);
 
 /* ---- PIRO-TAP: recent probe taps ---- */
 const papi=(n,p,ms)=>rpc.call('printer.piro_tap.'+n,p,ms);
+const lapi=(n,p,ms)=>rpc.call('printer.piro_lc.'+n,p,ms);
 const pchart=new Chart($('#pc'),$('#pcTip'));const PT={list:[],sel:null,det:null,follow:true,busy:false};
-/* which parts are installed and configured: PA calibrator, PIRO-TAP, both */
-let HAS_PA=true;
+/* which parts are installed and configured: PA calibrator, PIRO-TAP, PIRO-LC */
+let HAS_PA=true,HAS_TAP=false,HAS_LC=false;
 async function probeCheck(){let objs=null;try{objs=(await rpc.call('printer.objects.list',{},5000)).objects||[]}catch{}
  const tap=objs?objs.includes('piro_tap'):await papi('taps',{limit:1},5000).then(()=>true,()=>false);
- HAS_PA=objs?objs.includes('pa_loadcell'):true;$('#tabProbe').hidden=!tap;
- const po=!HAS_PA&&tap;document.body.classList.toggle('probe-only',po);if(po){$('#brand').innerHTML='PIRO-TAP<span>Eddy nozzle probe</span>';document.title='PIRO-TAP'}if(!HAS_PA&&tap&&TAB!=='probe')setTab('probe')}
+ const lc=objs?objs.includes('piro_lc'):await lapi('status',{},5000).then(()=>true,()=>false);
+ HAS_TAP=tap;HAS_LC=lc;HAS_PA=objs?objs.includes('pa_loadcell'):true;$('#tabProbe').hidden=!(tap||lc);
+ $('#lcPart').hidden=!lc;$('#tapPart').hidden=!tap;$$('.tapOnly').forEach(e=>e.hidden=!tap);
+ const po=!HAS_PA&&(tap||lc);document.body.classList.toggle('probe-only',po);
+ if(po){const nm=tap?['PIRO-TAP','Eddy nozzle probe']:['PIRO-LC','Load cell probe'];$('#brand').innerHTML=nm[0]+'<span>'+nm[1]+'</span>';document.title=nm[0]}
+ if(po&&TAB!=='probe')setTab('probe');else if(TAB==='probe')setTab('probe')}
 const qcls=t=>!t.ok?'bad':t.quality>=70?'ok':t.quality>=40?'warn':'bad';
 async function loadTaps(){if(PT.busy)return;PT.busy=true;try{const r=await papi('taps',{limit:200},8000);PT.list=r.taps||[];PT.st=r;renderTaps();
   const nw=PT.list.length?PT.list[PT.list.length-1].id:null;if(nw!=null&&(PT.sel==null||PT.follow&&PT.sel!==nw))await selectTap(nw,true)}
@@ -1667,15 +1662,16 @@ function drawTap(){const d=PT.det;if(!d){pchart.set({series:[],empty:'Pick a tap
 $('#pNewest').onclick=()=>{PT.follow=true;PT.sel=null;loadTaps();loadThermal()};
 /* nozzle growth: measured points and the fitted line (PIRO_TAP_THERMAL_CALIBRATE) */
 let TH=null;
-async function loadThermal(){try{TH=await papi('thermal',{},8000)}catch{TH=null}drawThermal()}
+async function loadThermal(){try{TH=HAS_LC?await lapi('growth',{},8000):await papi('thermal',{},8000)}catch{TH=null}drawThermal()}
 function drawThermal(){const cv=$('#thc'),w=cv.clientWidth,h=cv.clientHeight;if(!w||!h)return;const dpr=devicePixelRatio||1;cv.width=Math.round(w*dpr);cv.height=Math.round(h*dpr);
  const c=cv.getContext('2d');c.setTransform(dpr,0,0,dpr,0,0);c.clearRect(0,0,w,h);c.font='11px '+css('--font');const dim=css('--dim');
  const cal=TH&&TH.calibration,P=cal&&cal.points||[];
- $('#thInfo').textContent=TH?(TH.coeff?`${(TH.coeff*1000).toFixed(3)} µm/°C in use`:'thermal_coeff 0: no correction'):'';
- $('#thNote').textContent=TH?[TH.home_temp!=null?`last Z homing at ${TH.home_temp.toFixed(0)} °C`:'Z not homed with PIRO-TAP yet',
+ const KEY=HAS_LC?'nozzle_growth':'thermal_coeff',CAL=HAS_LC?'PIRO_LC_GROWTH_CALIBRATE':'PIRO_TAP_THERMAL_CALIBRATE',WHO=HAS_LC?'the load cell':'PIRO-TAP';
+ $('#thInfo').textContent=TH?(TH.coeff?`${(TH.coeff*1000).toFixed(3)} µm/°C in use`:KEY+' 0: no correction'):'';
+ $('#thNote').textContent=TH?[TH.home_temp!=null?`last Z homing at ${TH.home_temp.toFixed(0)} °C`:'Z not homed with '+WHO+' yet',
   TH.applied?`thermal offset now ${TH.applied>0?'+':''}${(TH.applied*1000).toFixed(1)} µm`+(TH.applied_for?` (printing at ${TH.applied_for[0]} °C)`:''):'no thermal offset applied',
   cal?`calibrated ${new Date(cal.time*1000).toLocaleString()} at X ${fmt(cal.x,0)} Y ${fmt(cal.y,0)}, largest miss ${(cal.max_residual*1000).toFixed(1)} µm`:''].filter(Boolean).join(',  '):'';
- if(P.length<2){c.fillStyle=dim;c.textAlign='center';c.fillText('Not calibrated. Run PIRO_TAP_THERMAL_CALIBRATE START=0 END=200 STEP=50',w/2,h/2);return}
+ if(P.length<2){c.fillStyle=dim;c.textAlign='center';c.fillText('Not calibrated. Run '+CAL+' START=0 END=200 STEP=50',w/2,h/2);return}
  const z0=P[0][1],xs=P.map(p=>p[0]),ys=P.map(p=>(p[1]-z0)*1000),pred=t=>(cal.intercept+cal.coeff*t-z0)*1000;
  let x0=Math.min(...xs),x1=Math.max(...xs);const pad=(x1-x0)*.05;x0-=pad;x1+=pad;let y0=Math.min(0,...ys,pred(x0),pred(x1)),y1=Math.max(...ys,pred(x0),pred(x1));const yp=(y1-y0)*.1||1;y0-=yp;y1+=yp;
  const L=54,R=14,T=10,B=24,pw=w-L-R,ph=h-T-B,X=t=>L+(t-x0)/(x1-x0)*pw,Y=v=>T+(1-(v-y0)/(y1-y0))*ph;
@@ -1686,15 +1682,108 @@ function drawThermal(){const cv=$('#thc'),w=cv.clientWidth,h=cv.clientHeight;if(
  c.fillStyle=css('--trace');for(let i=0;i<P.length;i++){c.beginPath();c.arc(X(xs[i]),Y(ys[i]),4.5,0,7);c.fill();
   const sd=P[i][2]*1000;if(sd>0){c.strokeStyle=css('--trace');c.lineWidth=1.5;c.beginPath();c.moveTo(X(xs[i]),Y(ys[i]-sd));c.lineTo(X(xs[i]),Y(ys[i]+sd));c.stroke()}}
  c.textAlign='left';c.textBaseline='top';c.fillStyle=css('--trace');c.fillText('● measured',L+8,T+4);c.fillStyle=css('--amber');c.fillText('- - predicted (line)',L+90,T+4)}
-setInterval(()=>{if(TAB==='probe'&&rpc.up&&!document.hidden)loadTaps()},1500);
+setInterval(()=>{if(TAB==='probe'&&rpc.up&&!document.hidden){if(HAS_TAP)loadTaps();if(HAS_LC)loadLC()}},1500);
+
+/* ---- PIRO-LC: load cell homing, paper test, recorded tests ---- */
+const LC={st:null,ser:[],nSess:-1,plot:'drift',busy:false};
+const sgn=v=>(v>0?'+':'')+v;
+const um=v=>v==null||!isFinite(v)?'-':sgn((v*1000).toFixed(1))+' µm';
+const ago=t=>{if(!t)return'';const s=Date.now()/1000-t;return s<90?Math.round(s)+' s ago':s<5400?Math.round(s/60)+' min ago':s<172800?Math.round(s/3600)+' h ago':new Date(t*1000).toLocaleDateString()};
+const lcgo=(script)=>gcode(script).catch(e=>toast(e.message));
+async function loadLC(){if(LC.busy)return;LC.busy=true;try{
+  LC.st=await lapi('status',{},6000);renderLC();
+  if(LC.st.paper_active){try{const q=await rpc.call('printer.objects.query',{objects:{toolhead:['position']}},4000);$('#lcZ').textContent='Z '+(+q.status.toolhead.position[2]).toFixed(3)}catch{}}
+  const r=await lapi('sessions',{limit:500},6000),n=(r.sessions||[]).length;
+  if(n!==LC.nSess){LC.nSess=n;LC.ser=(await lapi('series',{limit:60},15000)).sessions||[];drawLC()}}
+ catch(e){$('#lcNotes').textContent=e.message}finally{LC.busy=false}}
+function renderLC(){const s=LC.st;if(!s)return;const h=s.homing||{},st=$('#lcState');
+ let cls='ok',txt='Ready';if(s.collecting){cls='warn';txt='Recording a test'}else if(s.paper_active){cls='warn';txt='Paper test'}
+ st.className='chip '+cls;st.lastElementChild.textContent=txt;$('#lcNotes').textContent=(s.notes||[]).join('  ');
+ $('#lcPaper').textContent=sgn(s.paper_offset.toFixed(3))+' mm';
+ $('#lcGrowth').textContent=s.nozzle_growth?(s.nozzle_growth*1000).toFixed(3)+' µm/°C':'not calibrated';
+ $('#lcHome').textContent=s.home_temp==null?'-':s.home_temp.toFixed(0)+' °C, '+ago(s.home_time);
+ $('#lcApplied').textContent=s.growth_offset?um(s.growth_offset):'none';
+ $('#lcTouch').textContent=`${h.first_samples}× ${h.first_speed}, ${h.second_samples}× ${h.second_speed} mm/s`;
+ $('#lcPaperBox').hidden=!s.paper_active;const th=$('#lcThick');if(document.activeElement!==th)th.value=s.paper_thickness;
+ const p=s.paper;$('#lcCalNote').textContent=p?`Last paper test ${ago(p.time)}: paper ${p.thickness} mm, offset ${sgn(p.offset.toFixed(4))} mm. SAVE_CONFIG keeps it after a restart.`:'No paper test yet.';
+ $$('[data-lct]').forEach(b=>b.disabled=s.collecting||s.paper_active)}
+$('#lcHomeZ').onclick=()=>lcgo('G28 Z');
+const thick=()=>{const v=+$('#lcThick').value;return v>=0&&v<=1?v:0.08};
+$('#lcCal').onclick=()=>lcgo(`PIRO_LC_CALIBRATE THICKNESS=${thick()}`);
+$('#lcCalG').onclick=()=>{if(confirm('Home Z, paper test, then heat the nozzle in steps and touch the bed at each step. Keep the bed temperature fixed. Start?'))lcgo(`PIRO_LC_CALIBRATE GROWTH=1 THICKNESS=${thick()} START=${+$('#lcGS').value||0} END=${+$('#lcGE').value||250} STEP=${+$('#lcGT').value||50}`)};
+$('#lcThick').onchange=()=>lcgo(`PIRO_LC_PAPER_THICKNESS VALUE=${thick()}`);
+$$('#lcStep button').forEach(b=>b.onclick=()=>lcgo(`TESTZ Z=${b.dataset.z}`).then(loadLC));
+$('#lcAccept').onclick=()=>lcgo('ACCEPT').then(loadLC);$('#lcAbort').onclick=()=>lcgo('ABORT').then(loadLC);
+$$('[data-lct]').forEach(b=>b.onclick=()=>{const k=b.dataset.lct;
+ const extra=k==='accuracy'?` SAMPLES=${+$('#lcAccN').value||10}`:k==='homing'?` COUNT=${+$('#lcHomN').value||5}`:'';
+ toast('Test started: '+k);lcgo(`PIRO_LC_TEST KIND=${k}${extra}`).then(loadLC)});
+$$('#lcPlotSel button').forEach(b=>b.onclick=()=>{LC.plot=b.dataset.p;$$('#lcPlotSel button').forEach(x=>x.setAttribute('aria-pressed',x===b));drawLC()});
+const tcol=t=>t==null?css('--dim'):`hsl(${(220-210*Math.min(1,Math.max(0,(t-20)/240))).toFixed(0)},70%,52%)`;
+/* empty frame with grid and ticks; -> {c,X,Y} */
+function frame2(cv,x0,x1,y0,y1,xf,yf,empty){const w=cv.clientWidth,h=cv.clientHeight,dpr=devicePixelRatio||1;cv.width=Math.round(w*dpr);cv.height=Math.round(h*dpr);
+ const c=cv.getContext('2d');c.setTransform(dpr,0,0,dpr,0,0);c.clearRect(0,0,w,h);c.font='11px '+css('--font');
+ if(empty!==undefined){c.fillStyle=css('--dim');c.textAlign='center';c.textBaseline='middle';c.fillText(empty,w/2,h/2);return null}
+ if(x1<=x0){x0-=1;x1+=1}if(y1<=y0){y0-=1;y1+=1}const yp=(y1-y0)*.08;y0-=yp;y1+=yp;
+ const L=58,R=12,T=10,B=24,pw=w-L-R,ph=h-T-B,X=v=>L+(v-x0)/(x1-x0)*pw,Y=v=>T+(1-(v-y0)/(y1-y0))*ph;
+ const tk=(a,b,n)=>{const st=nice(b-a,n),o=[];for(let v=Math.ceil(a/st)*st;v<=b+1e-9;v+=st)o.push(+v.toFixed(6));return o};
+ c.strokeStyle=css('--grid');c.fillStyle=css('--dim');c.lineWidth=1;c.textAlign='right';c.textBaseline='middle';
+ for(const v of tk(y0,y1,5)){c.beginPath();c.moveTo(L,Y(v));c.lineTo(L+pw,Y(v));c.stroke();c.fillText(yf(v),L-6,Y(v))}
+ c.textAlign='center';c.textBaseline='top';for(const v of tk(x0,x1,6))c.fillText(xf(v),X(v),T+ph+6);
+ return{c,X,Y,L,T,pw,ph}}
+function dots(F,pts,r=3.5){for(const p of pts){F.c.fillStyle=p.col;F.c.beginPath();F.c.arc(F.X(p.x),F.Y(p.y),r,0,7);F.c.fill()}}
+function drawLC(){if(!HAS_LC||TAB!=='probe')return;const A=$('#lcc'),B2=$('#lcc2'),S=LC.ser||[],info=$('#lcPlotInfo'),note=$('#lcPlotNote');
+ if(LC.plot==='drift'){
+  const acc=S.filter(x=>x.kind==='accuracy'),T=[];for(const x of acc)for(const t of x.touches)T.push(t);
+  info.textContent=acc.length+' accuracy test(s), '+T.length+' taps';
+  note.textContent='Probed Z of every accuracy tap since the last Z homing, colored by nozzle temperature (blue cold, red hot). A rising line over time or with temperature is drift (nozzle growth, a warming frame).';
+  if(T.length<2){frame2(A,0,1,0,1,null,null,'No accuracy tests yet. Press Accuracy above.');frame2(B2,0,1,0,1,null,null,'');return}
+  const zs=T.map(t=>t.z*1000),ts=T.map(t=>t.t);
+  const F=frame2(A,Math.min(...ts),Math.max(...ts),Math.min(...zs),Math.max(...zs),v=>new Date(v*1000).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}),v=>v.toFixed(0)+' µm');
+  dots(F,T.map(t=>({x:t.t,y:t.z*1000,col:tcol(t.nozzle)})));
+  const nz=T.filter(t=>t.nozzle!=null);if(nz.length<2){frame2(B2,0,1,0,1,null,null,'No nozzle temperatures recorded');return}
+  const ns=nz.map(t=>t.nozzle);const G=frame2(B2,Math.min(...ns),Math.max(...ns),Math.min(...zs),Math.max(...zs),v=>v.toFixed(0)+' °C',v=>v.toFixed(0)+' µm');
+  dots(G,nz.map(t=>({x:t.nozzle,y:t.z*1000,col:tcol(t.nozzle)})));return}
+ if(LC.plot==='acc'){
+  const ss=S.filter(x=>(x.kind==='accuracy'||x.kind==='homing')&&x.summary&&x.summary.n>1);
+  info.textContent=ss.length+' test(s)';
+  note.textContent='Top: spread of each test (dots: max - min, rings: standard deviation), oldest left. Bottom: how far each tap of the newest test was from its mean.';
+  if(!ss.length){frame2(A,0,1,0,1,null,null,'No accuracy or homing tests yet');frame2(B2,0,1,0,1,null,null,'');return}
+  const rg=ss.map(x=>x.summary.range*1000),sd=ss.map(x=>x.summary.std*1000);
+  const F=frame2(A,0,ss.length-1,0,Math.max(...rg,1),v=>Number.isInteger(v)&&ss[v]?(ss[v].kind==='homing'?'H':'A')+ss[v].id:'',v=>v.toFixed(1)+' µm');
+  dots(F,ss.map((x,i)=>({x:i,y:rg[i],col:x.kind==='homing'?css('--amber'):css('--trace')})),4.5);
+  F.c.lineWidth=1.5;ss.forEach((x,i)=>{F.c.strokeStyle=x.kind==='homing'?css('--amber'):css('--trace');F.c.beginPath();F.c.arc(F.X(i),F.Y(sd[i]),4.5,0,7);F.c.stroke()});
+  F.c.textAlign='left';F.c.textBaseline='top';F.c.fillStyle=css('--trace');F.c.fillText('● accuracy (A)',F.L+8,F.T+2);F.c.fillStyle=css('--amber');F.c.fillText('● homing repeat (H)',F.L+100,F.T+2);
+  const last=ss[ss.length-1],m=last.summary.mean,dv=last.touches.map(t=>(t.z-m)*1000);
+  const G=frame2(B2,0,dv.length-1,Math.min(...dv,-1),Math.max(...dv,1),v=>Number.isInteger(v)?String(v+1):'',v=>v.toFixed(1)+' µm');
+  G.c.strokeStyle=css('--dim');G.c.beginPath();G.c.moveTo(G.L,G.Y(0));G.c.lineTo(G.L+G.pw,G.Y(0));G.c.stroke();
+  dots(G,dv.map((d,i)=>({x:i,y:d,col:tcol(last.touches[i].nozzle)})));return}
+ /* bed weak spots: newest mesh tests */
+ const ms=S.filter(x=>x.kind==='mesh').slice(-3);info.textContent=ms.length?ms.length+' mesh test(s)':'';
+ note.textContent='Every mesh point probed more than once (samples and repeated meshes). Top: spread of the taps at each point: a high spread is a weak spot (ooze on the nozzle, a soft or loose bed area). Bottom: peak force at each point: much lower than the rest means the bed gives way there.';
+ if(!ms.length){frame2(A,0,1,0,1,null,null,'No mesh tests yet. Press Bed mesh above.');frame2(B2,0,1,0,1,null,null,'');return}
+ const P=new Map();for(const x of ms)for(const t of x.touches){const k=Math.round(t.x)+','+Math.round(t.y);if(!P.has(k))P.set(k,{x:Math.round(t.x),y:Math.round(t.y),z:[],f:[]});const q=P.get(k);q.z.push(t.z);if(t.force!=null)q.f.push(t.force)}
+ const pts=[...P.values()].map(q=>({x:q.x,y:q.y,n:q.z.length,spread:(Math.max(...q.z)-Math.min(...q.z))*1000,force:q.f.length?q.f.reduce((a,b)=>a+b,0)/q.f.length:null}));
+ const heat=(cv,key,unit,dec)=>{const xs=pts.map(p=>p.x),ys=pts.map(p=>p.y),vals=pts.map(p=>p[key]).filter(v=>v!=null);
+  if(!vals.length){frame2(cv,0,1,0,1,null,null,'No '+(key==='force'?'force':'')+' data');return}
+  const ux=[...new Set(xs)].sort((a,b)=>a-b),uy=[...new Set(ys)].sort((a,b)=>a-b),sx=ux.length>1?(ux[ux.length-1]-ux[0])/(ux.length-1):10,sy=uy.length>1?(uy[uy.length-1]-uy[0])/(uy.length-1):10;
+  const F=frame2(cv,ux[0]-sx/2,ux[ux.length-1]+sx/2,uy[0]-sy/2,uy[uy.length-1]+sy/2,v=>v.toFixed(0),v=>v.toFixed(0)+' mm');
+  const v0=Math.min(...vals),v1=Math.max(...vals);
+  const cw=Math.max(6,Math.abs(F.X(ux[0]+sx)-F.X(ux[0]))*.92),ch=Math.max(6,Math.abs(F.Y(uy[0]+sy)-F.Y(uy[0]))*.92);
+  F.c.textAlign='center';F.c.textBaseline='middle';
+  for(const p of pts){const v=p[key];if(v==null)continue;const r=v1>v0?(v-v0)/(v1-v0):0,hue=key==='force'?(10+110*r):(120-120*r);
+   F.c.fillStyle=`hsl(${hue.toFixed(0)},65%,48%)`;F.c.fillRect(F.X(p.x)-cw/2,F.Y(p.y)-ch/2,cw,ch);
+   if(cw>26){F.c.fillStyle='#fff';F.c.fillText(v.toFixed(dec),F.X(p.x),F.Y(p.y))}}
+  return pts.filter(p=>p[key]!=null).sort((a,b)=>key==='force'?a[key]-b[key]:b[key]-a[key]).slice(0,3)};
+ const worst=heat(A,'spread','µm',1),soft=heat(B2,'force','g',0);
+ if(worst&&worst.length)note.textContent+='  Largest spread: '+worst.map(p=>`X${p.x} Y${p.y} ${p.spread.toFixed(1)} µm`).join(', ')+'.'}
 
 /* ---- tabs ---- */
 function setTab(t){TAB=t;setTimeout(term,0);$$('#tabs button').forEach(b=>b.setAttribute('aria-selected',b.dataset.tab===t));$$('section').forEach(s=>s.classList.toggle('on',s.id===t));
  if(t==='set'){renderThemeCards();if(!DEF)loadDefaults()}
- if(t==='hist'){loadRuns();setTimeout(()=>{hv.render();redrawFigs();drawThumbs()},0)}if(t==='cmp')setTimeout(renderCmp,0);if(t==='probe'){loadTaps();loadThermal();setTimeout(()=>pchart.render(),0)}if(t==='test'){if(!DEF)loadDefaults();if(!runs.length)loadRuns();setTimeout(()=>liveSearch(tst),0)}}
+ if(t==='hist'){loadRuns();setTimeout(()=>{hv.render();redrawFigs();drawThumbs()},0)}if(t==='cmp')setTimeout(renderCmp,0);if(t==='probe'){if(HAS_TAP)loadTaps();if(HAS_LC){LC.nSess=-1;loadLC()}loadThermal();setTimeout(()=>{pchart.render();drawLC()},0)}if(t==='test'){if(!DEF)loadDefaults();if(!runs.length)loadRuns();setTimeout(()=>liveSearch(tst),0)}}
 $$('#tabs button').forEach(b=>b.onclick=()=>setTab(b.dataset.tab));
-function redrawAll(){for(const v of viewers)v.render();try{drawViewer();drawThumbs();redrawFigs();renderCmp();liveSearch(tst);if(PT.det)drawTap();drawThermal()}catch{}}
-let rzT=0;addEventListener('resize',()=>{for(const v of viewers){v.chart.render();v.ov.render()}cchart.render();pchart.render();drawThermal();clearTimeout(rzT);rzT=setTimeout(()=>{drawThumbs();redrawFigs();liveSearch(tst)},150)});
+function redrawAll(){for(const v of viewers)v.render();try{drawViewer();drawThumbs();redrawFigs();renderCmp();liveSearch(tst);if(PT.det)drawTap();drawThermal();drawLC()}catch{}}
+let rzT=0;addEventListener('resize',()=>{for(const v of viewers){v.chart.render();v.ov.render()}cchart.render();pchart.render();drawThermal();drawLC();clearTimeout(rzT);rzT=setTimeout(()=>{drawThumbs();redrawFigs();liveSearch(tst)},150)});
 $('#ccmd').innerHTML=CMDHTML;$('#setCmd').innerHTML=CMDHTML;paintInvert();paintCmd();window.ready=true;term();renderThemeCards();
 rpc.connect();pollLoop();frame();renderCmp();
 (function waitDefaults(){if(rpc.up){if(!HAS_PA)return;loadDefaults();if(document.documentElement.dataset.theme==='terminal')loadRuns()}else setTimeout(waitDefaults,300)})();
