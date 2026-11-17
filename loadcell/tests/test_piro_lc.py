@@ -262,7 +262,7 @@ def test_real_klipper():
         assert 'Traceback' not in text.split('=======================')[-1], \
             text[-3000:]
         assert 'paper offset +0.1000 mm' in text
-        assert 'homing test saved (8 touches)' in text
+        assert 'homing test saved (2 touches)' in text
         assert 'accuracy test saved (4 touches)' in text
         assert 'nozzle_growth is 0, no growth correction' in text   # macro ran
         idx = json.load(open(os.path.join(tmp, 'd', 'sessions', 'index.json')))

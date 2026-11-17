@@ -3,7 +3,11 @@ starts.
 
 PIRO_LC_TEST KIND=<kind> [...]
   accuracy  PROBE_ACCURACY at the current XY   [SAMPLES=10]
-  homing    G28 Z repeated                      [COUNT=5]
+  homing    G28 Z, then one probe tap, repeated [COUNT=5]
+            (the tap after each homing is what is saved: its Z against the
+            fresh homing is the homing repeatability. The homing taps
+            themselves are not saved: Klipper measures touch 1 and touch 2
+            in different Z frames)
   mesh      BED_MESH_CALIBRATE (full bed)       [REPEAT=1]
   ztilt     Z_TILT_ADJUST
   growth    PIRO_LC_GROWTH_CALIBRATE            [START END STEP SETTLE SAMPLES]
@@ -46,6 +50,7 @@ class Collector:
         self.lc = lc
         self.session = None
         self.last_tap = None
+        self.paused = False             # not recording (homing taps)
 
     @property
     def on(self):
@@ -65,7 +70,8 @@ class Collector:
         return True                     # stay registered
 
     def on_touch(self, pos, label):
-        if self.session is None:
+        if self.session is None or self.paused:
+            self.last_tap = None
             return
         try:
             temps = self.lc.temps()
@@ -101,7 +107,12 @@ class Collector:
             if kind == 'homing':
                 count = gcmd.get_int('COUNT', 5, minval=1, maxval=50)
                 for i in range(count):
-                    gcode.run_script_from_command("G28 Z")
+                    self.paused = True
+                    try:
+                        gcode.run_script_from_command("G28 Z")
+                    finally:
+                        self.paused = False
+                    gcode.run_script_from_command("PROBE SAMPLES=1")
             elif kind == 'growth':
                 args = " ".join("%s=%s" % (k, v) for k, v in params.items()
                                 if k in ('START', 'END', 'STEP', 'SETTLE',
@@ -124,6 +135,7 @@ class Collector:
         finally:
             self.session = None
             self.last_tap = None
+            self.paused = False
             sess['end'] = lc.now()
             sess['n'] = len(sess['touches'])
             sess['summary'] = summary(kind, sess['touches'])

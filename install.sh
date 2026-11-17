@@ -112,6 +112,19 @@ nginx_remove() {
 active_section() {
   grep -rqE "^\[$1( [^]]*)?\]" "$CONFIG_DIR" --include='*.cfg' 2>/dev/null
 }
+# Does Klipper load [name]? In a .cfg other than the part's own file, or in
+# the part's own file while printer.cfg includes it (a part's file that is
+# not included, like a piro_tap.cfg kept for later, does not count)
+section_loaded() {   # section_loaded <name> <part file>
+  local f
+  for f in "$CONFIG_DIR"/*.cfg; do
+    [ -f "$f" ] || continue
+    [ "$(basename "$f")" = "$2" ] && continue
+    grep -qE "^\[$1( [^]]*)?\]" "$f" && return 0
+  done
+  [ -f "$CONFIG_DIR/$2" ] && grep -qx "\[include $2\]" "$CONFIG_DIR/printer.cfg" \
+    && grep -qE "^\[$1( [^]]*)?\]" "$CONFIG_DIR/$2"
+}
 # include line in printer.cfg, never below the SAVE_CONFIG block
 add_include() {
   local PCFG="$CONFIG_DIR/printer.cfg" INC="$1"
@@ -211,7 +224,7 @@ say "Moving plugin files out of the config folder ($DATA_ROOT)"
 migrate_files
 
 # a part that is still configured cannot be removed (Klipper would not start)
-if [ "$WANT_PROBE" = 0 ] && active_section piro_tap; then
+if [ "$WANT_PROBE" = 0 ] && section_loaded piro_tap piro_tap.cfg; then
   die "[piro_tap] is active in your config: comment it out first, or install with --probe / --both"
 fi
 if [ "$WANT_PA" = 0 ] && { active_section pa_loadcell && ! grep -qx '\[include pa_loadcell.cfg\]' "$CONFIG_DIR/printer.cfg"; } ; then

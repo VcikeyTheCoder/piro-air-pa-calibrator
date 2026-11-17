@@ -501,7 +501,7 @@ html[data-theme=cat] #tabs .lbl{display:none}}
   <div class="card" style="padding:12px;margin-top:10px">
    <div class="row"><b>Tests</b><span class="small dim">only these runs are recorded, prints and macros are not</span><span class="sp"></span>
     <button data-lct="accuracy" title="PROBE_ACCURACY at the current XY">Accuracy</button><label class="small"><input id="lcAccN" type="number" value="10" min="2" max="100" style="width:56px"> taps</label>
-    <button data-lct="homing" title="G28 Z repeated">Homing repeat</button><label class="small"><input id="lcHomN" type="number" value="5" min="1" max="50" style="width:52px"> times</label>
+    <button data-lct="homing" title="G28 Z, then one probe tap, repeated">Homing repeat</button><label class="small"><input id="lcHomN" type="number" value="5" min="1" max="50" style="width:52px"> times</label>
     <button data-lct="mesh" title="Full BED_MESH_CALIBRATE">Bed mesh</button><button data-lct="ztilt">Z tilt</button></div>
   </div>
   <div class="card" style="padding:12px;margin-top:10px">
@@ -1744,9 +1744,9 @@ function drawLC(){if(!HAS_LC||TAB!=='probe')return;const A=$('#lcc'),B2=$('#lcc2
   const ns=nz.map(t=>t.nozzle);const G=frame2(B2,Math.min(...ns),Math.max(...ns),Math.min(...zs),Math.max(...zs),v=>v.toFixed(0)+' °C',v=>v.toFixed(0)+' µm');
   dots(G,nz.map(t=>({x:t.nozzle,y:t.z*1000,col:tcol(t.nozzle)})));return}
  if(LC.plot==='acc'){
-  const ss=S.filter(x=>(x.kind==='accuracy'||x.kind==='homing')&&x.summary&&x.summary.n>1);
+  const ss=S.filter(x=>(x.kind==='accuracy'||x.kind==='homing')&&x.summary&&x.summary.n>1&&!(x.kind==='homing'&&x.touches.some(t=>t.label==='G28')));
   info.textContent=ss.length+' test(s)';
-  note.textContent='Top: spread of each test (dots: max - min, rings: standard deviation), oldest left. Bottom: how far each tap of the newest test was from its mean.';
+  note.textContent='Top: spread of each test (dots: max - min, rings: standard deviation), oldest left. Accuracy: taps at one spot. Homing repeat: one tap right after each homing, so its spread is how repeatable homing is. Bottom: how far each tap of the newest test was from its mean.';
   if(!ss.length){frame2(A,0,1,0,1,null,null,'No accuracy or homing tests yet');frame2(B2,0,1,0,1,null,null,'');return}
   const rg=ss.map(x=>x.summary.range*1000),sd=ss.map(x=>x.summary.std*1000);
   const F=frame2(A,0,ss.length-1,0,Math.max(...rg,1),v=>Number.isInteger(v)&&ss[v]?(ss[v].kind==='homing'?'H':'A')+ss[v].id:'',v=>v.toFixed(1)+' µm');
